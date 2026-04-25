@@ -950,8 +950,12 @@ pub fn typeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
             if (interp.builtins.getStr(name)) |found| {
                 if (found == .class) break :blk found;
             }
-            try interp.typeError("type(): no class for primitive (zag)");
-            break :blk error.TypeError;
+            // Lazy-cache a synthetic class for primitives (int, float,
+            // str, list, dict, tuple, bool, NoneType, ...). type()
+            // result needs `.__name__` to read back as the type name,
+            // which Class.name covers.
+            const got = try interp.primitiveClass(name);
+            break :blk Value{ .class = got };
         },
     };
 }

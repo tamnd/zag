@@ -94,6 +94,7 @@ fn ensureClasses(interp: *Interp) !void {
         try methodReg(a, d, "span", matchSpan);
         try methodReg(a, d, "start", matchStart);
         try methodReg(a, d, "end", matchEnd);
+        try methodReg(a, d, "expand", matchExpand);
         const cls = try Class.init(a, "Match", &.{}, d);
         interp.re_match_class = cls;
     }
@@ -158,6 +159,25 @@ fn buildMatchInstance(interp: *Interp, pat: *Instance, input: []const u8, m: re.
         t.items[i] = Value{ .tuple = tt };
     }
     try inst.dict.setStr(a, "_spans", Value{ .tuple = t });
+
+    // lastindex: highest 1-based group id that participated.
+    var last: i64 = -1;
+    var gi: usize = 1;
+    while (gi < m.spans.len) : (gi += 1) {
+        if (m.spans[gi].start != re.NPOS) last = @intCast(gi);
+    }
+    try inst.dict.setStr(a, "lastindex", if (last < 0) Value.none else Value{ .small_int = last });
+    // lastgroup: name of the highest-numbered participating named group.
+    const prog = getProg(pat);
+    var last_name: Value = Value.none;
+    if (last > 0 and @as(usize, @intCast(last)) < prog.group_names.len) {
+        const nm = prog.group_names[@intCast(last)];
+        if (nm.len > 0) {
+            const ns = try Str.init(a, nm);
+            last_name = Value{ .str = ns };
+        }
+    }
+    try inst.dict.setStr(a, "lastgroup", last_name);
     return Value{ .instance = inst };
 }
 
@@ -196,7 +216,13 @@ fn argString(v: Value) ![]const u8 {
 fn compileFromArgs(interp: *Interp, pattern_v: Value, flags: i64) !Value {
     const a = interp.allocator;
     const src = try argString(pattern_v);
-    const prog = try re.compile(a, src, flagsFromInt(flags));
+    const prog = re.compile(a, src, flagsFromInt(flags)) catch |err| switch (err) {
+        error.BadPattern, error.UnsupportedRegex => {
+            try interp.raisePy("ValueError", "invalid regex pattern");
+            return error.PyException;
+        },
+        else => return err,
+    };
     return try buildPatternInstance(interp, src, prog);
 }
 
@@ -599,6 +625,35 @@ fn matchStart(p: *anyopaque, args: []const Value) anyerror!Value {
         break :blk resolveGroupIndex(pat, args[1]).?;
     } else 0;
     return Value{ .small_int = spanAt(spans, idx).?.s };
+}
+
+fn matchExpand(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const inst = try matchInstance(args);
+    if (args.len < 2 or args[1] != .str) return error.TypeError;
+    const tmpl_src = args[1].str.bytes;
+    const spans = matchSpansOf(inst);
+    const input = matchStringOf(inst);
+    const pat = matchPatternOf(inst);
+    const prog = getProg(pat);
+
+    const sp_arr = try a.alloc(re.Span, spans.items.len);
+    defer a.free(sp_arr);
+    for (spans.items, 0..) |it, i| {
+        const s = it.tuple.items[0].small_int;
+        const e = it.tuple.items[1].small_int;
+        sp_arr[i] = .{
+            .start = if (s < 0) re.NPOS else @intCast(s),
+            .end = if (e < 0) re.NPOS else @intCast(e),
+        };
+    }
+    var tmpl = try re.replace_mod.parseTemplate(a, tmpl_src, prog);
+    defer tmpl.deinit(a);
+    const piece = try re.replace_mod.apply(a, tmpl, input, sp_arr);
+    defer a.free(piece);
+    const s = try Str.init(a, piece);
+    return Value{ .str = s };
 }
 
 fn matchEnd(p: *anyopaque, args: []const Value) anyerror!Value {

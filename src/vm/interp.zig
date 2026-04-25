@@ -60,6 +60,7 @@ pub const Interp = struct {
     re_module: ?*Module = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
+    primitive_classes: std.StringHashMapUnmanaged(*@import("../object/class.zig").Class) = .empty,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every
     /// helper `.pyc`; the CLI pre-registers siblings of the entry
@@ -106,6 +107,15 @@ pub const Interp = struct {
             .globals = try Dict.init(allocator),
             .builtins = try Dict.init(allocator),
         };
+    }
+
+    pub fn primitiveClass(self: *Interp, name: []const u8) !*@import("../object/class.zig").Class {
+        const ClassT = @import("../object/class.zig").Class;
+        if (self.primitive_classes.get(name)) |c| return c;
+        const owned_name = try self.allocator.dupe(u8, name);
+        const cls = try ClassT.init(self.allocator, owned_name, &.{}, try Dict.init(self.allocator));
+        try self.primitive_classes.put(self.allocator, owned_name, cls);
+        return cls;
     }
 
     pub fn installBuiltins(self: *Interp) !void {

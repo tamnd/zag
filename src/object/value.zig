@@ -193,11 +193,7 @@ pub const Value = union(Tag) {
             },
             .float => |f| try writeFloat(w, f),
             .complex_num => |c| try writeComplex(w, c),
-            .str => |s| {
-                try w.writeByte('\'');
-                try w.writeAll(s.bytes);
-                try w.writeByte('\'');
-            },
+            .str => |s| try writeStrRepr(w, s.bytes),
             .bytes => |b| {
                 try w.writeAll("b'");
                 try writeBytesContent(w, b.data);
@@ -391,6 +387,38 @@ pub const Value = union(Tag) {
     /// repr. CPython prefers single quotes and escapes backslash, the
     /// chosen quote, `\n` `\r` `\t`, and any byte outside the printable
     /// ASCII range as `\xHH`.
+    fn writeStrRepr(w: *std.Io.Writer, data: []const u8) !void {
+        // CPython picks single quotes unless the string contains a `'`
+        // and no `"`, in which case it switches to double quotes.
+        var has_sq = false;
+        var has_dq = false;
+        for (data) |c| {
+            if (c == '\'') has_sq = true;
+            if (c == '"') has_dq = true;
+        }
+        const quote: u8 = if (has_sq and !has_dq) '"' else '\'';
+        try w.writeByte(quote);
+        for (data) |c| {
+            switch (c) {
+                '\\' => try w.writeAll("\\\\"),
+                '\n' => try w.writeAll("\\n"),
+                '\r' => try w.writeAll("\\r"),
+                '\t' => try w.writeAll("\\t"),
+                else => {
+                    if (c == quote) {
+                        try w.writeByte('\\');
+                        try w.writeByte(c);
+                    } else if (c < 0x20 or c == 0x7f) {
+                        try w.print("\\x{x:0>2}", .{c});
+                    } else {
+                        try w.writeByte(c);
+                    }
+                },
+            }
+        }
+        try w.writeByte(quote);
+    }
+
     fn writeBytesContent(w: *std.Io.Writer, data: []const u8) !void {
         for (data) |c| {
             switch (c) {
