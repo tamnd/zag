@@ -54,6 +54,11 @@ pub const Interp = struct {
     /// stays bound to a constructor function; this class is only
     /// reachable via `type()`.
     complex_type: ?*@import("../object/class.zig").Class = null,
+    /// Lazy `type(set_val)` / `type(frozenset_val)` classes. The
+    /// builtin `set`/`frozenset` names are constructors; these are
+    /// only the synthetic classes that `type()` returns.
+    set_type: ?*@import("../object/class.zig").Class = null,
+    frozenset_type: ?*@import("../object/class.zig").Class = null,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 

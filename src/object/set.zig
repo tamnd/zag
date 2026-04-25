@@ -5,12 +5,24 @@ const Value = @import("value.zig").Value;
 /// array; lookups walk it with `Value.equals`. Order matters for
 /// repr because the fixtures compare against CPython's small-set
 /// printing, which (for our int inputs) is sorted-ascending.
+///
+/// `frozen` flips the print/`type()` name to `"frozenset"` and lets
+/// the value sit in a dict key (plain set is unhashable). Set
+/// algebra returns the same flavor as the left operand, matching
+/// CPython.
 pub const Set = struct {
     items: std.ArrayList(Value),
+    frozen: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) !*Set {
         const self = try allocator.create(Set);
         self.* = .{ .items = .empty };
+        return self;
+    }
+
+    pub fn initFrozen(allocator: std.mem.Allocator) !*Set {
+        const self = try allocator.create(Set);
+        self.* = .{ .items = .empty, .frozen = true };
         return self;
     }
 

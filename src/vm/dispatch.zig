@@ -1538,10 +1538,13 @@ inline fn advance(frame: *Frame, ext_arg: *u32, cw: u8) Opcode {
 fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
     return switch (arg) {
         0 => add(interp, a, b),
+        1 => bitwiseAnd(interp, a, b),
         5 => multiply(interp, a, b),
         6 => remainder(interp, a, b),
+        7 => bitwiseOr(interp, a, b),
         10 => subtract(interp, a, b),
         11 => trueDivide(interp, a, b),
+        12 => bitwiseXor(interp, a, b),
         13 => inplaceAdd(interp, a, b),
         26 => subscript(interp, a, b),
         else => blk: {
@@ -1601,7 +1604,77 @@ fn subtract(interp: *Interp, a: Value, b: Value) !Value {
     if ((a == .float or b == .float) and asFloat(a) != null and asFloat(b) != null) {
         return Value{ .float = asFloat(a).? - asFloat(b).? };
     }
+    if (a == .set and b == .set) {
+        const out = try newSetLike(interp, a.set.frozen);
+        for (a.set.items.items) |x| {
+            var found = false;
+            for (b.set.items.items) |y| if (x.equals(y)) {
+                found = true;
+                break;
+            };
+            if (!found) try out.add(interp.allocator, x);
+        }
+        return Value{ .set = out };
+    }
     try interp.typeError("unsupported operand type(s) for -");
+    return error.TypeError;
+}
+
+/// Set algebra helpers. The result keeps the *left* operand's
+/// frozen flag — `frozenset(...) | set(...)` is a frozenset, plain
+/// the other way. CPython does the same.
+fn newSetLike(interp: *Interp, frozen: bool) !*Set {
+    return if (frozen) Set.initFrozen(interp.allocator) else Set.init(interp.allocator);
+}
+
+fn bitwiseOr(interp: *Interp, a: Value, b: Value) !Value {
+    if (a == .set and b == .set) {
+        const out = try newSetLike(interp, a.set.frozen);
+        for (a.set.items.items) |x| try out.add(interp.allocator, x);
+        for (b.set.items.items) |x| try out.add(interp.allocator, x);
+        return Value{ .set = out };
+    }
+    try interp.typeError("unsupported operand type(s) for |");
+    return error.TypeError;
+}
+
+fn bitwiseAnd(interp: *Interp, a: Value, b: Value) !Value {
+    if (a == .set and b == .set) {
+        const out = try newSetLike(interp, a.set.frozen);
+        for (a.set.items.items) |x| {
+            for (b.set.items.items) |y| if (x.equals(y)) {
+                try out.add(interp.allocator, x);
+                break;
+            };
+        }
+        return Value{ .set = out };
+    }
+    try interp.typeError("unsupported operand type(s) for &");
+    return error.TypeError;
+}
+
+fn bitwiseXor(interp: *Interp, a: Value, b: Value) !Value {
+    if (a == .set and b == .set) {
+        const out = try newSetLike(interp, a.set.frozen);
+        for (a.set.items.items) |x| {
+            var found = false;
+            for (b.set.items.items) |y| if (x.equals(y)) {
+                found = true;
+                break;
+            };
+            if (!found) try out.add(interp.allocator, x);
+        }
+        for (b.set.items.items) |x| {
+            var found = false;
+            for (a.set.items.items) |y| if (x.equals(y)) {
+                found = true;
+                break;
+            };
+            if (!found) try out.add(interp.allocator, x);
+        }
+        return Value{ .set = out };
+    }
+    try interp.typeError("unsupported operand type(s) for ^");
     return error.TypeError;
 }
 
@@ -1993,7 +2066,7 @@ pub fn makeIter(interp: *Interp, v: Value) !*Iter {
         .list => |l| try Iter.init(interp.allocator, .{ .list = l }),
         .tuple => |t| try Iter.init(interp.allocator, .{ .tuple = t }),
         .iter => |it| it,
-        .str, .bytes, .dict, .generator, .enum_iter => blk: {
+        .str, .bytes, .dict, .generator, .enum_iter, .set => blk: {
             const lst = try @import("builtins.zig").materialize(interp, v);
             break :blk try Iter.init(interp.allocator, .{ .list = lst });
         },
@@ -2024,6 +2097,10 @@ fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
         .dict => |d| {
             if (item != .str) return false;
             return d.contains(item.str.bytes);
+        },
+        .set => |s| {
+            for (s.items.items) |it| if (it.equals(item)) return true;
+            return false;
         },
         else => {
             try interp.typeError("argument of type is not iterable");
@@ -2092,6 +2169,8 @@ fn matchClassCheck(subject: Value, cls: Value) bool {
     if (std.mem.eql(u8, name, "tuple")) return subject == .tuple;
     if (std.mem.eql(u8, name, "dict")) return subject == .dict;
     if (std.mem.eql(u8, name, "bytes")) return subject == .bytes;
+    if (std.mem.eql(u8, name, "set")) return subject == .set and !subject.set.frozen;
+    if (std.mem.eql(u8, name, "frozenset")) return subject == .set and subject.set.frozen;
     return false;
 }
 
