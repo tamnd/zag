@@ -234,6 +234,47 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .GET_AITER => {
+            const obj = frame.pop();
+            const r = (try dunder.call(interp, obj, "__aiter__", &.{})) orelse {
+                try interp.typeError("'async for' requires __aiter__");
+                return error.TypeError;
+            };
+            frame.push(r);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .GET_ANEXT => {
+            const aiter = frame.stack[frame.sp - 1];
+            const r = (try dunder.call(interp, aiter, "__anext__", &.{})) orelse {
+                try interp.typeError("'async for' requires __anext__");
+                return error.TypeError;
+            };
+            frame.push(r);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .END_ASYNC_FOR => {
+            const e = frame.pop();
+            _ = frame.pop();
+            if (e == .instance) {
+                const sai = interp.builtins.getStr("StopAsyncIteration") orelse {
+                    interp.current_exc = e;
+                    return error.PyException;
+                };
+                if (sai == .class) {
+                    for (e.instance.cls.mro) |c| {
+                        if (c == sai.class) {
+                            interp.current_exc = null;
+                            continue :sw advance(frame, &ext_arg, 0);
+                        }
+                    }
+                }
+            }
+            interp.current_exc = e;
+            return error.PyException;
+        },
+
         .GET_AWAITABLE => {
             // Coroutines (modeled as generators) and finished sleep
             // generators pass through. User instances with `__await__`
