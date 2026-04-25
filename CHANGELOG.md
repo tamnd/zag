@@ -9,6 +9,41 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.50] - 2026-04-25
+
+### Added
+
+- `49_memoryview` fixture, byte-equal against CPython 3.14.
+  Exercises the `memoryview()` constructor over `bytes` and
+  `bytearray`, the `tobytes` / `tolist` / `release` methods, the
+  `readonly` / `nbytes` / `format` / `itemsize` attributes,
+  indexing (returns int), slicing (sub-view sharing the backing
+  buffer), bytes/bytearray/memoryview cross-type equality,
+  iteration, membership, `bytes(mv)` materialization, item and
+  slice assignment on a writable view propagating to the backing
+  bytearray, write-through-sub-view, and TypeError when assigning
+  to a read-only view.
+- `Value.memoryview` variant backed by a new `Memoryview` struct.
+  Stores `(backing, start, len)` so a slice of a slice still
+  refers into the original `Bytes` / `Bytearray`. `readonly` is
+  determined by the backing kind: bytes is read-only,
+  bytearray is writable.
+- `memoryviewmethods` module (`tobytes` / `tolist` / `release`).
+  `release()` is a no-op that returns `None` — the memory model
+  doesn't need it, but the symbol has to exist.
+
+### Changed
+
+- `bytes()` accepts a `memoryview` source and copies its window.
+- `Value.equals` and `Value.order` now treat
+  `bytes` / `bytearray` / `memoryview` as a single bytes-like
+  family for content comparison.
+- `containsOp`, `len`, `materialize`, `makeIter` all accept
+  `memoryview` so `for b in mv`, `len(mv)`, `n in mv`,
+  `list(mv)`, `sum(mv)` all work.
+- `type(mv)` returns the lazy `memoryview` class, and
+  `isinstance(mv, memoryview)` matches.
+
 ## [0.0.49] - 2026-04-25
 
 ### Added

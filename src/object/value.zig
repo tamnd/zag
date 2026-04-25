@@ -11,6 +11,7 @@ const std = @import("std");
 const Str = @import("string.zig").Str;
 const Bytes = @import("bytes.zig").Bytes;
 const Bytearray = @import("bytearray.zig").Bytearray;
+const Memoryview = @import("memoryview.zig").Memoryview;
 const Tuple = @import("tuple.zig").Tuple;
 const List = @import("list.zig").List;
 const Dict = @import("dict.zig").Dict;
@@ -36,6 +37,7 @@ pub const Tag = enum(u8) {
     str,
     bytes,
     bytearray,
+    memoryview,
     tuple,
     list,
     dict,
@@ -90,6 +92,7 @@ pub const Value = union(Tag) {
     str: *Str,
     bytes: *Bytes,
     bytearray: *Bytearray,
+    memoryview: *Memoryview,
     tuple: *Tuple,
     list: *List,
     dict: *Dict,
@@ -118,6 +121,7 @@ pub const Value = union(Tag) {
             .str => |s| s.bytes.len != 0,
             .bytes => |b| b.data.len != 0,
             .bytearray => |b| b.data.items.len != 0,
+            .memoryview => |m| m.len != 0,
             .tuple => |t| t.items.len != 0,
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
@@ -151,6 +155,7 @@ pub const Value = union(Tag) {
                 try writeBytesContent(w, b.data.items);
                 try w.writeAll("')");
             },
+            .memoryview => |m| try w.print("<memory at 0x{x}>", .{@intFromPtr(m)}),
             .tuple => |t| {
                 try w.writeByte('(');
                 for (t.items, 0..) |it, i| {
@@ -358,11 +363,13 @@ pub const Value = union(Tag) {
         const a_bytes: ?[]const u8 = switch (a) {
             .bytes => |x| x.data,
             .bytearray => |x| x.data.items,
+            .memoryview => |m| m.data(),
             else => null,
         };
         const b_bytes: ?[]const u8 = switch (b) {
             .bytes => |x| x.data,
             .bytearray => |x| x.data.items,
+            .memoryview => |m| m.data(),
             else => null,
         };
         if (a_bytes != null and b_bytes != null) {
@@ -400,11 +407,13 @@ pub const Value = union(Tag) {
         const a_bytes: ?[]const u8 = switch (a) {
             .bytes => |x| x.data,
             .bytearray => |x| x.data.items,
+            .memoryview => |m| m.data(),
             else => null,
         };
         const b_bytes: ?[]const u8 = switch (b) {
             .bytes => |x| x.data,
             .bytearray => |x| x.data.items,
+            .memoryview => |m| m.data(),
             else => null,
         };
         if (a_bytes != null and b_bytes != null) {
@@ -459,6 +468,7 @@ pub const Value = union(Tag) {
             .str => |p| p == b.str,
             .bytes => |p| p == b.bytes,
             .bytearray => |p| p == b.bytearray,
+            .memoryview => |p| p == b.memoryview,
             .tuple => |p| p == b.tuple,
             .list => |p| p == b.list,
             .dict => |p| p == b.dict,
@@ -489,6 +499,7 @@ pub const Value = union(Tag) {
             .str => "str",
             .bytes => "bytes",
             .bytearray => "bytearray",
+            .memoryview => "memoryview",
             .tuple => "tuple",
             .list => "list",
             .dict => "dict",

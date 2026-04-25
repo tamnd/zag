@@ -29,6 +29,7 @@ const strmethods = @import("strmethods.zig");
 const listmethods = @import("listmethods.zig");
 const setmethods = @import("setmethods.zig");
 const bytearraymethods = @import("bytearraymethods.zig");
+const memoryviewmethods = @import("memoryviewmethods.zig");
 const dictmethods = @import("dictmethods.zig");
 const exc = @import("exc.zig");
 const builtins_mod = @import("builtins.zig");
@@ -2000,6 +2001,32 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
                 },
             }
         },
+        .memoryview => |m| switch (key) {
+            .small_int => |i| {
+                const n: i64 = @intCast(m.len);
+                var idx = i;
+                if (idx < 0) idx += n;
+                if (idx < 0 or idx >= n) {
+                    try interp.raisePy("IndexError", "index out of range");
+                    return error.PyException;
+                }
+                return Value{ .small_int = @intCast(m.data()[@intCast(idx)]) };
+            },
+            .slice => |sl| {
+                const n: i64 = @intCast(m.len);
+                const r = try resolveSlice(interp, sl, n);
+                if (r.step != 1) {
+                    try interp.typeError("memoryview only supports step=1 slicing in zag");
+                    return error.TypeError;
+                }
+                const sub = try m.slice(interp.allocator, @intCast(r.start), r.count);
+                return Value{ .memoryview = sub };
+            },
+            else => {
+                try interp.typeError("memoryview indices must be integers or slices");
+                return error.TypeError;
+            },
+        },
         .dict => |d| {
             if (d.getKey(key)) |v| return v;
             try interp.raisePy("KeyError", "key not found");
@@ -2172,6 +2199,59 @@ fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !voi
                 return error.TypeError;
             },
         },
+        .memoryview => |m| {
+            const buf = m.writableData() orelse {
+                try interp.raisePy("TypeError", "cannot modify read-only memory");
+                return error.PyException;
+            };
+            switch (key) {
+                .small_int => |i| {
+                    if (value != .small_int and value != .boolean) {
+                        try interp.typeError("memoryview byte must be an integer");
+                        return error.TypeError;
+                    }
+                    const v: i64 = if (value == .boolean) @intFromBool(value.boolean) else value.small_int;
+                    if (v < 0 or v > 255) {
+                        try interp.raisePy("ValueError", "memoryview: invalid value for byte");
+                        return error.PyException;
+                    }
+                    const n: i64 = @intCast(buf.len);
+                    var idx = i;
+                    if (idx < 0) idx += n;
+                    if (idx < 0 or idx >= n) {
+                        try interp.indexError("memoryview assignment index out of range");
+                        return error.IndexError;
+                    }
+                    buf[@intCast(idx)] = @intCast(v);
+                },
+                .slice => |sl| {
+                    const n: i64 = @intCast(buf.len);
+                    const r = try resolveSlice(interp, sl, n);
+                    if (r.step != 1) {
+                        try interp.typeError("memoryview slice assignment requires step=1");
+                        return error.TypeError;
+                    }
+                    const src: []const u8 = switch (value) {
+                        .bytes => |x| x.data,
+                        .bytearray => |x| x.data.items,
+                        .memoryview => |mv2| mv2.data(),
+                        else => {
+                            try interp.typeError("memoryview slice assignment requires bytes-like");
+                            return error.TypeError;
+                        },
+                    };
+                    if (src.len != r.count) {
+                        try interp.raisePy("ValueError", "memoryview assignment: lvalue and rvalue have different sizes");
+                        return error.PyException;
+                    }
+                    @memcpy(buf[@intCast(r.start) .. @as(usize, @intCast(r.start)) + r.count], src);
+                },
+                else => {
+                    try interp.typeError("memoryview indices must be integers or slices");
+                    return error.TypeError;
+                },
+            }
+        },
         else => {
             try interp.typeError("object does not support item assignment");
             return error.TypeError;
@@ -2210,7 +2290,7 @@ pub fn makeIter(interp: *Interp, v: Value) !*Iter {
         .list => |l| try Iter.init(interp.allocator, .{ .list = l }),
         .tuple => |t| try Iter.init(interp.allocator, .{ .tuple = t }),
         .iter => |it| it,
-        .str, .bytes, .bytearray, .dict, .generator, .enum_iter, .set => blk: {
+        .str, .bytes, .bytearray, .memoryview, .dict, .generator, .enum_iter, .set => blk: {
             const lst = try @import("builtins.zig").materialize(interp, v);
             break :blk try Iter.init(interp.allocator, .{ .list = lst });
         },
@@ -2248,6 +2328,7 @@ fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
         },
         .bytes => |b| return bytesContains(b.data, item),
         .bytearray => |b| return bytesContains(b.data.items, item),
+        .memoryview => |m| return bytesContains(m.data(), item),
         else => {
             try interp.typeError("argument of type is not iterable");
             return error.TypeError;
@@ -2353,6 +2434,7 @@ fn matchClassCheck(subject: Value, cls: Value) bool {
     if (std.mem.eql(u8, name, "dict")) return subject == .dict;
     if (std.mem.eql(u8, name, "bytes")) return subject == .bytes;
     if (std.mem.eql(u8, name, "bytearray")) return subject == .bytearray;
+    if (std.mem.eql(u8, name, "memoryview")) return subject == .memoryview;
     if (std.mem.eql(u8, name, "set")) return subject == .set and !subject.set.frozen;
     if (std.mem.eql(u8, name, "frozenset")) return subject == .set and subject.set.frozen;
     return false;
@@ -2465,6 +2547,42 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
     }
+    if (obj == .memoryview) {
+        const mv = obj.memoryview;
+        if (std.mem.eql(u8, name, "readonly")) {
+            const v = Value{ .boolean = mv.readonly() };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "nbytes")) {
+            const v = Value{ .small_int = @intCast(mv.len) };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "format")) {
+            const s = try Str.init(interp.allocator, "B");
+            const v = Value{ .str = s };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "itemsize")) {
+            const v = Value{ .small_int = 1 };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+    }
     // Built-in methods on str/list/dict.
     if (is_method) {
         const method: ?*value_mod.BuiltinFn = switch (obj) {
@@ -2473,6 +2591,7 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             .dict => dictmethods.lookup(name),
             .set => setmethods.lookup(name),
             .bytearray => bytearraymethods.lookup(name),
+            .memoryview => memoryviewmethods.lookup(name),
             else => null,
         };
         if (method) |m| {
