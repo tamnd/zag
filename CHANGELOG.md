@@ -9,6 +9,33 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.57] - 2026-04-25
+
+### Added
+
+- `56_dunders_extra_stress` fixture, byte-equal against CPython
+  3.14. Stress-tests the v0.0.56 work: reflected bitwise ops
+  where `int op user_class` falls through to the user's
+  `__rand__` / `__ror__` / `__rxor__` / `__rlshift__` /
+  `__rrshift__`, `NotImplemented` fallback between two custom
+  classes, in-place ops without `__i*__` rebinding to a new
+  object, in-place ops inherited through a child class,
+  matmul chained left-to-right, `__int__` vs `__index__`
+  precedence (`__int__` wins), `__format__` driving f-strings
+  with both empty and structured specs, and custom
+  `__hash__` / `__eq__` honored by both `dict` keys and
+  `frozenset` membership.
+
+### Changed
+
+- `FORMAT_SIMPLE` (the `f"{x}"` fast path) now calls
+  `__format__("")` on instances first, falling back to
+  `__str__` / `__repr__` only when the instance has no
+  `__format__`. CPython routes empty-spec formatting through
+  `__format__`, so user classes that override it (currency
+  formatters, structured logs) take effect inside f-strings
+  as well as inside `format(x)`.
+
 ## [0.0.56] - 2026-04-25
 
 ### Added
