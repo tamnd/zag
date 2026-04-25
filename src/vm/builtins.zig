@@ -297,6 +297,10 @@ pub fn hashBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
         try interp.raisePy("TypeError", "unhashable type: 'set'");
         return error.PyException;
     }
+    if (args[0] == .bytearray) {
+        try interp.raisePy("TypeError", "unhashable type: 'bytearray'");
+        return error.PyException;
+    }
     if (args[0] == .list) {
         try interp.raisePy("TypeError", "unhashable type: 'list'");
         return error.PyException;
