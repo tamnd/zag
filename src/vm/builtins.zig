@@ -315,6 +315,22 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
         .instance => {
             const dispatch = @import("dispatch.zig");
             const dunder = @import("dunder.zig");
+            if (interp.template_class) |tc| {
+                if (v.instance.cls == tc) {
+                    const strs = v.instance.dict.getStr("strings") orelse Value.none;
+                    const interps = v.instance.dict.getStr("interpolations") orelse Value.none;
+                    if (strs == .tuple and interps == .tuple) {
+                        const ss = strs.tuple.items;
+                        const is = interps.tuple.items;
+                        var i: usize = 0;
+                        while (i < ss.len) : (i += 1) {
+                            if (ss[i] == .str and ss[i].str.bytes.len > 0) try out.append(a, ss[i]);
+                            if (i < is.len) try out.append(a, is[i]);
+                        }
+                        return out;
+                    }
+                }
+            }
             if (try dunder.call(interp, v, "__iter__", &.{})) |it_v| {
                 while (try dispatch.iterStep(interp, it_v)) |x| try out.append(a, x);
             } else if (dunder.lookup(v, "__getitem__")) |_| {

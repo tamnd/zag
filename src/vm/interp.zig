@@ -107,6 +107,8 @@ pub const Interp = struct {
     traceback_class: ?*@import("../object/class.zig").Class = null,
     frame_class: ?*@import("../object/class.zig").Class = null,
     code_class: ?*@import("../object/class.zig").Class = null,
+    template_class: ?*@import("../object/class.zig").Class = null,
+    interpolation_class: ?*@import("../object/class.zig").Class = null,
     /// Currently-handled exception, set by PUSH_EXC_INFO and restored
     /// by POP_EXCEPT. Powers `sys.exc_info()` and the implicit
     /// `__context__` attached to exceptions raised inside an except.
