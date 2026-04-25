@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs for the same ref; saves minutes on force-pushes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: zig build test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0-dev.2984+cb7d2b056
+
+      - name: Print tool versions
+        run: |
+          zig version
+          python3.14 --version
+
+      - name: zig build
+        run: zig build
+
+      - name: zig build test
+        run: zig build test
+
+      - name: zig build run (hello fixture)
+        run: zig build run -- tests/fixtures/00_hello.cpython-314.pyc
