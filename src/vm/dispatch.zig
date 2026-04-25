@@ -927,6 +927,32 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                         return error.TypeError;
                     },
                 },
+                .bytearray => |b| switch (key) {
+                    .small_int => |i| {
+                        const n: i64 = @intCast(b.data.items.len);
+                        var idx = i;
+                        if (idx < 0) idx += n;
+                        if (idx < 0 or idx >= n) {
+                            try interp.indexError("bytearray deletion index out of range");
+                            return error.IndexError;
+                        }
+                        _ = b.data.orderedRemove(@intCast(idx));
+                    },
+                    .slice => |sl| {
+                        const n: i64 = @intCast(b.data.items.len);
+                        const r = try resolveSlice(interp, sl, n);
+                        if (r.step != 1) {
+                            try interp.typeError("extended bytearray slice deletion not supported");
+                            return error.TypeError;
+                        }
+                        const lo: usize = @intCast(r.start);
+                        try b.data.replaceRange(interp.allocator, lo, r.count, &.{});
+                    },
+                    else => {
+                        try interp.typeError("bytearray indices must be integers or slices");
+                        return error.TypeError;
+                    },
+                },
                 else => {
                     try interp.typeError("object does not support item deletion");
                     return error.TypeError;
@@ -1779,8 +1805,21 @@ fn inplaceAdd(interp: *Interp, a: Value, b: Value) !Value {
     if (a == .small_int and b == .small_int) {
         return Value{ .small_int = a.small_int +% b.small_int };
     }
-    try interp.typeError("unsupported operand type(s) for +");
-    return error.TypeError;
+    // bytearray += bytes-like extends in place and returns the same
+    // object. The caller stores the result back into the local, but
+    // since we mutated in place that store is a no-op identity-wise.
+    if (a == .bytearray) {
+        const src: ?[]const u8 = switch (b) {
+            .bytes => |x| x.data,
+            .bytearray => |x| x.data.items,
+            else => null,
+        };
+        if (src) |s| {
+            try a.bytearray.data.appendSlice(interp.allocator, s);
+            return a;
+        }
+    }
+    return add(interp, a, b);
 }
 
 /// `int % int` with Python semantics: the result takes the sign of
@@ -2110,8 +2149,26 @@ fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !voi
                 }
                 b.data.items[@intCast(idx)] = @intCast(v);
             },
+            .slice => |sl| {
+                const n: i64 = @intCast(b.data.items.len);
+                const r = try resolveSlice(interp, sl, n);
+                if (r.step != 1) {
+                    try interp.typeError("extended slice assignment not supported");
+                    return error.TypeError;
+                }
+                const src: []const u8 = switch (value) {
+                    .bytes => |x| x.data,
+                    .bytearray => |x| x.data.items,
+                    else => {
+                        try interp.typeError("bytearray slice assignment requires bytes-like");
+                        return error.TypeError;
+                    },
+                };
+                const lo: usize = @intCast(r.start);
+                try b.data.replaceRange(interp.allocator, lo, r.count, src);
+            },
             else => {
-                try interp.typeError("bytearray indices must be integers");
+                try interp.typeError("bytearray indices must be integers or slices");
                 return error.TypeError;
             },
         },

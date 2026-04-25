@@ -353,6 +353,25 @@ pub const Value = union(Tag) {
                 .gt => .gt,
             };
         }
+        // bytes / bytearray are lexicographically comparable, including
+        // cross-type (`bytearray(b"abc") < b"abd"` works).
+        const a_bytes: ?[]const u8 = switch (a) {
+            .bytes => |x| x.data,
+            .bytearray => |x| x.data.items,
+            else => null,
+        };
+        const b_bytes: ?[]const u8 = switch (b) {
+            .bytes => |x| x.data,
+            .bytearray => |x| x.data.items,
+            else => null,
+        };
+        if (a_bytes != null and b_bytes != null) {
+            return switch (std.mem.order(u8, a_bytes.?, b_bytes.?)) {
+                .lt => .lt,
+                .eq => .eq,
+                .gt => .gt,
+            };
+        }
         if (a == .tuple and b == .tuple) {
             const ax = a.tuple.items;
             const bx = b.tuple.items;
