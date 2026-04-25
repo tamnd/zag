@@ -106,6 +106,22 @@ pub const Interp = struct {
         self.current_exc = Value{ .instance = inst };
     }
 
+    /// Like `raisePy` but takes a Value for `args[0]` (e.g., the
+    /// generator's return value flowing into StopIteration).
+    pub fn raisePyValue(self: *Interp, cls_name: []const u8, val: Value) !void {
+        const cls_val = self.builtins.getStr(cls_name) orelse {
+            try self.stderr.print("zag: missing exception class '{s}'\n", .{cls_name});
+            try self.stderr.flush();
+            return error.NameError;
+        };
+        if (cls_val != .class) return error.TypeError;
+        const inst = try Instance.init(self.allocator, cls_val.class);
+        const t = try Tuple.init(self.allocator, 1);
+        t.items[0] = val;
+        try inst.dict.setStr(self.allocator, "args", Value{ .tuple = t });
+        self.current_exc = Value{ .instance = inst };
+    }
+
     pub fn unsupportedOpcode(self: *Interp, opcode: u8, ip: u32) !void {
         const op = @import("../op/opcode.zig");
         try self.stderr.print(

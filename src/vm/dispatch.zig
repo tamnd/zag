@@ -1772,6 +1772,10 @@ fn makeIter(interp: *Interp, v: Value) !*Iter {
         .list => |l| try Iter.init(interp.allocator, .{ .list = l }),
         .tuple => |t| try Iter.init(interp.allocator, .{ .tuple = t }),
         .iter => |it| it,
+        .str, .bytes, .dict, .generator => blk: {
+            const lst = try @import("builtins.zig").materialize(interp, v);
+            break :blk try Iter.init(interp.allocator, .{ .list = lst });
+        },
         else => {
             try interp.typeError("object is not iterable");
             return error.TypeError;
@@ -1922,15 +1926,22 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
         try interp.attributeError(obj.typeName(), name);
         return error.AttributeError;
     }
-    // Generator methods: `send` is the only one fixtures exercise.
-    if (obj == .generator and std.mem.eql(u8, name, "send")) {
-        if (is_method) {
-            frame.push(Value{ .builtin_fn = &gen_send_method });
-            frame.push(obj);
-        } else {
-            frame.push(Value{ .builtin_fn = &gen_send_method });
+    if (obj == .generator) {
+        const m: ?*value_mod.BuiltinFn = if (std.mem.eql(u8, name, "send"))
+            &gen_send_method
+        else if (std.mem.eql(u8, name, "close"))
+            &gen_close_method
+        else
+            null;
+        if (m) |meth| {
+            if (is_method) {
+                frame.push(Value{ .builtin_fn = meth });
+                frame.push(obj);
+            } else {
+                frame.push(Value{ .builtin_fn = meth });
+            }
+            return;
         }
-        return;
     }
     // Built-in methods on str/list/dict.
     if (is_method) {
@@ -2040,8 +2051,9 @@ pub fn genResume(interp: *Interp, gen: *Generator, sent_value: Value) DispatchEr
     if (gen.finished) return null;
     gen.frame.push(sent_value);
     gen.started = true;
-    if (run(interp, gen.frame)) |_| {
+    if (run(interp, gen.frame)) |ret| {
         gen.finished = true;
+        gen.return_value = ret;
         return null;
     } else |err| switch (err) {
         error.GenYield => {
@@ -2093,7 +2105,7 @@ pub fn nextBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
         .generator => |g| {
             if (try genResume(interp, g, Value.none)) |v| return v;
             if (has_default) return default_v;
-            try interp.raisePy("StopIteration", "");
+            try interp.raisePyValue("StopIteration", g.return_value);
             return error.PyException;
         },
         .iter => |it| {
@@ -2128,11 +2140,20 @@ pub fn genSendBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!V
     }
     const g = args[0].generator;
     if (try genResume(interp, g, args[1])) |v| return v;
-    try interp.raisePy("StopIteration", "");
+    try interp.raisePyValue("StopIteration", g.return_value);
     return error.PyException;
 }
 
 var gen_send_method: value_mod.BuiltinFn = .{ .name = "send", .func = genSendBuiltin };
+
+pub fn genCloseBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    _ = interp_opaque;
+    if (args.len < 1 or args[0] != .generator) return error.TypeError;
+    args[0].generator.finished = true;
+    return Value.none;
+}
+
+var gen_close_method: value_mod.BuiltinFn = .{ .name = "close", .func = genCloseBuiltin };
 
 fn callPyFunction(
     interp: *Interp,
@@ -2336,16 +2357,30 @@ pub fn buildClass(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
 /// Only Instance / Class is in scope; anything else returns False.
 pub fn isInstanceBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    if (args.len != 2 or args[1] != .class) {
+    if (args.len != 2) {
         try interp.typeError("isinstance expects (obj, class)");
         return error.TypeError;
     }
-    if (args[0] != .instance) return Value{ .boolean = false };
-    const target = args[1].class;
-    for (args[0].instance.cls.mro) |c| {
-        if (c == target) return Value{ .boolean = true };
+    if (args[1] == .class) {
+        if (args[0] != .instance) return Value{ .boolean = false };
+        const target = args[1].class;
+        for (args[0].instance.cls.mro) |c| {
+            if (c == target) return Value{ .boolean = true };
+        }
+        return Value{ .boolean = false };
     }
-    return Value{ .boolean = false };
+    if (args[1] == .builtin_fn) {
+        return Value{ .boolean = matchClassCheck(args[0], args[1]) };
+    }
+    if (args[1] == .tuple) {
+        for (args[1].tuple.items) |t| {
+            const r = try isInstanceBuiltin(interp_opaque, &.{ args[0], t });
+            if (r.boolean) return Value{ .boolean = true };
+        }
+        return Value{ .boolean = false };
+    }
+    try interp.typeError("isinstance expects (obj, class)");
+    return error.TypeError;
 }
 
 /// `issubclass(sub, cls)` -- walks `sub.mro` for `cls`. Both args

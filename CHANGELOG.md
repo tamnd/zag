@@ -9,6 +9,32 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.32] - 2026-04-25
+
+### Added
+
+- `31_generators_stress` fixture, lifted from goipy's testdata,
+  byte-equal against CPython 3.14. Generators with `return`
+  values flowing through `StopIteration.args[0]`, two-way
+  `.send()`, `yield from` over heterogeneous iterables (range,
+  tuple, str), and `.close()`.
+- `interp.raisePyValue` for raising a Python exception with a
+  pre-built `args[0]` value (vs. a string).
+- `Generator.return_value` field; `genResume` captures the
+  function's `RETURN_VALUE` so `next`/`send` can surface it via
+  `StopIteration.args[0]`.
+- Generator `.close()` method (just flips `finished` — close-on-
+  unclosed-frame finalization isn't exercised by fixtures yet).
+- `makeIter` now drains `str`/`bytes`/`dict`/`generator` via
+  `materialize`, so `yield from` accepts them.
+
+### Fixed
+
+- `isinstance` now accepts builtin type stand-ins (`list`,
+  `int`, ...) and a tuple-of-classes second argument.
+- `StopIteration` raised by an exhausted generator now carries
+  the generator's return value (was empty string).
+
 ## [0.0.31] - 2026-04-25
 
 ### Added

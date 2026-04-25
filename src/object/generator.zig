@@ -10,6 +10,7 @@ pub const Generator = struct {
     frame: *Frame,
     finished: bool = false,
     started: bool = false,
+    return_value: Value = Value.none,
 
     pub fn init(allocator: std.mem.Allocator, frame: *Frame) !*Generator {
         const self = try allocator.create(Generator);
