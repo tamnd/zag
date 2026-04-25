@@ -9,6 +9,17 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.29] - 2026-04-25
+
+### Added
+
+- `28_match_deep` fixture, lifted from goipy's testdata,
+  byte-equal against CPython 3.14. Recursive class patterns
+  through `Node(tag, kids)`, attribute-access matching
+  (`Color.RED`), `as` binding inside or-patterns and mapping
+  patterns, deeply nested mapping+list patterns over a tiny
+  AST.
+
 ## [0.0.28] - 2026-04-25
 
 ### Added
