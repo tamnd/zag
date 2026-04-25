@@ -109,6 +109,7 @@ pub const Interp = struct {
     /// by POP_EXCEPT. Powers `sys.exc_info()` and the implicit
     /// `__context__` attached to exceptions raised inside an except.
     handling_exc: ?Value = null,
+    recursion_limit: i64 = 1000,
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
