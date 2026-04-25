@@ -8,13 +8,18 @@ const op = @import("../op/opcode.zig");
 const Opcode = op.Opcode;
 
 const Value = @import("../object/value.zig").Value;
+const Str = @import("../object/string.zig").Str;
+const List = @import("../object/list.zig").List;
 const Frame = @import("frame.zig").Frame;
 const Interp = @import("interp.zig").Interp;
+const strmethods = @import("strmethods.zig");
 
 pub const DispatchError = error{
     UnknownOpcode,
     NameError,
     TypeError,
+    AttributeError,
+    IndexError,
     StackUnderflow,
     OutOfMemory,
     WriteFailed,
@@ -123,6 +128,83 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.CALL)]);
         },
 
+        .LOAD_ATTR => {
+            const arg = oparg(frame, ext_arg);
+            const name_idx = arg >> 1;
+            const is_method = (arg & 1) != 0;
+            const name = frame.code.names[name_idx];
+            const obj = frame.pop();
+            if (is_method) {
+                if (obj == .str) {
+                    if (strmethods.lookup(name)) |m| {
+                        frame.push(Value{ .builtin_fn = m });
+                        frame.push(obj);
+                    } else {
+                        try interp.attributeError(obj.typeName(), name);
+                        return error.AttributeError;
+                    }
+                } else {
+                    try interp.attributeError(obj.typeName(), name);
+                    return error.AttributeError;
+                }
+            } else {
+                try interp.attributeError(obj.typeName(), name);
+                return error.AttributeError;
+            }
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.LOAD_ATTR)]);
+        },
+
+        .BINARY_OP => {
+            const arg = oparg(frame, ext_arg);
+            const b = frame.pop();
+            const a = frame.pop();
+            const result = try binaryOp(interp, a, b, arg);
+            frame.push(result);
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.BINARY_OP)]);
+        },
+
+        .CONTAINS_OP => {
+            const arg = oparg(frame, ext_arg);
+            const container = frame.pop();
+            const item = frame.pop();
+            const found = try containsOp(interp, item, container);
+            const invert = (arg & 1) != 0;
+            frame.push(Value{ .boolean = found != invert });
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.CONTAINS_OP)]);
+        },
+
+        .BUILD_LIST => {
+            const arg = oparg(frame, ext_arg);
+            const list = try List.init(interp.allocator);
+            const start = frame.sp - arg;
+            var i: u32 = 0;
+            while (i < arg) : (i += 1) {
+                try list.append(interp.allocator, frame.stack[start + i]);
+            }
+            frame.sp = start;
+            frame.push(Value{ .list = list });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .LIST_EXTEND => {
+            const arg = oparg(frame, ext_arg);
+            const iterable = frame.pop();
+            const list_val = frame.stack[frame.sp - arg];
+            if (list_val != .list) {
+                try interp.typeError("LIST_EXTEND target is not a list");
+                return error.TypeError;
+            }
+            switch (iterable) {
+                .tuple => |t| for (t.items) |it| try list_val.list.append(interp.allocator, it),
+                .list => |l| for (l.items.items) |it| try list_val.list.append(interp.allocator, it),
+                else => {
+                    try interp.typeError("LIST_EXTEND requires an iterable");
+                    return error.TypeError;
+                },
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .COMPARE_OP => {
             const arg = oparg(frame, ext_arg);
             // 3.14 encoding: oparg >> 5 selects the comparison kind.
@@ -217,6 +299,120 @@ inline fn advance(frame: *Frame, ext_arg: *u32, cw: u8) Opcode {
     frame.ip += 2 + 2 * @as(u32, cw);
     ext_arg.* = 0;
     return @as(Opcode, @enumFromInt(frame.code.bytecode[frame.ip]));
+}
+
+/// CPython 3.14 BINARY_OP arg=26 -> NB_SUBSCR (the only flavor M4
+/// forces). Other variants surface as TypeError so the next fixture
+/// to need them prompts a fix instead of silently doing the wrong
+/// thing.
+fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
+    if (arg != 26) {
+        try interp.stderr.print(
+            "TypeError: zag: unsupported BINARY_OP arg {d}\n",
+            .{arg},
+        );
+        try interp.stderr.flush();
+        return error.TypeError;
+    }
+    return subscript(interp, a, b);
+}
+
+fn subscript(interp: *Interp, container: Value, key: Value) !Value {
+    switch (container) {
+        .str => |s| {
+            const bytes = s.bytes;
+            switch (key) {
+                .small_int => |i| {
+                    const n: i64 = @intCast(bytes.len);
+                    var idx = i;
+                    if (idx < 0) idx += n;
+                    if (idx < 0 or idx >= n) {
+                        try interp.indexError("string index out of range");
+                        return error.IndexError;
+                    }
+                    const piece = try Str.init(interp.allocator, bytes[@intCast(idx) .. @intCast(idx + 1)]);
+                    return Value{ .str = piece };
+                },
+                .slice => |sl| {
+                    if (sl.step != .none) {
+                        try interp.typeError("slice step != 1 not supported");
+                        return error.TypeError;
+                    }
+                    const n: i64 = @intCast(bytes.len);
+                    const start = clampSliceBound(sl.start, n, 0);
+                    const stop = clampSliceBound(sl.stop, n, n);
+                    const lo: usize = @intCast(start);
+                    const hi: usize = @intCast(if (stop < start) start else stop);
+                    const piece = try Str.init(interp.allocator, bytes[lo..hi]);
+                    return Value{ .str = piece };
+                },
+                else => {
+                    try interp.typeError("string indices must be integers or slices");
+                    return error.TypeError;
+                },
+            }
+        },
+        .list => |l| {
+            switch (key) {
+                .small_int => |i| {
+                    const n: i64 = @intCast(l.items.items.len);
+                    var idx = i;
+                    if (idx < 0) idx += n;
+                    if (idx < 0 or idx >= n) {
+                        try interp.indexError("list index out of range");
+                        return error.IndexError;
+                    }
+                    return l.items.items[@intCast(idx)];
+                },
+                else => {
+                    try interp.typeError("list indices must be integers");
+                    return error.TypeError;
+                },
+            }
+        },
+        else => {
+            try interp.typeError("object is not subscriptable");
+            return error.TypeError;
+        },
+    }
+}
+
+fn clampSliceBound(v: Value, n: i64, default_: i64) i64 {
+    return switch (v) {
+        .none => default_,
+        .small_int => |i| blk: {
+            var x = i;
+            if (x < 0) x += n;
+            if (x < 0) x = 0;
+            if (x > n) x = n;
+            break :blk x;
+        },
+        else => default_,
+    };
+}
+
+fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
+    switch (container) {
+        .str => |s| {
+            if (item != .str) {
+                try interp.typeError("'in <string>' requires string as left operand");
+                return error.TypeError;
+            }
+            return std.mem.indexOf(u8, s.bytes, item.str.bytes) != null;
+        },
+        .list => |l| {
+            for (l.items.items) |it| if (it.equals(item)) return true;
+            return false;
+        },
+        .tuple => |t| {
+            for (t.items) |it| if (it.equals(item)) return true;
+            return false;
+        },
+        else => {
+            try interp.typeError("argument of type is not iterable");
+            return error.TypeError;
+        },
+    }
 }
 
 /// CPython 3.14 COMPARE_OP kinds: 0 `<`, 1 `<=`, 2 `==`, 3 `!=`,
