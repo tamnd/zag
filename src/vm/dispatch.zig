@@ -64,6 +64,9 @@ pub const DispatchError = error{
 /// TOS), jump, and re-enter. Otherwise propagate.
 pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
     const traceback = @import("traceback.zig");
+    const prev_frame = interp.current_frame;
+    interp.current_frame = frame;
+    defer interp.current_frame = prev_frame;
     while (true) {
         if (dispatchOne(interp, frame)) |v| {
             return v;

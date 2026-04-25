@@ -39,6 +39,7 @@ pub fn main(init: std.process.Init) !void {
     };
 
     var interp = try zag.vm.interp.Interp.init(run_alloc, stdout, stderr);
+    interp.io = io;
     try interp.installBuiltins();
 
     // Pre-register every sibling `.cpython-314.pyc` next to the entry

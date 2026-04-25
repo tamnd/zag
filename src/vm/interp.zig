@@ -54,6 +54,7 @@ pub const Interp = struct {
     allocator: std.mem.Allocator,
     stdout: *std.Io.Writer,
     stderr: *std.Io.Writer,
+    io: std.Io = undefined,
     globals: *Dict,
     builtins: *Dict,
     /// The live Python exception, or null. Set by `raisePy` (or
@@ -101,6 +102,7 @@ pub const Interp = struct {
     pprint_module: ?*Module = null,
     html_module: ?*Module = null,
     sys_module: ?*Module = null,
+    os_module: ?*Module = null,
     sys_stream_class: ?*@import("../object/class.zig").Class = null,
     traceback_class: ?*@import("../object/class.zig").Class = null,
     frame_class: ?*@import("../object/class.zig").Class = null,
@@ -110,11 +112,13 @@ pub const Interp = struct {
     /// `__context__` attached to exceptions raised inside an except.
     handling_exc: ?Value = null,
     recursion_limit: i64 = 1000,
+    current_frame: ?*@import("frame.zig").Frame = null,
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
     io_stringio_class: ?*@import("../object/class.zig").Class = null,
     io_bytesio_class: ?*@import("../object/class.zig").Class = null,
+    file_class: ?*@import("../object/class.zig").Class = null,
     hashlib_hash_class: ?*@import("../object/class.zig").Class = null,
     csv_writer_class: ?*@import("../object/class.zig").Class = null,
     csv_dict_writer_class: ?*@import("../object/class.zig").Class = null,
@@ -565,6 +569,12 @@ pub const Interp = struct {
             if (self.sys_module) |m| return m;
             const m = sys_mod.build(self) catch return null;
             self.sys_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "os")) {
+            if (self.os_module) |m| return m;
+            const m = @import("os_mod.zig").build(self) catch return null;
+            self.os_module = m;
             return m;
         }
         return null;

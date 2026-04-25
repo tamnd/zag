@@ -1766,7 +1766,93 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("dir", dirBuiltin);
     try interp.builtins.setStr(interp.allocator, "Ellipsis", Value.ellipsis);
     try interp.builtins.setStr(interp.allocator, "NotImplemented", Value.not_implemented);
+    try interp.registerBuiltin("globals", globalsBuiltin);
+    try interp.registerBuiltin("locals", localsBuiltin);
+    try interp.registerBuiltin("vars", varsBuiltin);
+    try interp.registerBuiltin("aiter", aiterBuiltin);
+    try interp.registerBuiltin("anext", anextBuiltin);
+    try interp.registerBuiltin("breakpoint", breakpointBuiltin);
+    try interp.registerBuiltin("help", helpBuiltin);
+    try interp.registerBuiltin("open", @import("file_io.zig").openFn);
     try installExceptions(interp);
+    try installObjectClass(interp);
+}
+
+fn installObjectClass(interp: *Interp) !void {
+    const a = interp.allocator;
+    const obj_cls = try Class.init(a, "object", &.{}, try Dict.init(a));
+    try interp.builtins.setStr(a, "object", Value{ .class = obj_cls });
+}
+
+fn globalsBuiltin(p: *anyopaque, _: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const f = interp.current_frame orelse return Value{ .dict = interp.globals };
+    return Value{ .dict = f.globals };
+}
+
+fn localsBuiltin(p: *anyopaque, _: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    return try snapshotLocals(interp);
+}
+
+fn varsBuiltin(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len == 0) return try snapshotLocals(interp);
+    const v = args[0];
+    return switch (v) {
+        .instance => |i| Value{ .dict = i.dict },
+        .class => |c| Value{ .dict = c.dict },
+        .module => |m| Value{ .dict = m.attrs },
+        else => blk: {
+            try interp.typeError("vars() argument must have __dict__");
+            break :blk error.TypeError;
+        },
+    };
+}
+
+fn snapshotLocals(interp: *Interp) !Value {
+    const a = interp.allocator;
+    const f = interp.current_frame orelse return Value{ .dict = try Dict.init(a) };
+    if (f.locals != f.globals) {
+        return Value{ .dict = f.locals };
+    }
+    const out = try Dict.init(a);
+    for (f.code.localsplusnames, 0..) |name, i| {
+        const slot = f.fast[i];
+        if (slot == .null_sentinel) continue;
+        try out.setStr(a, name, slot);
+    }
+    return Value{ .dict = out };
+}
+
+fn aiterBuiltin(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len != 1) {
+        try interp.typeError("aiter expects 1 arg");
+        return error.TypeError;
+    }
+    if (try @import("dunder.zig").call(interp, args[0], "__aiter__", &.{})) |v| return v;
+    try interp.typeError("aiter: object has no __aiter__");
+    return error.TypeError;
+}
+
+fn anextBuiltin(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len != 1) {
+        try interp.typeError("anext expects 1 arg");
+        return error.TypeError;
+    }
+    if (try @import("dunder.zig").call(interp, args[0], "__anext__", &.{})) |v| return v;
+    try interp.typeError("anext: object has no __anext__");
+    return error.TypeError;
+}
+
+fn breakpointBuiltin(_: *anyopaque, _: []const Value) anyerror!Value {
+    return Value.none;
+}
+
+fn helpBuiltin(_: *anyopaque, _: []const Value) anyerror!Value {
+    return Value.none;
 }
 
 /// Build the exception-class hierarchy and register each as a
@@ -1789,6 +1875,9 @@ fn installExceptions(interp: *Interp) !void {
     const type_err = try Class.init(a, "TypeError", &.{exception}, try Dict.init(a));
     const name_err = try Class.init(a, "NameError", &.{exception}, try Dict.init(a));
     const stop_iter = try Class.init(a, "StopIteration", &.{exception}, try Dict.init(a));
+    const stop_async_iter = try Class.init(a, "StopAsyncIteration", &.{exception}, try Dict.init(a));
+    const os_err = try Class.init(a, "OSError", &.{exception}, try Dict.init(a));
+    const file_not_found = try Class.init(a, "FileNotFoundError", &.{os_err}, try Dict.init(a));
     const assertion_err = try Class.init(a, "AssertionError", &.{exception}, try Dict.init(a));
     const not_impl_err = try Class.init(a, "NotImplementedError", &.{runtime_err}, try Dict.init(a));
     const import_err = try Class.init(a, "ImportError", &.{exception}, try Dict.init(a));
@@ -1808,6 +1897,9 @@ fn installExceptions(interp: *Interp) !void {
         .{ .name = "TypeError", .cls = type_err },
         .{ .name = "NameError", .cls = name_err },
         .{ .name = "StopIteration", .cls = stop_iter },
+        .{ .name = "StopAsyncIteration", .cls = stop_async_iter },
+        .{ .name = "OSError", .cls = os_err },
+        .{ .name = "FileNotFoundError", .cls = file_not_found },
         .{ .name = "AssertionError", .cls = assertion_err },
         .{ .name = "NotImplementedError", .cls = not_impl_err },
         .{ .name = "ImportError", .cls = import_err },
