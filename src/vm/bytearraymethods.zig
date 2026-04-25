@@ -8,6 +8,7 @@ const Value = value_mod.Value;
 const BuiltinFn = value_mod.BuiltinFn;
 
 const Interp = @import("interp.zig").Interp;
+const Bytearray = @import("../object/bytearray.zig").Bytearray;
 const bytesmethods = @import("bytesmethods.zig");
 
 fn coerceByte(interp: *Interp, v: Value) !u8 {
@@ -102,6 +103,13 @@ fn insertImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     return Value.none;
 }
 
+fn copyImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const src = args[0].bytearray.data.items;
+    const ba = try Bytearray.fromSlice(interp.allocator, src);
+    return Value{ .bytearray = ba };
+}
+
 fn removeImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const ba = args[0].bytearray;
@@ -121,6 +129,7 @@ var clear_entry: BuiltinFn = .{ .name = "clear", .func = clearImpl };
 var reverse_entry: BuiltinFn = .{ .name = "reverse", .func = reverseImpl };
 var insert_entry: BuiltinFn = .{ .name = "insert", .func = insertImpl };
 var remove_entry: BuiltinFn = .{ .name = "remove", .func = removeImpl };
+var copy_entry: BuiltinFn = .{ .name = "copy", .func = copyImpl };
 
 pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "append")) return &append_entry;
@@ -130,5 +139,6 @@ pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "reverse")) return &reverse_entry;
     if (std.mem.eql(u8, name, "insert")) return &insert_entry;
     if (std.mem.eql(u8, name, "remove")) return &remove_entry;
+    if (std.mem.eql(u8, name, "copy")) return &copy_entry;
     return bytesmethods.lookup(name);
 }
