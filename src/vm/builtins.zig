@@ -467,6 +467,29 @@ pub fn floatBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
     };
 }
 
+/// Single-arg `type(obj)` only -- the metaclass / 3-arg form is
+/// out of scope. Returns the runtime class for instances and
+/// matching builtin classes for primitives.
+pub fn typeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.typeError("type() takes 1 argument");
+        return error.TypeError;
+    }
+    return switch (args[0]) {
+        .instance => |obj| Value{ .class = obj.cls },
+        .class => |c| Value{ .class = c },
+        else => |v| blk: {
+            const name = v.typeName();
+            if (interp.builtins.getStr(name)) |found| {
+                if (found == .class) break :blk found;
+            }
+            try interp.typeError("type(): no class for primitive (zag)");
+            break :blk error.TypeError;
+        },
+    };
+}
+
 pub fn bytesBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len == 0) {
@@ -526,6 +549,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("float", floatBuiltin);
     try interp.registerBuiltin("str", strBuiltin);
     try interp.registerBuiltin("bytes", bytesBuiltin);
+    try interp.registerBuiltin("type", typeBuiltin);
     const dispatch = @import("dispatch.zig");
     try interp.registerBuiltin("__build_class__", dispatch.buildClass);
     try interp.registerBuiltin("isinstance", dispatch.isInstanceBuiltin);

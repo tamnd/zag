@@ -1287,7 +1287,9 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 }
             }
             if (found) |v| {
-                if (is_method and (v == .function or v == .builtin_fn)) {
+                if (v == .descriptor) {
+                    try bindDescriptor(interp, frame, v.descriptor, self_val, cls_val, is_method);
+                } else if (is_method and (v == .function or v == .builtin_fn)) {
                     frame.push(v);
                     frame.push(self_val);
                 } else if (is_method) {
