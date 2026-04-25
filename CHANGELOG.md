@@ -9,6 +9,15 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.99] - 2026-04-26
+
+### Added
+
+- `99_threading_module` fixture, byte-equal. New pinhole `threading`:
+  Lock, RLock, Thread (target runs inline on start), Event,
+  Semaphore, Condition, Barrier, local; plus current_thread,
+  main_thread, active_count, enumerate, get_ident.
+
 ## [0.0.98] - 2026-04-26
 
 ### Added
