@@ -9,6 +9,15 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.100] - 2026-04-26
+
+### Added
+
+- `100_string_constants` fixture, byte-equal. `string.capwords(s,
+  sep=None)`: with `sep`, split on literal sep and join with same
+  sep; without sep, split on runs of ASCII whitespace and join with
+  a single space.
+
 ## [0.0.99] - 2026-04-26
 
 ### Added
