@@ -9,6 +9,19 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.92] - 2026-04-26
+
+### Added
+
+- `92_exceptions_hierarchy` fixture, byte-equal.
+- Builtin exception tree mirrors CPython 3.14: SystemExit/
+  KeyboardInterrupt/GeneratorExit, the full Arithmetic/Lookup/Name/
+  Import/OS/Connection/Syntax/Unicode families, the entire Warning
+  tree, RecursionError, BufferError, MemoryError, ReferenceError,
+  SystemError, EOFError, and BaseExceptionGroup/ExceptionGroup (the
+  latter multi-inherits BaseExceptionGroup and Exception).
+- `IOError` aliases `OSError`.
+
 ## [0.0.91] - 2026-04-26
 
 ### Added
