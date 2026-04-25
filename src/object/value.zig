@@ -14,6 +14,7 @@ const Tuple = @import("tuple.zig").Tuple;
 const List = @import("list.zig").List;
 const Dict = @import("dict.zig").Dict;
 const Code = @import("code.zig").Code;
+const Slice = @import("slice.zig").Slice;
 
 pub const Tag = enum(u8) {
     none,
@@ -27,6 +28,7 @@ pub const Tag = enum(u8) {
     dict,
     code,
     builtin_fn,
+    slice,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
     /// uses `NULL` as a C-level sentinel before a CALL and `None` as a
     /// real Python value.
@@ -55,6 +57,7 @@ pub const Value = union(Tag) {
     dict: *Dict,
     code: *Code,
     builtin_fn: *BuiltinFn,
+    slice: *Slice,
     null_sentinel,
 
     pub fn isTruthy(self: Value) bool {
@@ -68,7 +71,7 @@ pub const Value = union(Tag) {
             .tuple => |t| t.items.len != 0,
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
-            .code, .builtin_fn => true,
+            .code, .builtin_fn, .slice => true,
         };
     }
 
@@ -107,6 +110,15 @@ pub const Value = union(Tag) {
             .dict => try w.writeAll("{...}"),
             .code => |c| try w.print("<code object {s}>", .{c.name}),
             .builtin_fn => |f| try w.print("<built-in function {s}>", .{f.name}),
+            .slice => |sl| {
+                try w.writeAll("slice(");
+                try sl.start.writeRepr(w);
+                try w.writeAll(", ");
+                try sl.stop.writeRepr(w);
+                try w.writeAll(", ");
+                try sl.step.writeRepr(w);
+                try w.writeByte(')');
+            },
         }
     }
 
@@ -188,6 +200,7 @@ pub const Value = union(Tag) {
             .dict => |p| p == b.dict,
             .code => |p| p == b.code,
             .builtin_fn => |p| p == b.builtin_fn,
+            .slice => |p| p == b.slice,
         };
     }
 
@@ -205,6 +218,7 @@ pub const Value = union(Tag) {
             .dict => "dict",
             .code => "code",
             .builtin_fn => "builtin_function_or_method",
+            .slice => "slice",
         };
     }
 };
