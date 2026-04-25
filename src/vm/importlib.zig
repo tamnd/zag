@@ -42,12 +42,12 @@ fn importModuleKw(
 ) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len < 1 or args.len > 2) {
-        try interp.typeError("import_module() takes 1 or 2 positional arguments");
-        return error.TypeError;
+        try interp.raisePy("TypeError", "import_module() takes 1 or 2 positional arguments");
+        return error.PyException;
     }
     if (args[0] != .str) {
-        try interp.typeError("import_module() name must be str");
-        return error.TypeError;
+        try interp.raisePy("TypeError", "import_module() name must be str");
+        return error.PyException;
     }
     const name = args[0].str.bytes;
 
@@ -57,28 +57,28 @@ fn importModuleKw(
             .none => {},
             .str => |s| package = s.bytes,
             else => {
-                try interp.typeError("import_module() package must be str or None");
-                return error.TypeError;
+                try interp.raisePy("TypeError", "import_module() package must be str or None");
+                return error.PyException;
             },
         }
     }
     for (kw_names, kw_values) |kn, kv| {
         if (kn != .str) {
-            try interp.typeError("import_module() keyword name must be str");
-            return error.TypeError;
+            try interp.raisePy("TypeError", "import_module() keyword name must be str");
+            return error.PyException;
         }
         if (std.mem.eql(u8, kn.str.bytes, "package")) {
             switch (kv) {
                 .none => {},
                 .str => |s| package = s.bytes,
                 else => {
-                    try interp.typeError("import_module() package must be str or None");
-                    return error.TypeError;
+                    try interp.raisePy("TypeError", "import_module() package must be str or None");
+                    return error.PyException;
                 },
             }
         } else {
-            try interp.typeError("import_module() got an unexpected keyword argument");
-            return error.TypeError;
+            try interp.raisePy("TypeError", "import_module() got an unexpected keyword argument");
+            return error.PyException;
         }
     }
 
@@ -123,14 +123,14 @@ fn importModuleKw(
 fn reloadFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len != 1) {
-        try interp.typeError("reload() takes exactly one argument");
-        return error.TypeError;
+        try interp.raisePy("TypeError", "reload() takes exactly one argument");
+        return error.PyException;
     }
     const m = switch (args[0]) {
         .module => |mm| mm,
         else => {
-            try interp.typeError("reload() argument must be a module");
-            return error.TypeError;
+            try interp.raisePy("TypeError", "reload() argument must be a module");
+            return error.PyException;
         },
     };
     const reg = interp.module_codes.get(m.name) orelse {
