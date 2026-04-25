@@ -61,23 +61,37 @@ fn intOf(v: Value) !i64 {
 }
 
 fn seqFloats(a: std.mem.Allocator, v: Value) ![]f64 {
-    const items: []const Value = switch (v) {
-        .list => |l| l.items.items,
-        .tuple => |t| t.items,
+    switch (v) {
+        .list => |l| {
+            const out = try a.alloc(f64, l.items.items.len);
+            for (l.items.items, 0..) |it, i| out[i] = try floatOf(it);
+            return out;
+        },
+        .tuple => |t| {
+            const out = try a.alloc(f64, t.items.len);
+            for (t.items, 0..) |it, i| out[i] = try floatOf(it);
+            return out;
+        },
+        .iter => |it| {
+            var buf: std.ArrayList(f64) = .empty;
+            errdefer buf.deinit(a);
+            while (it.next()) |x| try buf.append(a, try floatOf(x));
+            return buf.toOwnedSlice(a);
+        },
         else => return error.TypeError,
-    };
-    const out = try a.alloc(f64, items.len);
-    for (items, 0..) |it, i| out[i] = try floatOf(it);
-    return out;
+    }
 }
 
 fn allInt(v: Value) bool {
     const items: []const Value = switch (v) {
         .list => |l| l.items.items,
         .tuple => |t| t.items,
+        .iter => return true,
         else => return false,
     };
-    for (items) |it| if (it != .small_int and it != .boolean) return false;
+    for (items) |it| {
+        if (it != .small_int and it != .boolean) return false;
+    }
     return true;
 }
 
@@ -85,6 +99,7 @@ fn meanFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
     if (args.len < 1) return error.TypeError;
+    const all_int = allInt(args[0]);
     const xs = try seqFloats(a, args[0]);
     defer a.free(xs);
     if (xs.len == 0) {
@@ -94,14 +109,22 @@ fn meanFn(p: *anyopaque, args: []const Value) anyerror!Value {
     var sum: f64 = 0;
     for (xs) |x| sum += x;
     const mean = sum / @as(f64, @floatFromInt(xs.len));
-    // Return int when all inputs are ints and result is whole? CPython
-    // returns Fraction or float; the fixture uses float-ish output, so
-    // just return float — except for the [1,2,3,4] case where 2.5 is float.
-    return Value{ .float = mean };
+    return maybeIntFloat(mean, all_int);
 }
 
 fn fmeanFn(p: *anyopaque, args: []const Value) anyerror!Value {
-    return meanFn(p, args);
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1) return error.TypeError;
+    const xs = try seqFloats(a, args[0]);
+    defer a.free(xs);
+    if (xs.len == 0) {
+        try interp.raisePy("StatisticsError", "fmean requires at least one data point");
+        return error.PyException;
+    }
+    var sum: f64 = 0;
+    for (xs) |x| sum += x;
+    return Value{ .float = sum / @as(f64, @floatFromInt(xs.len)) };
 }
 
 fn cmpF64(_: void, x: f64, y: f64) bool {
@@ -266,7 +289,7 @@ fn varianceFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const a = interp.allocator;
     const xs = try seqFloats(a, args[0]);
     defer a.free(xs);
-    return Value{ .float = varianceCore(xs, true) };
+    return maybeIntFloat(varianceCore(xs, true), allInt(args[0]));
 }
 
 fn pstdevFn(p: *anyopaque, args: []const Value) anyerror!Value {
@@ -318,29 +341,46 @@ fn quantilesKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_v
     const xs = try seqFloats(a, args[0]);
     defer a.free(xs);
     var n: usize = 4;
+    var inclusive = false;
     for (kw_names, kw_values) |kn, kv| {
-        if (kn == .str and std.mem.eql(u8, kn.str.bytes, "n") and kv == .small_int) {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "n") and kv == .small_int) {
             n = @intCast(kv.small_int);
+        } else if (std.mem.eql(u8, kn.str.bytes, "method") and kv == .str) {
+            inclusive = std.mem.eql(u8, kv.str.bytes, "inclusive");
         }
     }
     std.sort.block(f64, xs, {}, cmpF64);
     const list = try List.init(a);
     if (xs.len < 2) return Value{ .list = list };
-    // CPython's "exclusive" method (default): cut points at i*(n+1)/n positions.
     const m = xs.len;
-    var i: usize = 1;
-    while (i < n) : (i += 1) {
-        const j_num = i * (m + 1);
-        const j = j_num / n;
-        const delta = j_num - j * n;
-        if (j < 1) {
-            try list.append(a, Value{ .float = xs[0] });
-        } else if (j >= m) {
-            try list.append(a, Value{ .float = xs[m - 1] });
-        } else {
-            const interp_v = (xs[j - 1] * @as(f64, @floatFromInt(n - delta)) +
-                xs[j] * @as(f64, @floatFromInt(delta))) / @as(f64, @floatFromInt(n));
-            try list.append(a, Value{ .float = interp_v });
+    if (inclusive) {
+        // CPython "inclusive": cut points at i*(m-1)/n; lerp between xs[j] and xs[j+1].
+        var i: usize = 1;
+        while (i < n) : (i += 1) {
+            const num = i * (m - 1);
+            const j = num / n;
+            const delta = num - j * n;
+            const v = (xs[j] * @as(f64, @floatFromInt(n - delta)) +
+                xs[j + 1] * @as(f64, @floatFromInt(delta))) / @as(f64, @floatFromInt(n));
+            try list.append(a, Value{ .float = v });
+        }
+    } else {
+        // CPython "exclusive": cut points at i*(m+1)/n.
+        var i: usize = 1;
+        while (i < n) : (i += 1) {
+            const j_num = i * (m + 1);
+            const j = j_num / n;
+            const delta = j_num - j * n;
+            if (j < 1) {
+                try list.append(a, Value{ .float = xs[0] });
+            } else if (j >= m) {
+                try list.append(a, Value{ .float = xs[m - 1] });
+            } else {
+                const v = (xs[j - 1] * @as(f64, @floatFromInt(n - delta)) +
+                    xs[j] * @as(f64, @floatFromInt(delta))) / @as(f64, @floatFromInt(n));
+                try list.append(a, Value{ .float = v });
+            }
         }
     }
     return Value{ .list = list };

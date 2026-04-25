@@ -33,20 +33,20 @@ fn regKw(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr, kw_f
     try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
 }
 
-fn writeSingle(w: *std.Io.Writer, v: Value, scratch: std.mem.Allocator) anyerror!void {
+fn writeSingle(w: *std.Io.Writer, v: Value, scratch: std.mem.Allocator, sort_dicts: bool) anyerror!void {
     switch (v) {
         .dict => |d| {
             const pairs = d.pairs.items;
             const idx = try scratch.alloc(usize, pairs.len);
             defer scratch.free(idx);
             for (idx, 0..) |*ii, i| ii.* = i;
-            std.sort.block(usize, idx, pairs, lessKey);
+            if (sort_dicts) std.sort.block(usize, idx, pairs, lessKey);
             try w.writeAll("{");
             for (idx, 0..) |k, i| {
                 if (i > 0) try w.writeAll(", ");
-                try writeSingle(w, pairs[k].key, scratch);
+                try writeSingle(w, pairs[k].key, scratch, sort_dicts);
                 try w.writeAll(": ");
-                try writeSingle(w, pairs[k].value, scratch);
+                try writeSingle(w, pairs[k].value, scratch, sort_dicts);
             }
             try w.writeAll("}");
         },
@@ -54,7 +54,7 @@ fn writeSingle(w: *std.Io.Writer, v: Value, scratch: std.mem.Allocator) anyerror
             try w.writeAll("[");
             for (l.items.items, 0..) |it, i| {
                 if (i > 0) try w.writeAll(", ");
-                try writeSingle(w, it, scratch);
+                try writeSingle(w, it, scratch, sort_dicts);
             }
             try w.writeAll("]");
         },
@@ -62,7 +62,7 @@ fn writeSingle(w: *std.Io.Writer, v: Value, scratch: std.mem.Allocator) anyerror
             try w.writeAll("(");
             for (t.items, 0..) |it, i| {
                 if (i > 0) try w.writeAll(", ");
-                try writeSingle(w, it, scratch);
+                try writeSingle(w, it, scratch, sort_dicts);
             }
             if (t.items.len == 1) try w.writeAll(",");
             try w.writeAll(")");
@@ -81,10 +81,10 @@ fn lessKey(pairs: []const Dict.Pair, a: usize, b: usize) bool {
     return false;
 }
 
-fn formatTopLevel(a: std.mem.Allocator, v: Value, width: usize) ![]u8 {
+fn formatTopLevel(a: std.mem.Allocator, v: Value, width: usize, sort_dicts: bool) ![]u8 {
     var sw = std.Io.Writer.Allocating.init(a);
     defer sw.deinit();
-    try writeSingle(&sw.writer, v, a);
+    try writeSingle(&sw.writer, v, a, sort_dicts);
     const single = sw.written();
     if (single.len <= width) return a.dupe(u8, single);
 
@@ -95,13 +95,22 @@ fn formatTopLevel(a: std.mem.Allocator, v: Value, width: usize) ![]u8 {
             try ow.writer.writeAll("[");
             for (l.items.items, 0..) |it, i| {
                 if (i > 0) try ow.writer.writeAll(",\n ");
-                try writeSingle(&ow.writer, it, a);
+                try writeSingle(&ow.writer, it, a, sort_dicts);
             }
             try ow.writer.writeAll("]");
             return a.dupe(u8, ow.written());
         },
         else => return a.dupe(u8, single),
     }
+}
+
+fn extractSortDicts(kw_names: []const Value, kw_values: []const Value) bool {
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn == .str and std.mem.eql(u8, kn.str.bytes, "sort_dicts") and kv == .boolean) {
+            return kv.boolean;
+        }
+    }
+    return true;
 }
 
 fn extractWidth(kw_names: []const Value, kw_values: []const Value) usize {
@@ -122,7 +131,8 @@ fn pformatKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_val
     const a = interp.allocator;
     if (args.len < 1) return error.TypeError;
     const width = extractWidth(kw_names, kw_values);
-    const out = try formatTopLevel(a, args[0], width);
+    const sort_dicts = extractSortDicts(kw_names, kw_values);
+    const out = try formatTopLevel(a, args[0], width, sort_dicts);
     defer a.free(out);
     const s = try Str.init(a, out);
     return Value{ .str = s };
@@ -137,7 +147,8 @@ fn pprintKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_valu
     const a = interp.allocator;
     if (args.len < 1) return error.TypeError;
     const width = extractWidth(kw_names, kw_values);
-    const out = try formatTopLevel(a, args[0], width);
+    const sort_dicts = extractSortDicts(kw_names, kw_values);
+    const out = try formatTopLevel(a, args[0], width, sort_dicts);
     defer a.free(out);
     try interp.stdout.writeAll(out);
     try interp.stdout.writeAll("\n");
