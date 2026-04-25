@@ -48,6 +48,7 @@ const statistics_mod = @import("statistics_mod.zig");
 const calendar_mod = @import("calendar_mod.zig");
 const pprint_mod = @import("pprint_mod.zig");
 const html_mod = @import("html_mod.zig");
+const sys_mod = @import("sys_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -99,6 +100,15 @@ pub const Interp = struct {
     calendar_module: ?*Module = null,
     pprint_module: ?*Module = null,
     html_module: ?*Module = null,
+    sys_module: ?*Module = null,
+    sys_stream_class: ?*@import("../object/class.zig").Class = null,
+    traceback_class: ?*@import("../object/class.zig").Class = null,
+    frame_class: ?*@import("../object/class.zig").Class = null,
+    code_class: ?*@import("../object/class.zig").Class = null,
+    /// Currently-handled exception, set by PUSH_EXC_INFO and restored
+    /// by POP_EXCEPT. Powers `sys.exc_info()` and the implicit
+    /// `__context__` attached to exceptions raised inside an except.
+    handling_exc: ?Value = null,
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
@@ -548,6 +558,12 @@ pub const Interp = struct {
             if (self.html_module) |m| return m;
             const m = html_mod.build(self) catch return null;
             self.html_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "sys")) {
+            if (self.sys_module) |m| return m;
+            const m = sys_mod.build(self) catch return null;
+            self.sys_module = m;
             return m;
         }
         return null;

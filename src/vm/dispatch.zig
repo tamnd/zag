@@ -63,12 +63,14 @@ pub const DispatchError = error{
 /// exception (CPython 3.14 hands the exception to the handler on
 /// TOS), jump, and re-enter. Otherwise propagate.
 pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
+    const traceback = @import("traceback.zig");
     while (true) {
         if (dispatchOne(interp, frame)) |v| {
             return v;
         } else |err| {
             if (err != error.PyException) return err;
             const e = interp.current_exc orelse return err;
+            traceback.record(interp, frame) catch {};
             if (frame.code.exceptiontable.len > 0) {
                 if (exc.findHandler(frame.code.exceptiontable, frame.ip)) |h| {
                     frame.sp = h.depth;
@@ -230,14 +232,19 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
         },
 
         .GET_AWAITABLE => {
-            // The fixtures only ever await coroutines (which we model
-            // as generators) and the no-op done-coroutines that
-            // asyncio.sleep(0) returns. Both are already iterators
-            // from the SEND opcode's point of view, so this is a
-            // pass-through.
+            // Coroutines (modeled as generators) and finished sleep
+            // generators pass through. User instances with `__await__`
+            // call it; the result must itself be a generator/iterator.
             const v = frame.pop();
             switch (v) {
                 .generator => frame.push(v),
+                .instance => {
+                    const r = (try dunder.call(interp, v, "__await__", &.{})) orelse {
+                        try interp.typeError("object can't be used in 'await' expression");
+                        return error.TypeError;
+                    };
+                    frame.push(r);
+                },
                 else => {
                     try interp.typeError("object can't be used in 'await' expression");
                     return error.TypeError;
@@ -1441,7 +1448,8 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 }
                 return error.PyException;
             }
-            if (arg == 1) {
+            if (arg == 1 or arg == 2) {
+                const cause: ?Value = if (arg == 2) frame.pop() else null;
                 const v = frame.pop();
                 const inst_val = switch (v) {
                     .class => |cls| try instantiate(interp, cls, &.{}, &.{}, &.{}),
@@ -1451,20 +1459,36 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                         return error.TypeError;
                     },
                 };
+                if (inst_val == .instance) {
+                    if (cause) |c| {
+                        try inst_val.instance.dict.setStr(interp.allocator, "__cause__", c);
+                        try inst_val.instance.dict.setStr(interp.allocator, "__suppress_context__", Value{ .boolean = true });
+                    } else if (inst_val.instance.dict.getStr("__cause__") == null) {
+                        try inst_val.instance.dict.setStr(interp.allocator, "__cause__", Value.none);
+                    }
+                    if (interp.handling_exc) |h| {
+                        try inst_val.instance.dict.setStr(interp.allocator, "__context__", h);
+                    } else if (inst_val.instance.dict.getStr("__context__") == null) {
+                        try inst_val.instance.dict.setStr(interp.allocator, "__context__", Value.none);
+                    }
+                }
                 interp.current_exc = inst_val;
                 return error.PyException;
             }
-            try interp.typeError("RAISE_VARARGS arg > 1 not supported");
+            try interp.typeError("RAISE_VARARGS arg > 2 not supported");
             return error.TypeError;
         },
 
         .PUSH_EXC_INFO => {
-            // Stack: [..., exc] -> [..., prev_exc_info, exc]. We don't
-            // track sys.exc_info(), so prev is a placeholder; POP_EXCEPT
-            // pops it back off without inspecting it.
+            // Stack: [..., exc] -> [..., prev_exc_info, exc]. The
+            // pushed `prev` slot is the previous `handling_exc`, so
+            // POP_EXCEPT can restore it for sys.exc_info() and the
+            // implicit `__context__` of any exception that escapes.
             const e = frame.pop();
-            frame.push(Value.null_sentinel);
+            const prev = interp.handling_exc orelse Value.none;
+            frame.push(prev);
             frame.push(e);
+            interp.handling_exc = e;
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -1497,7 +1521,8 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
         },
 
         .POP_EXCEPT => {
-            _ = frame.pop();
+            const prev = frame.pop();
+            interp.handling_exc = if (prev == .none) null else prev;
             continue :sw advance(frame, &ext_arg, 0);
         },
 
