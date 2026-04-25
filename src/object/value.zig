@@ -24,6 +24,7 @@ const Descriptor = @import("descriptor.zig").Descriptor;
 const Generator = @import("generator.zig").Generator;
 const Set = @import("set.zig").Set;
 const EnumIter = @import("enum_iter.zig").EnumIter;
+const Module = @import("module.zig").Module;
 
 pub const Tag = enum(u8) {
     none,
@@ -47,6 +48,7 @@ pub const Tag = enum(u8) {
     generator,
     set,
     enum_iter,
+    module,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
     /// uses `NULL` as a C-level sentinel before a CALL and `None` as a
     /// real Python value.
@@ -96,6 +98,7 @@ pub const Value = union(Tag) {
     generator: *Generator,
     set: *Set,
     enum_iter: *EnumIter,
+    module: *Module,
     null_sentinel,
 
     pub fn isTruthy(self: Value) bool {
@@ -110,7 +113,7 @@ pub const Value = union(Tag) {
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
             .set => |s| s.items.items.len != 0,
-            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter => true,
+            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter, .module => true,
         };
     }
 
@@ -173,6 +176,7 @@ pub const Value = union(Tag) {
             .iter => try w.writeAll("<iterator>"),
             .generator => try w.writeAll("<generator>"),
             .enum_iter => try w.writeAll("<enumerate object>"),
+            .module => |m| try w.print("<module '{s}'>", .{m.name}),
             .descriptor => |d| switch (d.kind) {
                 .property => try w.writeAll("<property object>"),
                 .classmethod => try w.writeAll("<classmethod object>"),
@@ -306,6 +310,7 @@ pub const Value = union(Tag) {
             .generator => |p| p == b.generator,
             .set => |p| p == b.set,
             .enum_iter => |p| p == b.enum_iter,
+            .module => |p| p == b.module,
         };
     }
 
@@ -337,6 +342,7 @@ pub const Value = union(Tag) {
             .generator => "generator",
             .set => "set",
             .enum_iter => "enumerate",
+            .module => "module",
         };
     }
 };
