@@ -9,6 +9,21 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.75] - 2026-04-26
+
+### Added
+
+- `74_difflib_shlex_gzip_fnmatch_stress` fixture, byte-equal.
+- difflib SequenceMatcher: `a`, `b` attrs; `set_seq1`/`set_seq2`/
+  `set_seqs` methods; `quick_ratio` alias.
+- gzip writes the `1f 8b` magic header; `compresslevel=` kwarg.
+- fnmatch.translate.
+
+### Fixed
+
+- `get_close_matches` tie-breaks by lexicographic descending word.
+- `unified_diff` returns `[]` when sequences are identical.
+
 ## [0.0.74] - 2026-04-26
 
 ### Added
