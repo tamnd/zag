@@ -25,6 +25,8 @@ const Interp = @import("interp.zig").Interp;
 const strmethods = @import("strmethods.zig");
 const listmethods = @import("listmethods.zig");
 const dictmethods = @import("dictmethods.zig");
+const exc = @import("exc.zig");
+const builtins_mod = @import("builtins.zig");
 
 pub const DispatchError = error{
     UnknownOpcode,
@@ -32,12 +34,42 @@ pub const DispatchError = error{
     TypeError,
     AttributeError,
     IndexError,
+    /// The interp has a Python exception in `current_exc`. Caught by
+    /// the dispatch wrapper if the running frame's exception table
+    /// covers `frame.ip`; otherwise propagates to the caller frame.
+    PyException,
     StackUnderflow,
     OutOfMemory,
     WriteFailed,
 } || anyerror;
 
+/// Outer dispatch: run the inner switch, and on `error.PyException`
+/// consult the frame's exception table. If a handler covers
+/// `frame.ip`, truncate the stack to the handler's depth, push the
+/// exception (CPython 3.14 hands the exception to the handler on
+/// TOS), jump, and re-enter. Otherwise propagate.
 pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
+    while (true) {
+        if (dispatchOne(interp, frame)) |v| {
+            return v;
+        } else |err| {
+            if (err != error.PyException) return err;
+            const e = interp.current_exc orelse return err;
+            if (frame.code.exceptiontable.len > 0) {
+                if (exc.findHandler(frame.code.exceptiontable, frame.ip)) |h| {
+                    frame.sp = h.depth;
+                    if (h.lasti) frame.push(Value{ .small_int = @intCast(frame.ip) });
+                    frame.push(e);
+                    frame.ip = h.target;
+                    continue;
+                }
+            }
+            return err;
+        }
+    }
+}
+
+fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
     const code = frame.code.bytecode;
     var ext_arg: u32 = 0;
 
@@ -625,6 +657,84 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
             return frame.pop();
         },
 
+        .RAISE_VARARGS => {
+            const arg = oparg(frame, ext_arg);
+            if (arg == 0) {
+                if (interp.current_exc == null) {
+                    try interp.typeError("No active exception to re-raise");
+                    return error.TypeError;
+                }
+                return error.PyException;
+            }
+            if (arg == 1) {
+                const v = frame.pop();
+                const inst_val = switch (v) {
+                    .class => |cls| try instantiate(interp, cls, &.{}, &.{}, &.{}),
+                    .instance => v,
+                    else => {
+                        try interp.typeError("exceptions must derive from BaseException");
+                        return error.TypeError;
+                    },
+                };
+                interp.current_exc = inst_val;
+                return error.PyException;
+            }
+            try interp.typeError("RAISE_VARARGS arg > 1 not supported");
+            return error.TypeError;
+        },
+
+        .PUSH_EXC_INFO => {
+            // Stack: [..., exc] -> [..., prev_exc_info, exc]. We don't
+            // track sys.exc_info(), so prev is a placeholder; POP_EXCEPT
+            // pops it back off without inspecting it.
+            const e = frame.pop();
+            frame.push(Value.null_sentinel);
+            frame.push(e);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .CHECK_EXC_MATCH => {
+            // Stack: [..., exc, type] -> [..., exc, bool]. Pops type,
+            // peeks exc, walks the exc's MRO looking for the type.
+            const typ = frame.pop();
+            const e = frame.stack[frame.sp - 1];
+            var matched = false;
+            if (e == .instance and typ == .class) {
+                for (e.instance.cls.mro) |c| {
+                    if (c == typ.class) {
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+            frame.push(Value{ .boolean = matched });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .POP_EXCEPT => {
+            _ = frame.pop();
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .RERAISE => {
+            const arg = oparg(frame, ext_arg);
+            const e = frame.pop();
+            if (arg != 0) _ = frame.pop();
+            if (e != .instance) {
+                try interp.typeError("RERAISE: TOS is not an exception");
+                return error.TypeError;
+            }
+            interp.current_exc = e;
+            return error.PyException;
+        },
+
+        .DELETE_NAME => {
+            const arg = oparg(frame, ext_arg);
+            const name = frame.code.names[arg];
+            _ = frame.locals.delete(name);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         else => {
             try interp.unsupportedOpcode(first_op, frame.ip);
             return error.UnknownOpcode;
@@ -655,6 +765,7 @@ fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
         5 => multiply(interp, a, b),
         6 => remainder(interp, a, b),
         10 => subtract(interp, a, b),
+        11 => trueDivide(interp, a, b),
         13 => inplaceAdd(interp, a, b),
         26 => subscript(interp, a, b),
         else => blk: {
@@ -698,6 +809,31 @@ fn multiply(interp: *Interp, a: Value, b: Value) !Value {
         return Value{ .small_int = a.small_int *% b.small_int };
     }
     try interp.typeError("unsupported operand type(s) for *");
+    return error.TypeError;
+}
+
+/// `/` (true division) for int/int: returns a float. Zero divisor
+/// raises ZeroDivisionError -- the only exception path the fixture
+/// exercises through arithmetic.
+fn trueDivide(interp: *Interp, a: Value, b: Value) !Value {
+    const ai: ?i64 = switch (a) {
+        .small_int => |i| i,
+        .boolean => |x| @intFromBool(x),
+        else => null,
+    };
+    const bi: ?i64 = switch (b) {
+        .small_int => |i| i,
+        .boolean => |x| @intFromBool(x),
+        else => null,
+    };
+    if (ai != null and bi != null) {
+        if (bi.? == 0) {
+            try interp.raisePy("ZeroDivisionError", "division by zero");
+            return error.PyException;
+        }
+        return Value{ .float = @as(f64, @floatFromInt(ai.?)) / @as(f64, @floatFromInt(bi.?)) };
+    }
+    try interp.typeError("unsupported operand type(s) for /");
     return error.TypeError;
 }
 
@@ -774,8 +910,8 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
                     var idx = i;
                     if (idx < 0) idx += n;
                     if (idx < 0 or idx >= n) {
-                        try interp.indexError("list index out of range");
-                        return error.IndexError;
+                        try interp.raisePy("IndexError", "list index out of range");
+                        return error.PyException;
                     }
                     return l.items.items[@intCast(idx)];
                 },
@@ -795,6 +931,24 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
                 },
                 else => {
                     try interp.typeError("list indices must be integers");
+                    return error.TypeError;
+                },
+            }
+        },
+        .tuple => |t| {
+            switch (key) {
+                .small_int => |i| {
+                    const n: i64 = @intCast(t.items.len);
+                    var idx = i;
+                    if (idx < 0) idx += n;
+                    if (idx < 0 or idx >= n) {
+                        try interp.raisePy("IndexError", "tuple index out of range");
+                        return error.PyException;
+                    }
+                    return t.items[@intCast(idx)];
+                },
+                else => {
+                    try interp.typeError("tuple indices must be integers");
                     return error.TypeError;
                 },
             }
@@ -1119,6 +1273,15 @@ fn instantiate(
 ) !Value {
     const inst = try Instance.init(interp.allocator, cls);
     const inst_val = Value{ .instance = inst };
+    if (cls.lookup("__init__") == null and builtins_mod.isExceptionClass(interp, cls)) {
+        // BaseException's default __init__ stores positional args as
+        // a tuple on `.args` -- enough for `raise Foo("msg")` and
+        // `e.args[0]` readback.
+        const t = try Tuple.init(interp.allocator, positional.len);
+        @memcpy(t.items, positional);
+        try inst.dict.setStr(interp.allocator, "args", Value{ .tuple = t });
+        return inst_val;
+    }
     if (cls.lookup("__init__")) |init_v| {
         if (init_v != .function) {
             try interp.typeError("__init__ is not a Python function");

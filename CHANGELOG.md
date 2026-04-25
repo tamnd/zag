@@ -9,6 +9,55 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.10] - 2026-04-25
+
+### Added
+
+- `09_exceptions` fixture, lifted verbatim from goipy's testdata,
+  running byte-equal against CPython 3.14 stdout. Covers `try` /
+  `except`, `as e` binding, `e.args[0]` readback, `raise Cls("msg")`,
+  cross-frame propagation through `f()`, and a nested try where the
+  inner clause doesn't match and the outer one does.
+- `BaseException` / `Exception` and the subclasses the fixture
+  touches (`ArithmeticError`, `LookupError`, `ZeroDivisionError`,
+  `ValueError`, `IndexError`, `KeyError`, `RuntimeError`,
+  `AttributeError`, `TypeError`, `NameError`, `StopIteration`),
+  installed as builtin `Class` values with the right MRO. A Python
+  exception is just an `Instance` of one of these.
+- `Interp.current_exc` plus `raisePy(cls_name, msg)`. The dispatch
+  loop signals "look at current_exc" by returning a new
+  `error.PyException`; everything else still propagates as a Zig
+  error the way it did before.
+- Exception-table-driven unwind. `run` is now a thin loop around the
+  inner `dispatchOne`: on `error.PyException` it parses the running
+  frame's `co_exceptiontable`, finds the first entry covering
+  `frame.ip`, truncates the stack to the entry's depth, pushes the
+  exception, jumps to the handler, and re-enters. No handler ->
+  propagate to the caller frame, where the same loop catches at the
+  parent's CALL instruction.
+- `RAISE_VARARGS`, `PUSH_EXC_INFO`, `CHECK_EXC_MATCH`, `POP_EXCEPT`,
+  `RERAISE`, `DELETE_NAME` opcodes. `PUSH_EXC_INFO` uses a
+  `null_sentinel` placeholder for the previous `sys.exc_info()` slot
+  -- we don't track it and the fixture never reads it.
+- `BINARY_OP 11` (true division). `int / int` returns a float;
+  zero divisor raises `ZeroDivisionError("division by zero")`.
+- `tuple` arm in `subscript` so `e.args[0]` works. Out-of-range
+  raises `IndexError`. List `IndexError` was upgraded from the old
+  stderr-print + Zig-error path to the new PyException path.
+- Default `args` binding in `instantiate`: a class without
+  `__init__` whose MRO contains `BaseException` gets
+  `inst.dict["args"] = tuple(positional)` -- mirrors what
+  `BaseException.__init__` does in CPython, and is what
+  `raise ValueError("msg")` relies on for `e.args[0]`.
+
+### Out of scope
+
+- `try / finally`, `except (A, B):` tuple match, `except*`
+  exception groups, `__cause__` / `__context__` chaining,
+  `traceback`, `sys.exc_info()`. The `PUSH_EXC_INFO` placeholder
+  exists to keep the stack discipline right, not to surface real
+  exception state.
+
 ## [0.0.9] - 2026-04-25
 
 ### Added
