@@ -1364,11 +1364,23 @@ fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
     };
 }
 
+fn asFloat(v: Value) ?f64 {
+    return switch (v) {
+        .small_int => |i| @floatFromInt(i),
+        .boolean => |b| if (b) 1.0 else 0.0,
+        .float => |f| f,
+        else => null,
+    };
+}
+
 /// `+` for int+int and str+str. Other operand combos wait for a
 /// fixture.
 fn add(interp: *Interp, a: Value, b: Value) !Value {
     if (a == .small_int and b == .small_int) {
         return Value{ .small_int = a.small_int +% b.small_int };
+    }
+    if ((a == .float or b == .float) and asFloat(a) != null and asFloat(b) != null) {
+        return Value{ .float = asFloat(a).? + asFloat(b).? };
     }
     if (a == .str and b == .str) {
         const buf = try interp.allocator.alloc(u8, a.str.bytes.len + b.str.bytes.len);
@@ -1385,6 +1397,9 @@ fn subtract(interp: *Interp, a: Value, b: Value) !Value {
     if (a == .small_int and b == .small_int) {
         return Value{ .small_int = a.small_int -% b.small_int };
     }
+    if ((a == .float or b == .float) and asFloat(a) != null and asFloat(b) != null) {
+        return Value{ .float = asFloat(a).? - asFloat(b).? };
+    }
     try interp.typeError("unsupported operand type(s) for -");
     return error.TypeError;
 }
@@ -1392,6 +1407,9 @@ fn subtract(interp: *Interp, a: Value, b: Value) !Value {
 fn multiply(interp: *Interp, a: Value, b: Value) !Value {
     if (a == .small_int and b == .small_int) {
         return Value{ .small_int = a.small_int *% b.small_int };
+    }
+    if ((a == .float or b == .float) and asFloat(a) != null and asFloat(b) != null) {
+        return Value{ .float = asFloat(a).? * asFloat(b).? };
     }
     try interp.typeError("unsupported operand type(s) for *");
     return error.TypeError;

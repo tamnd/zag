@@ -215,6 +215,23 @@ pub const Value = union(Tag) {
             const y: i64 = if (b == .boolean) @intFromBool(b.boolean) else b.small_int;
             return if (x < y) .lt else if (x == y) .eq else .gt;
         }
+        const af: ?f64 = switch (a) {
+            .small_int => |i| @floatFromInt(i),
+            .boolean => |x| if (x) 1.0 else 0.0,
+            .float => |f| f,
+            else => null,
+        };
+        const bf: ?f64 = switch (b) {
+            .small_int => |i| @floatFromInt(i),
+            .boolean => |x| if (x) 1.0 else 0.0,
+            .float => |f| f,
+            else => null,
+        };
+        if (af != null and bf != null) {
+            const x = af.?;
+            const y = bf.?;
+            return if (x < y) .lt else if (x == y) .eq else .gt;
+        }
         if (a == .str and b == .str) {
             const cmp = std.mem.order(u8, a.str.bytes, b.str.bytes);
             return switch (cmp) {
