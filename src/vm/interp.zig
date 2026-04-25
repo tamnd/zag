@@ -32,6 +32,10 @@ const hashlib_mod = @import("hashlib_mod.zig");
 const base64_mod = @import("base64_mod.zig");
 const textwrap_mod = @import("textwrap_mod.zig");
 const re_mod = @import("re_mod.zig");
+const struct_mod = @import("struct_mod.zig");
+const csv_mod = @import("csv_mod.zig");
+const urlparse_mod = @import("urlparse_mod.zig");
+const zlib_mod = @import("zlib_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -66,11 +70,18 @@ pub const Interp = struct {
     base64_module: ?*Module = null,
     textwrap_module: ?*Module = null,
     re_module: ?*Module = null,
+    struct_module: ?*Module = null,
+    csv_module: ?*Module = null,
+    urlparse_module: ?*Module = null,
+    zlib_module: ?*Module = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
     io_stringio_class: ?*@import("../object/class.zig").Class = null,
     io_bytesio_class: ?*@import("../object/class.zig").Class = null,
     hashlib_hash_class: ?*@import("../object/class.zig").Class = null,
+    csv_writer_class: ?*@import("../object/class.zig").Class = null,
+    csv_dict_writer_class: ?*@import("../object/class.zig").Class = null,
+    urlparse_result_class: ?*@import("../object/class.zig").Class = null,
     primitive_classes: std.StringHashMapUnmanaged(*@import("../object/class.zig").Class) = .empty,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every
@@ -407,6 +418,30 @@ pub const Interp = struct {
             if (self.textwrap_module) |m| return m;
             const m = textwrap_mod.build(self) catch return null;
             self.textwrap_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "struct")) {
+            if (self.struct_module) |m| return m;
+            const m = struct_mod.build(self) catch return null;
+            self.struct_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "csv")) {
+            if (self.csv_module) |m| return m;
+            const m = csv_mod.build(self) catch return null;
+            self.csv_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "urllib.parse")) {
+            if (self.urlparse_module) |m| return m;
+            const m = urlparse_mod.build(self) catch return null;
+            self.urlparse_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "zlib")) {
+            if (self.zlib_module) |m| return m;
+            const m = zlib_mod.build(self) catch return null;
+            self.zlib_module = m;
             return m;
         }
         return null;
