@@ -26,17 +26,22 @@ pub fn build(interp: *Interp) !*Module {
     run_fn.* = .{ .name = "run", .func = runFn };
     try m.attrs.setStr(interp.allocator, "run", Value{ .builtin_fn = run_fn });
 
+    const gather_fn = try interp.allocator.create(BuiltinFn);
+    gather_fn.* = .{ .name = "gather", .func = gatherFn };
+    try m.attrs.setStr(interp.allocator, "gather", Value{ .builtin_fn = gather_fn });
+
     return m;
 }
 
-/// `asyncio.sleep(delay)` — we ignore `delay` and hand back an
-/// already-finished synthetic generator. `await` on it sends None,
-/// gets StopIteration on first step, and falls through.
+/// `asyncio.sleep(delay, result=None)` — ignore `delay` and hand back
+/// an already-finished synthetic generator carrying `result` as its
+/// return value. `await` SENDs once, hits StopIteration, and the
+/// stop-value (i.e. `result`) becomes the await expression's value.
 fn sleepFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
-    _ = args;
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const result: Value = if (args.len >= 2) args[1] else Value.none;
     const g = try interp.allocator.create(Generator);
-    g.* = .{ .frame = undefined, .finished = true, .started = true, .return_value = Value.none };
+    g.* = .{ .frame = undefined, .finished = true, .started = true, .return_value = result };
     return Value{ .generator = g };
 }
 
@@ -59,4 +64,29 @@ fn runFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     };
     while (try dispatch.genResume(interp, coro, Value.none)) |_| {}
     return coro.return_value;
+}
+
+/// `asyncio.gather(*coros)` — run each coroutine to completion, in
+/// argument order, and hand back a synthetic finished Generator whose
+/// `return_value` is the list of results. Real asyncio interleaves
+/// these on an event loop; we don't have one, but the fixtures don't
+/// observe interleaving — they only see the final list.
+fn gatherFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const List = @import("../object/list.zig").List;
+    const out = try List.init(interp.allocator);
+    for (args) |a| {
+        const coro = switch (a) {
+            .generator => |g| g,
+            else => {
+                try interp.typeError("asyncio.gather: argument is not awaitable");
+                return error.TypeError;
+            },
+        };
+        while (try dispatch.genResume(interp, coro, Value.none)) |_| {}
+        try out.append(interp.allocator, coro.return_value);
+    }
+    const g = try interp.allocator.create(Generator);
+    g.* = .{ .frame = undefined, .finished = true, .started = true, .return_value = Value{ .list = out } };
+    return Value{ .generator = g };
 }
