@@ -60,6 +60,19 @@ pub const Interp = struct {
         try self.stderr.flush();
     }
 
+    pub fn attributeError(self: *Interp, type_name: []const u8, attr: []const u8) !void {
+        try self.stderr.print(
+            "AttributeError: '{s}' object has no attribute '{s}'\n",
+            .{ type_name, attr },
+        );
+        try self.stderr.flush();
+    }
+
+    pub fn indexError(self: *Interp, msg: []const u8) !void {
+        try self.stderr.print("IndexError: {s}\n", .{msg});
+        try self.stderr.flush();
+    }
+
     pub fn typeError(self: *Interp, msg: []const u8) !void {
         try self.stderr.print("TypeError: {s}\n", .{msg});
         try self.stderr.flush();

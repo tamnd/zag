@@ -49,7 +49,35 @@ pub fn absBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
     };
 }
 
+pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.stderr.print(
+            "TypeError: len() takes exactly one argument ({d} given)\n",
+            .{args.len},
+        );
+        try interp.stderr.flush();
+        return error.TypeError;
+    }
+    return switch (args[0]) {
+        .str => |s| Value{ .small_int = @intCast(s.len()) },
+        .bytes => |b| Value{ .small_int = @intCast(b.data.len) },
+        .tuple => |t| Value{ .small_int = @intCast(t.items.len) },
+        .list => |l| Value{ .small_int = @intCast(l.items.items.len) },
+        .dict => |d| Value{ .small_int = @intCast(d.count()) },
+        else => |v| blk: {
+            try interp.stderr.print(
+                "TypeError: object of type '{s}' has no len()\n",
+                .{v.typeName()},
+            );
+            try interp.stderr.flush();
+            break :blk error.TypeError;
+        },
+    };
+}
+
 pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("print", print);
     try interp.registerBuiltin("abs", absBuiltin);
+    try interp.registerBuiltin("len", lenBuiltin);
 }

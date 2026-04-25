@@ -9,6 +9,48 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-04-25
+
+### Added
+
+- `03_strings` fixture, lifted verbatim from goipy's testdata,
+  running byte-equal against CPython 3.14 stdout. This is the first
+  fixture that exercises method calls on a runtime value rather
+  than free functions and constants.
+- `LOAD_ATTR` in the method-form path: when the low bit of the
+  oparg is set, zag pops the receiver, looks up the method, and
+  pushes `(method, self)`. The existing `CALL` arm's bound-method
+  branch threads `self` through as `args[0]`, so no calling-
+  convention plumbing was needed.
+- `BINARY_OP` arg=26 (subscript). `s[i]`, `s[-1]`, and `s[i:j]` all
+  work for `str`. Negative indices wrap; out-of-range raises
+  `IndexError`. Lists subscript with int as well; slice on lists
+  is deferred until `04_lists` forces it.
+- `CONTAINS_OP` for `in` / `not in`. Substring check on `str`,
+  linear scan on `list`/`tuple`.
+- `BUILD_LIST` / `LIST_EXTEND`. The fixture relies on the
+  `LIST_EXTEND` form CPython emits when a list literal contains
+  only constants -- the compiler emits `BUILD_LIST 0; LIST_EXTEND
+  1` over a constant tuple.
+- Six `str` methods, each living in `src/vm/strmethods.zig`
+  behind a small name-keyed table: `upper`, `replace`, `split`
+  (no-arg form, ASCII-whitespace splitting), `join`, `startswith`,
+  `endswith`.
+- `len()` builtin, dispatching by tag: `str`, `bytes`, `tuple`,
+  `list`, `dict`. Anything else raises `TypeError`.
+- `Slice` value type plus real `TYPE_SLICE` decoding in the
+  marshal reader. The previous behavior silently swallowed slices
+  into `None`.
+- `AttributeError` and `IndexError` plumbing on `Interp`.
+
+### Notes
+
+- ASCII fast paths in `str.upper` and `str` indexing. Codepoint-
+  correct behavior is deferred until a fixture exercises a non-
+  ASCII string.
+- Slice with `step != 1` raises `TypeError` for now. The fixture
+  only uses `slice(start, stop, None)`.
+
 ## [0.0.3] - 2026-04-25
 
 ### Added
@@ -91,7 +133,8 @@ changes.
 - CI workflow running `zig build`, `zig build test`, and one end-to-
   end `zig build run` of the hello fixture on every push and PR.
 
-[Unreleased]: https://github.com/tamnd/zag/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/tamnd/zag/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/tamnd/zag/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/tamnd/zag/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/tamnd/zag/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/tamnd/zag/releases/tag/v0.0.1
