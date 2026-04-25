@@ -9,6 +9,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.28] - 2026-04-25
+
+### Added
+
+- `27_match_stress` fixture, lifted from goipy's testdata,
+  byte-equal against CPython 3.14. Class patterns with
+  `__match_args__`, nested class patterns, kw attrs, guards,
+  or-patterns, sequence patterns with star, mapping patterns
+  with `**rest`.
+
+### Fixed
+
+- `MATCH_CLASS` now walks `__match_args__` for instance subjects
+  with positional patterns, and accepts the kw-attr form (used
+  by `Circle(Point(0, 0), radius=r)`).
+
 ## [0.0.27] - 2026-04-25
 
 ### Added

@@ -924,20 +924,51 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 return error.TypeError;
             }
             const matches = matchClassCheck(subject, cls);
-            if (!matches or kwattrs.tuple.items.len != 0) {
-                // kwattrs!=0 not exercised by current fixtures.
-                if (!matches) {
-                    frame.push(Value.none);
-                } else {
-                    try interp.typeError("MATCH_CLASS: kw attrs not supported");
-                    return error.TypeError;
-                }
-            } else if (nargs == 0) {
+            if (!matches) {
+                frame.push(Value.none);
+            } else if (nargs == 0 and kwattrs.tuple.items.len == 0) {
                 const t = try Tuple.init(interp.allocator, 0);
                 frame.push(Value{ .tuple = t });
-            } else if (nargs == 1 and isAtomicSelfMatch(cls)) {
+            } else if (nargs == 1 and kwattrs.tuple.items.len == 0 and isAtomicSelfMatch(cls)) {
                 const t = try Tuple.init(interp.allocator, 1);
                 t.items[0] = subject;
+                frame.push(Value{ .tuple = t });
+            } else if (subject == .instance and cls == .class) {
+                // Walk __match_args__ for the positional names, then read
+                // them off the instance dict.
+                const ma = cls.class.dict.getStr("__match_args__") orelse {
+                    try interp.typeError("MATCH_CLASS: class lacks __match_args__");
+                    return error.TypeError;
+                };
+                if (ma != .tuple or ma.tuple.items.len < nargs) {
+                    try interp.typeError("MATCH_CLASS: __match_args__ too short");
+                    return error.TypeError;
+                }
+                const t = try Tuple.init(interp.allocator, nargs + kwattrs.tuple.items.len);
+                var i: usize = 0;
+                while (i < nargs) : (i += 1) {
+                    const name_val = ma.tuple.items[i];
+                    if (name_val != .str) {
+                        try interp.typeError("MATCH_CLASS: __match_args__ entry not str");
+                        return error.TypeError;
+                    }
+                    const v = subject.instance.dict.getStr(name_val.str.bytes) orelse {
+                        try interp.attributeError(subject.instance.cls.name, name_val.str.bytes);
+                        return error.AttributeError;
+                    };
+                    t.items[i] = v;
+                }
+                for (kwattrs.tuple.items, 0..) |kn, j| {
+                    if (kn != .str) {
+                        try interp.typeError("MATCH_CLASS: kwattrs entry not str");
+                        return error.TypeError;
+                    }
+                    const v = subject.instance.dict.getStr(kn.str.bytes) orelse {
+                        try interp.attributeError(subject.instance.cls.name, kn.str.bytes);
+                        return error.AttributeError;
+                    };
+                    t.items[nargs + j] = v;
+                }
                 frame.push(Value{ .tuple = t });
             } else {
                 try interp.typeError("MATCH_CLASS: positional patterns require __match_args__");
