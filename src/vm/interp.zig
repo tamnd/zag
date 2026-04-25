@@ -24,6 +24,9 @@ pub const Interp = struct {
     /// directly by RAISE_VARARGS) before the dispatch loop sees
     /// `error.PyException`; the exception-table catch loop reads it.
     current_exc: ?Value = null,
+    /// The value produced by the most recent YIELD_VALUE. Read by the
+    /// generator-send wrapper after `error.GenYield` escapes dispatch.
+    gen_yielded: ?Value = null,
 
     pub fn init(
         allocator: std.mem.Allocator,

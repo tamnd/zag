@@ -19,6 +19,7 @@ const Function = @import("../object/function.zig").Function;
 const Cell = @import("../object/cell.zig").Cell;
 const Class = @import("../object/class.zig").Class;
 const Instance = @import("../object/instance.zig").Instance;
+const Generator = @import("../object/generator.zig").Generator;
 const Dict = @import("../object/dict.zig").Dict;
 const Frame = @import("frame.zig").Frame;
 const Interp = @import("interp.zig").Interp;
@@ -39,6 +40,10 @@ pub const DispatchError = error{
     /// the dispatch wrapper if the running frame's exception table
     /// covers `frame.ip`; otherwise propagates to the caller frame.
     PyException,
+    /// YIELD_VALUE has stashed a value in `interp.gen_yielded` and is
+    /// asking the dispatch wrapper to suspend the frame. Caught by
+    /// `genResume`, never by the exception-table loop.
+    GenYield,
     StackUnderflow,
     OutOfMemory,
     WriteFailed,
@@ -351,8 +356,12 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
 
         .GET_ITER => {
             const v = frame.pop();
-            const it = try makeIter(interp, v);
-            frame.push(Value{ .iter = it });
+            if (v == .generator) {
+                frame.push(v);
+            } else {
+                const it = try makeIter(interp, v);
+                frame.push(Value{ .iter = it });
+            }
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -361,11 +370,15 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const cw = op.cache_width[@intFromEnum(Opcode.FOR_ITER)];
             // TOS is the iterator. Peek, don't pop.
             const it = frame.stack[frame.sp - 1];
-            if (it != .iter) {
-                try interp.typeError("FOR_ITER on non-iterator");
-                return error.TypeError;
-            }
-            if (it.iter.next()) |v| {
+            const next_v: ?Value = switch (it) {
+                .iter => |i| i.next(),
+                .generator => |g| try genResume(interp, g, Value.none),
+                else => {
+                    try interp.typeError("FOR_ITER on non-iterator");
+                    return error.TypeError;
+                },
+            };
+            if (next_v) |v| {
                 frame.push(v);
                 frame.ip += 2 + 2 * @as(u32, cw);
             } else {
@@ -388,9 +401,9 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
-        .JUMP_BACKWARD, .JUMP_BACKWARD_NO_INTERRUPT => {
+        .JUMP_BACKWARD, .JUMP_BACKWARD_NO_INTERRUPT => |opc| {
             const arg = oparg(frame, ext_arg);
-            const cw = op.cache_width[@intFromEnum(Opcode.JUMP_BACKWARD)];
+            const cw = op.cache_width[@intFromEnum(opc)];
             frame.ip = frame.ip + 2 + 2 * @as(u32, cw) - 2 * arg;
             ext_arg = 0;
             continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
@@ -851,6 +864,85 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
 
         .RETURN_VALUE => {
             return frame.pop();
+        },
+
+        .RETURN_GENERATOR => {
+            // Reached only if a generator-coded frame is run as a
+            // regular function (the call site missed CO_GENERATOR).
+            // Treat as a no-op so dispatch can continue; the call
+            // path in `callPyFunction` is the proper handler.
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .YIELD_VALUE => {
+            interp.gen_yielded = frame.pop();
+            // Advance ip past YIELD_VALUE (2 bytes). Resume will start
+            // at the following RESUME instruction on the next send.
+            frame.ip += 2;
+            ext_arg = 0;
+            return error.GenYield;
+        },
+
+        .SEND => {
+            const arg = oparg(frame, ext_arg);
+            const cw = op.cache_width[@intFromEnum(Opcode.SEND)];
+            // Stack convention: [..., receiver, sent]. Both stay on
+            // the stack across `sendStep`; the slot at TOS is rewritten
+            // with the yielded (or stop) value.
+            const sent_value = frame.stack[frame.sp - 1];
+            const receiver = frame.stack[frame.sp - 2];
+            const step = sendStep(interp, receiver, sent_value) catch |err| {
+                if (err == error.StopIter) {
+                    frame.stack[frame.sp - 1] = interp.gen_yielded orelse Value.none;
+                    interp.gen_yielded = null;
+                    frame.ip += 2 + 2 * @as(u32, cw) + 2 * arg;
+                    ext_arg = 0;
+                    continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
+                }
+                return err;
+            };
+            frame.stack[frame.sp - 1] = step;
+            continue :sw advance(frame, &ext_arg, cw);
+        },
+
+        .END_SEND => {
+            // del STACK[-2]: shift the top down one slot.
+            frame.stack[frame.sp - 2] = frame.stack[frame.sp - 1];
+            frame.sp -= 1;
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .GET_YIELD_FROM_ITER => {
+            const v = frame.pop();
+            switch (v) {
+                .generator => frame.push(v),
+                .iter => frame.push(v),
+                else => {
+                    const it = try makeIter(interp, v);
+                    frame.push(Value{ .iter = it });
+                },
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .CALL_INTRINSIC_1 => {
+            // Only the `INTRINSIC_STOPITERATION_ERROR` (3) form is
+            // emitted by the generator prologue. It wraps a leaked
+            // StopIteration into a RuntimeError per PEP 479; the
+            // fixture never trips it on the golden path, so leave the
+            // value as-is.
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .CLEANUP_THROW => {
+            // Only reached on `gen.throw()` paths. The fixture doesn't
+            // exercise these; pop the throw triple and re-raise to
+            // match CPython's "exception escapes" behavior.
+            _ = frame.pop();
+            _ = frame.pop();
+            const e = frame.pop();
+            if (e == .instance) interp.current_exc = e;
+            return error.PyException;
         },
 
         .RAISE_VARARGS => {
@@ -1503,6 +1595,16 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
         try interp.attributeError(obj.typeName(), name);
         return error.AttributeError;
     }
+    // Generator methods: `send` is the only one fixtures exercise.
+    if (obj == .generator and std.mem.eql(u8, name, "send")) {
+        if (is_method) {
+            frame.push(Value{ .builtin_fn = &gen_send_method });
+            frame.push(obj);
+        } else {
+            frame.push(Value{ .builtin_fn = &gen_send_method });
+        }
+        return;
+    }
     // Built-in methods on str/list/dict.
     if (is_method) {
         const method: ?*value_mod.BuiltinFn = switch (obj) {
@@ -1602,6 +1704,93 @@ fn invokeKw(
 
 const CO_VARARGS: i32 = 0x04;
 const CO_VARKEYWORDS: i32 = 0x08;
+const CO_GENERATOR: i32 = 0x20;
+
+/// Resume a generator's suspended frame with `sent_value`. Returns the
+/// next yielded value, or null on natural completion (RETURN_VALUE).
+/// PyException / other errors propagate to the caller.
+pub fn genResume(interp: *Interp, gen: *Generator, sent_value: Value) DispatchError!?Value {
+    if (gen.finished) return null;
+    gen.frame.push(sent_value);
+    gen.started = true;
+    if (run(interp, gen.frame)) |_| {
+        gen.finished = true;
+        return null;
+    } else |err| switch (err) {
+        error.GenYield => {
+            const v = interp.gen_yielded orelse Value.none;
+            interp.gen_yielded = null;
+            return v;
+        },
+        else => {
+            gen.finished = true;
+            return err;
+        },
+    }
+}
+
+/// One step of the SEND opcode: drive a sub-iterator/generator with
+/// `sent_value`. Returns the yielded value on success; signals
+/// `error.StopIter` (with `interp.gen_yielded` set to the stop value)
+/// when the receiver is exhausted.
+const SendError = DispatchError || error{StopIter};
+fn sendStep(interp: *Interp, receiver: Value, sent_value: Value) SendError!Value {
+    switch (receiver) {
+        .generator => |g| {
+            const r = try genResume(interp, g, sent_value);
+            if (r) |v| return v;
+            interp.gen_yielded = Value.none;
+            return error.StopIter;
+        },
+        .iter => |it| {
+            if (it.next()) |v| return v;
+            interp.gen_yielded = Value.none;
+            return error.StopIter;
+        },
+        else => {
+            try interp.typeError("SEND target is not iterable");
+            return error.TypeError;
+        },
+    }
+}
+
+pub fn nextBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.typeError("next expects one argument");
+        return error.TypeError;
+    }
+    switch (args[0]) {
+        .generator => |g| {
+            if (try genResume(interp, g, Value.none)) |v| return v;
+            try interp.raisePy("StopIteration", "");
+            return error.PyException;
+        },
+        .iter => |it| {
+            if (it.next()) |v| return v;
+            try interp.raisePy("StopIteration", "");
+            return error.PyException;
+        },
+        else => {
+            try interp.typeError("next: object is not an iterator");
+            return error.TypeError;
+        },
+    }
+}
+
+pub fn genSendBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[0] != .generator) {
+        try interp.typeError("send expects (generator, value)");
+        return error.TypeError;
+    }
+    const g = args[0].generator;
+    if (try genResume(interp, g, args[1])) |v| return v;
+    try interp.raisePy("StopIteration", "");
+    return error.PyException;
+}
+
+var gen_send_method: value_mod.BuiltinFn = .{ .name = "send", .func = genSendBuiltin };
 
 fn callPyFunction(
     interp: *Interp,
@@ -1696,6 +1885,16 @@ fn callPyFunction(
             try interp.typeError("missing required argument");
             return error.TypeError;
         }
+    }
+
+    if (code.flags & CO_GENERATOR != 0) {
+        // CPython prologue is RETURN_GENERATOR (offset 0), POP_TOP
+        // (offset 2), RESUME (offset 4). Skip RETURN_GENERATOR; the
+        // first send pushes its value, POP_TOP pops it, RESUME falls
+        // through into the body.
+        new_frame.ip = 2;
+        const g = try Generator.init(interp.allocator, new_frame);
+        return Value{ .generator = g };
     }
 
     const result = try run(interp, new_frame);

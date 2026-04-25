@@ -9,6 +9,37 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-04-25
+
+### Added
+
+- `16_generators` fixture, lifted from goipy's testdata, running
+  byte-equal against CPython 3.14. A `count(n)` consumed by `list`,
+  an `echo` driven by `next` / `g.send` / `try ... except
+  StopIteration`, and a `chain(*its)` that uses `yield from` over
+  a list, a tuple, and a `range`.
+- A `Generator` value backed by a suspendable `Frame`. Generator
+  functions are detected via `CO_GENERATOR` (flag `0x20`) at call
+  time; the call returns the wrapper without running, and each
+  `next` / `send` resumes the saved `ip` and stack.
+- `YIELD_VALUE`, `RETURN_GENERATOR`, `SEND`, `END_SEND`,
+  `GET_YIELD_FROM_ITER`. `SEND` keeps both receiver and sent value
+  on the stack and rewrites the slot in place, matching CPython's
+  `(receiver, v -- receiver, retval)` stack effect.
+- `next` builtin and a `g.send` method that funnel through one
+  `genResume` helper. `list(gen)` / `for x in gen` drive the same
+  helper so generators participate in iteration without a separate
+  `Iter` shim.
+- `CALL_INTRINSIC_1` and `CLEANUP_THROW` stubs, enough to pass over
+  the generator-prologue bytecode the fixture emits.
+
+### Fixed
+
+- `JUMP_BACKWARD_NO_INTERRUPT` now reads its own cache width
+  instead of borrowing `JUMP_BACKWARD`'s. The off-by-two landed on
+  the wrong instruction once the match-fixture exception cleanup
+  flow exercised it.
+
 ## [0.0.16] - 2026-04-25
 
 ### Added
