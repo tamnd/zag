@@ -3031,6 +3031,7 @@ fn matchClassCheck(subject: Value, cls: Value) bool {
     if (std.mem.eql(u8, name, "memoryview")) return subject == .memoryview;
     if (std.mem.eql(u8, name, "set")) return subject == .set and !subject.set.frozen;
     if (std.mem.eql(u8, name, "frozenset")) return subject == .set and subject.set.frozen;
+    if (std.mem.eql(u8, name, "type")) return subject == .class;
     return false;
 }
 
@@ -3301,6 +3302,8 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             &gen_send_method
         else if (std.mem.eql(u8, name, "close"))
             &gen_close_method
+        else if (std.mem.eql(u8, name, "__await__"))
+            &gen_await_method
         else
             null;
         if (m) |meth| {
@@ -3826,6 +3829,13 @@ pub fn genCloseBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!
 }
 
 var gen_close_method: value_mod.BuiltinFn = .{ .name = "close", .func = genCloseBuiltin };
+
+pub fn genAwaitBuiltin(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (args.len < 1 or args[0] != .generator) return error.TypeError;
+    return args[0];
+}
+
+var gen_await_method: value_mod.BuiltinFn = .{ .name = "__await__", .func = genAwaitBuiltin };
 
 /// `prop.setter(fn)`, `prop.deleter(fn)`, `prop.getter(fn)`. Each
 /// returns a new property descriptor with the corresponding slot

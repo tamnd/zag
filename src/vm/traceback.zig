@@ -55,6 +55,7 @@ pub fn record(interp: *Interp, frame: *Frame) !void {
     const tb = try Instance.init(a, tb_cls);
     try tb.dict.setStr(a, "tb_frame", try buildFrame(interp, frame));
     try tb.dict.setStr(a, "tb_lineno", Value{ .small_int = frame.code.firstlineno });
+    try tb.dict.setStr(a, "tb_lasti", Value{ .small_int = 0 });
     const prev = exc.instance.dict.getStr("__traceback__") orelse Value.none;
     try tb.dict.setStr(a, "tb_next", prev);
     try exc.instance.dict.setStr(a, "__traceback__", Value{ .instance = tb });

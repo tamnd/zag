@@ -30,6 +30,7 @@ pub fn build(interp: *Interp) !*Module {
     vi.items[4] = Value{ .small_int = 0 };
     try m.attrs.setStr(a, "version_info", Value{ .tuple = vi });
 
+    try m.attrs.setStr(a, "version", Value{ .str = try Str.init(a, "3.14.0 (zag)") });
     try m.attrs.setStr(a, "byteorder", Value{ .str = try Str.init(a, "little") });
     try m.attrs.setStr(a, "maxsize", Value{ .small_int = std.math.maxInt(i64) });
     try m.attrs.setStr(a, "platform", Value{ .str = try Str.init(a, "linux") });
@@ -47,6 +48,7 @@ pub fn build(interp: *Interp) !*Module {
     try m.attrs.setStr(a, "modules", Value{ .dict = modules });
 
     try reg(interp, m, "getrecursionlimit", getrecursionlimitFn);
+    try reg(interp, m, "setrecursionlimit", setrecursionlimitFn);
     try reg(interp, m, "exc_info", excInfoFn);
     try reg(interp, m, "exit", exitFn);
 
@@ -80,6 +82,11 @@ fn buildStdProxy(interp: *Interp, is_stderr: bool) !*Instance {
     }
     const inst = try Instance.init(a, interp.sys_stream_class.?);
     try inst.dict.setStr(a, "_is_stderr", Value{ .boolean = is_stderr });
+    const name_str = if (is_stderr) "<stderr>" else "<stdout>";
+    try inst.dict.setStr(a, "name", Value{ .str = try Str.init(a, name_str) });
+    try inst.dict.setStr(a, "mode", Value{ .str = try Str.init(a, "w") });
+    try inst.dict.setStr(a, "closed", Value{ .boolean = false });
+    try inst.dict.setStr(a, "encoding", Value{ .str = try Str.init(a, "utf-8") });
     return inst;
 }
 
@@ -110,8 +117,19 @@ fn flushFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value.none;
 }
 
-fn getrecursionlimitFn(_: *anyopaque, _: []const Value) anyerror!Value {
-    return Value{ .small_int = 1000 };
+fn getrecursionlimitFn(p: *anyopaque, _: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    return Value{ .small_int = interp.recursion_limit };
+}
+
+fn setrecursionlimitFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args[0] != .small_int) {
+        try interp.typeError("setrecursionlimit expects int");
+        return error.TypeError;
+    }
+    interp.recursion_limit = args[0].small_int;
+    return Value.none;
 }
 
 fn excInfoFn(p: *anyopaque, _: []const Value) anyerror!Value {
