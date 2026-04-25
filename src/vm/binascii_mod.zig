@@ -191,6 +191,12 @@ fn crc32Fn(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = p;
     if (args.len < 1) return error.TypeError;
     const data = try argBytes(args[0]);
-    const v = std.hash.Crc32.hash(data);
-    return Value{ .small_int = @intCast(v) };
+    const seed: u32 = if (args.len >= 2 and args[1] == .small_int)
+        @truncate(@as(u64, @bitCast(args[1].small_int)))
+    else
+        0;
+    var c = std.hash.Crc32.init();
+    c.crc = seed ^ 0xFFFFFFFF;
+    c.update(data);
+    return Value{ .small_int = @intCast(c.final()) };
 }

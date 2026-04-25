@@ -21,6 +21,7 @@ const Class = @import("../object/class.zig").Class;
 const Instance = @import("../object/instance.zig").Instance;
 const Generator = @import("../object/generator.zig").Generator;
 const Slice = @import("../object/slice.zig").Slice;
+const BigInt = @import("../object/bigint.zig").BigInt;
 const Set = @import("../object/set.zig").Set;
 const Dict = @import("../object/dict.zig").Dict;
 const Frame = @import("frame.zig").Frame;
@@ -1949,8 +1950,22 @@ fn leftShift(interp: *Interp, a: Value, b: Value) !Value {
             try interp.raisePy("ValueError", "negative shift count");
             return error.PyException;
         }
-        const sh: u6 = @intCast(@min(bi, 63));
-        return Value{ .small_int = ai << sh };
+        // Determine whether result fits i64 to keep small_int when safe.
+        if (ai == 0) return Value{ .small_int = 0 };
+        const abs_a: u64 = @intCast(if (ai < 0) -ai else ai);
+        const lz: u32 = @clz(abs_a);
+        const top_bit: u64 = 64 - lz;
+        if (bi <= 62 and (top_bit + @as(u64, @intCast(bi))) < 63) {
+            const sh: u6 = @intCast(bi);
+            return Value{ .small_int = ai << sh };
+        }
+        // Overflow path: build big_int = a << b.
+        const allocator = interp.allocator;
+        var managed = try std.math.big.int.Managed.initSet(allocator, ai);
+        errdefer managed.deinit();
+        try managed.shiftLeft(&managed, @intCast(bi));
+        const big = try BigInt.fromManaged(allocator, managed);
+        return Value{ .big_int = big };
     };
     try interp.typeError("unsupported operand type(s) for <<");
     return error.TypeError;

@@ -498,6 +498,26 @@ pub const Value = union(Tag) {
                 .gt => .gt,
             };
         }
+        // Mixed small_int / big_int: compare via the big_int's sign and
+        // magnitude. We avoid allocating by using `orderAgainstScalar`.
+        if (a == .big_int and (b == .small_int or b == .boolean)) {
+            const y: i64 = if (b == .boolean) @intFromBool(b.boolean) else b.small_int;
+            const o = a.big_int.inner.toConst().orderAgainstScalar(y);
+            return switch (o) {
+                .lt => .lt,
+                .eq => .eq,
+                .gt => .gt,
+            };
+        }
+        if ((a == .small_int or a == .boolean) and b == .big_int) {
+            const x: i64 = if (a == .boolean) @intFromBool(a.boolean) else a.small_int;
+            const o = b.big_int.inner.toConst().orderAgainstScalar(x);
+            return switch (o) {
+                .lt => .gt,
+                .eq => .eq,
+                .gt => .lt,
+            };
+        }
         const af: ?f64 = switch (a) {
             .small_int => |i| @floatFromInt(i),
             .boolean => |x| if (x) 1.0 else 0.0,
