@@ -1972,8 +1972,8 @@ fn add(interp: *Interp, a: Value, b: Value) !Value {
             return Value{ .bytearray = out };
         }
     }
-    try interp.typeError("unsupported operand type(s) for +");
-    return error.TypeError;
+    try interp.raisePy("TypeError", "unsupported operand type(s) for +");
+    return error.PyException;
 }
 
 fn subtract(interp: *Interp, a: Value, b: Value) !Value {
