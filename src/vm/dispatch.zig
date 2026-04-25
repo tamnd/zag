@@ -30,6 +30,7 @@ const strmethods = @import("strmethods.zig");
 const listmethods = @import("listmethods.zig");
 const setmethods = @import("setmethods.zig");
 const bytearraymethods = @import("bytearraymethods.zig");
+const bytesmethods = @import("bytesmethods.zig");
 const memoryviewmethods = @import("memoryviewmethods.zig");
 const dictmethods = @import("dictmethods.zig");
 const collmethods = @import("collections_methods.zig");
@@ -3184,6 +3185,7 @@ pub fn loadAttrValue(interp: *Interp, obj: Value, name: []const u8) !Value {
         .list => listmethods.lookup(name),
         .dict => dictmethods.lookup(name),
         .set => setmethods.lookup(name),
+        .bytes => bytesmethods.lookup(name),
         .bytearray => bytearraymethods.lookup(name),
         .memoryview => memoryviewmethods.lookup(name),
         else => null,
@@ -3577,6 +3579,7 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             .list => listmethods.lookup(name),
             .dict => dictmethods.lookup(name),
             .set => setmethods.lookup(name),
+            .bytes => bytesmethods.lookup(name),
             .bytearray => bytearraymethods.lookup(name),
             .memoryview => memoryviewmethods.lookup(name),
             .deque => collmethods.dequeLookup(name),
