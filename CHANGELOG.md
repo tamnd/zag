@@ -9,6 +9,26 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-04-25
+
+### Added
+
+- `15_match` fixture, lifted from goipy's testdata, running
+  byte-equal against CPython 3.14. Seven `case` arms covering
+  literal, class+guard, sequence, star-sequence, mapping,
+  class-as, and default.
+- `MATCH_CLASS`, `MATCH_SEQUENCE`, `MATCH_MAPPING`, `MATCH_KEYS`,
+  `GET_LEN`. The class form supports atomic-type single-positional
+  binding (`int(n)` / `str()` style) by builtin name; user
+  classes walk the MRO. Generic `__match_args__` extraction is
+  out of scope until a fixture forces it.
+- `UNPACK_EX` for `[a, *rest, b]` patterns. The starred middle
+  is collected into a fresh `List`; push order leaves the
+  leftmost name on top of the stack.
+- `CONVERT_VALUE` for f-string `!s` / `!r` / `!a` conversions.
+- `POP_JUMP_IF_NONE` / `POP_JUMP_IF_NOT_NONE` -- needed for the
+  `MATCH_CLASS` and `MATCH_KEYS` None-check pattern.
+
 ## [0.0.15] - 2026-04-25
 
 ### Added
