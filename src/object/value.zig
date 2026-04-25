@@ -264,7 +264,25 @@ pub const Value = union(Tag) {
             .function => |f| try w.print("<function {s}>", .{f.code.qualname}),
             .cell => try w.writeAll("<cell>"),
             .class => |c| try w.print("<class '{s}'>", .{c.name}),
-            .instance => |obj| try w.print("<{s} object>", .{obj.cls.name}),
+            .instance => |obj| {
+                if (std.mem.eql(u8, obj.cls.name, "Interpolation")) {
+                    const v = obj.dict.getStr("value") orelse Value.none;
+                    const e = obj.dict.getStr("expression") orelse Value.none;
+                    const c = obj.dict.getStr("conversion") orelse Value.none;
+                    const f = obj.dict.getStr("format_spec") orelse Value.none;
+                    try w.writeAll("Interpolation(");
+                    try v.writeRepr(w);
+                    try w.writeAll(", ");
+                    try e.writeRepr(w);
+                    try w.writeAll(", ");
+                    try c.writeRepr(w);
+                    try w.writeAll(", ");
+                    try f.writeRepr(w);
+                    try w.writeByte(')');
+                } else {
+                    try w.print("<{s} object>", .{obj.cls.name});
+                }
+            },
             .iter => try w.writeAll("<iterator>"),
             .generator => try w.writeAll("<generator>"),
             .enum_iter => try w.writeAll("<enumerate object>"),

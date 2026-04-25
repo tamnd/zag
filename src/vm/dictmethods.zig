@@ -103,11 +103,80 @@ pub fn popImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     return error.PyException;
 }
 
+pub fn updateImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 1 or args[0] != .dict) {
+        try interp.typeError("dict.update() requires a dict self");
+        return error.TypeError;
+    }
+    const d = args[0].dict;
+    if (args.len >= 2) {
+        switch (args[1]) {
+            .dict => |s| for (s.pairs.items) |p| try d.setKey(interp.allocator, p.key, p.value),
+            .list => |l| for (l.items.items) |it| {
+                if (it != .tuple or it.tuple.items.len != 2) {
+                    try interp.typeError("dict.update() iterable items must be 2-tuples");
+                    return error.TypeError;
+                }
+                try d.setKey(interp.allocator, it.tuple.items[0], it.tuple.items[1]);
+            },
+            else => {
+                try interp.typeError("dict.update() argument must be a dict or iterable of pairs");
+                return error.TypeError;
+            },
+        }
+    }
+    return Value.none;
+}
+
+pub fn updateKwImpl(
+    interp_opaque: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    _ = try updateImpl(interp_opaque, args);
+    const d = args[0].dict;
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        try d.setStr(interp.allocator, kn.str.bytes, kv);
+    }
+    return Value.none;
+}
+
+pub fn setdefaultImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const d = args[0].dict;
+    if (d.getKey(args[1])) |v| return v;
+    const default = if (args.len >= 3) args[2] else Value.none;
+    try d.setKey(interp.allocator, args[1], default);
+    return default;
+}
+
+pub fn clearImpl(_: *anyopaque, args: []const Value) anyerror!Value {
+    const d = args[0].dict;
+    d.pairs.clearRetainingCapacity();
+    d.keys.clearRetainingCapacity();
+    return Value.none;
+}
+
+pub fn copyImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const out = try Dict.init(interp.allocator);
+    for (args[0].dict.pairs.items) |p| try out.setKey(interp.allocator, p.key, p.value);
+    return Value{ .dict = out };
+}
+
 var items_entry = BuiltinFn{ .name = "items", .func = itemsImpl };
 var keys_entry = BuiltinFn{ .name = "keys", .func = keysImpl };
 var values_entry = BuiltinFn{ .name = "values", .func = valuesImpl };
 var get_entry = BuiltinFn{ .name = "get", .func = getImpl };
 var pop_entry = BuiltinFn{ .name = "pop", .func = popImpl };
+var update_entry = BuiltinFn{ .name = "update", .func = updateImpl, .kw_func = updateKwImpl };
+var setdefault_entry = BuiltinFn{ .name = "setdefault", .func = setdefaultImpl };
+var clear_entry = BuiltinFn{ .name = "clear", .func = clearImpl };
+var copy_entry = BuiltinFn{ .name = "copy", .func = copyImpl };
 
 pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "items")) return &items_entry;
@@ -115,5 +184,9 @@ pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "values")) return &values_entry;
     if (std.mem.eql(u8, name, "get")) return &get_entry;
     if (std.mem.eql(u8, name, "pop")) return &pop_entry;
+    if (std.mem.eql(u8, name, "update")) return &update_entry;
+    if (std.mem.eql(u8, name, "setdefault")) return &setdefault_entry;
+    if (std.mem.eql(u8, name, "clear")) return &clear_entry;
+    if (std.mem.eql(u8, name, "copy")) return &copy_entry;
     return null;
 }
