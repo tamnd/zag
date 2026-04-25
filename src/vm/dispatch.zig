@@ -4216,7 +4216,12 @@ fn instantiate(
         }
         stack_buf[0] = inst_val;
         @memcpy(stack_buf[1..total], positional);
-        _ = try callPyFunction(interp, init_v.function, stack_buf[0..total], kw_names, kw_values, null);
+        const ret = try callPyFunction(interp, init_v.function, stack_buf[0..total], kw_names, kw_values, null);
+        // EXIT_INIT_CHECK: __init__ must return None.
+        if (ret != .none) {
+            try interp.raisePy("TypeError", "__init__() should return None");
+            return error.PyException;
+        }
     }
     return inst_val;
 }
