@@ -116,7 +116,19 @@ pub const Value = union(Tag) {
                 }
                 try w.writeByte(']');
             },
-            .dict => try w.writeAll("{...}"),
+            .dict => |d| {
+                try w.writeByte('{');
+                var i: usize = 0;
+                while (i < d.keys.items.len) : (i += 1) {
+                    if (i != 0) try w.writeAll(", ");
+                    const k = d.keys.items[i];
+                    try w.writeByte('\'');
+                    try w.writeAll(k);
+                    try w.writeAll("': ");
+                    if (d.getStr(k)) |v| try v.writeRepr(w);
+                }
+                try w.writeByte('}');
+            },
             .code => |c| try w.print("<code object {s}>", .{c.name}),
             .builtin_fn => |f| try w.print("<built-in function {s}>", .{f.name}),
             .function => |f| try w.print("<function {s}>", .{f.code.qualname}),

@@ -44,4 +44,22 @@ pub const Dict = struct {
     pub fn count(self: *const Dict) usize {
         return self.map.count();
     }
+
+    pub fn contains(self: *const Dict, key: []const u8) bool {
+        return self.map.contains(key);
+    }
+
+    /// Remove `key` if present. Returns true if a key was removed.
+    /// O(n) on the keys list because we keep insertion order;
+    /// fixtures don't yet stress this.
+    pub fn delete(self: *Dict, key: []const u8) bool {
+        if (!self.map.remove(key)) return false;
+        for (self.keys.items, 0..) |k, i| {
+            if (std.mem.eql(u8, k, key)) {
+                _ = self.keys.orderedRemove(i);
+                return true;
+            }
+        }
+        return true;
+    }
 };
