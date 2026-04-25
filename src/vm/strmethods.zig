@@ -174,6 +174,43 @@ fn countImpl(_: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .small_int = n };
 }
 
+fn isStripChar(c: u8, chars: ?[]const u8) bool {
+    if (chars) |cs| return std.mem.indexOfScalar(u8, cs, c) != null;
+    return std.ascii.isWhitespace(c);
+}
+
+fn stripImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const self = args[0].str;
+    const chars: ?[]const u8 = if (args.len >= 2 and args[1] == .str) args[1].str.bytes else null;
+    var lo: usize = 0;
+    var hi: usize = self.bytes.len;
+    while (lo < hi and isStripChar(self.bytes[lo], chars)) lo += 1;
+    while (hi > lo and isStripChar(self.bytes[hi - 1], chars)) hi -= 1;
+    return Value{ .str = try Str.init(interp.allocator, self.bytes[lo..hi]) };
+}
+
+fn lstripImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const self = args[0].str;
+    const chars: ?[]const u8 = if (args.len >= 2 and args[1] == .str) args[1].str.bytes else null;
+    var lo: usize = 0;
+    while (lo < self.bytes.len and isStripChar(self.bytes[lo], chars)) lo += 1;
+    return Value{ .str = try Str.init(interp.allocator, self.bytes[lo..]) };
+}
+
+fn rstripImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const self = args[0].str;
+    const chars: ?[]const u8 = if (args.len >= 2 and args[1] == .str) args[1].str.bytes else null;
+    var hi: usize = self.bytes.len;
+    while (hi > 0 and isStripChar(self.bytes[hi - 1], chars)) hi -= 1;
+    return Value{ .str = try Str.init(interp.allocator, self.bytes[0..hi]) };
+}
+
+var strip_entry: BuiltinFn = .{ .name = "strip", .func = stripImpl };
+var lstrip_entry: BuiltinFn = .{ .name = "lstrip", .func = lstripImpl };
+var rstrip_entry: BuiltinFn = .{ .name = "rstrip", .func = rstripImpl };
 var count_entry: BuiltinFn = .{ .name = "count", .func = countImpl };
 var upper_entry: BuiltinFn = .{ .name = "upper", .func = upperImpl };
 var replace_entry: BuiltinFn = .{ .name = "replace", .func = replaceImpl };
@@ -190,5 +227,8 @@ pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "startswith")) return &startswith_entry;
     if (std.mem.eql(u8, name, "endswith")) return &endswith_entry;
     if (std.mem.eql(u8, name, "count")) return &count_entry;
+    if (std.mem.eql(u8, name, "strip")) return &strip_entry;
+    if (std.mem.eql(u8, name, "lstrip")) return &lstrip_entry;
+    if (std.mem.eql(u8, name, "rstrip")) return &rstrip_entry;
     return null;
 }
