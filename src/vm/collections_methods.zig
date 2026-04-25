@@ -136,7 +136,7 @@ fn dequeIndex(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
     for (d.items.items.items, 0..) |x, i| {
         if (Value.equals(x, args[1])) return Value{ .small_int = @intCast(i) };
     }
-    try interp.raisePy("ValueError", "value not in deque");
+    try interp.raisePy("ValueError", "deque.index(x): x not in deque");
     return error.PyException;
 }
 

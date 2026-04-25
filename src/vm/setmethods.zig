@@ -130,6 +130,61 @@ fn symdifferenceImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Va
     return Value{ .set = out };
 }
 
+fn addImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[0] != .set) {
+        try interp.typeError("set.add() takes 1 argument");
+        return error.TypeError;
+    }
+    if (args[0].set.frozen) {
+        try interp.typeError("'frozenset' object has no attribute 'add'");
+        return error.TypeError;
+    }
+    try args[0].set.add(interp.allocator, args[1]);
+    return Value.none;
+}
+
+fn discardImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[0] != .set) {
+        try interp.typeError("set.discard() takes 1 argument");
+        return error.TypeError;
+    }
+    if (args[0].set.frozen) {
+        try interp.typeError("'frozenset' object has no attribute 'discard'");
+        return error.TypeError;
+    }
+    const s = args[0].set;
+    for (s.items.items, 0..) |x, i| {
+        if (x.equals(args[1])) {
+            _ = s.items.orderedRemove(i);
+            break;
+        }
+    }
+    return Value.none;
+}
+
+fn removeImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[0] != .set) {
+        try interp.typeError("set.remove() takes 1 argument");
+        return error.TypeError;
+    }
+    if (args[0].set.frozen) {
+        try interp.typeError("'frozenset' object has no attribute 'remove'");
+        return error.TypeError;
+    }
+    const s = args[0].set;
+    for (s.items.items, 0..) |x, i| {
+        if (x.equals(args[1])) {
+            _ = s.items.orderedRemove(i);
+            return Value.none;
+        }
+    }
+    try interp.raisePy("KeyError", "value not in set");
+    return error.PyException;
+}
+
 fn copyImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const self = args[0].set;
@@ -150,6 +205,9 @@ var intersection_entry: BuiltinFn = .{ .name = "intersection", .func = intersect
 var difference_entry: BuiltinFn = .{ .name = "difference", .func = differenceImpl };
 var symdifference_entry: BuiltinFn = .{ .name = "symmetric_difference", .func = symdifferenceImpl };
 var copy_entry: BuiltinFn = .{ .name = "copy", .func = copyImpl };
+var add_entry: BuiltinFn = .{ .name = "add", .func = addImpl };
+var discard_entry: BuiltinFn = .{ .name = "discard", .func = discardImpl };
+var remove_entry: BuiltinFn = .{ .name = "remove", .func = removeImpl };
 
 pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "issubset")) return &issubset_entry;
@@ -160,5 +218,8 @@ pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "difference")) return &difference_entry;
     if (std.mem.eql(u8, name, "symmetric_difference")) return &symdifference_entry;
     if (std.mem.eql(u8, name, "copy")) return &copy_entry;
+    if (std.mem.eql(u8, name, "add")) return &add_entry;
+    if (std.mem.eql(u8, name, "discard")) return &discard_entry;
+    if (std.mem.eql(u8, name, "remove")) return &remove_entry;
     return null;
 }

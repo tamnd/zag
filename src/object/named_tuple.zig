@@ -14,14 +14,24 @@ const Value = @import("value.zig").Value;
 pub const NamedTupleFactory = struct {
     type_name: []const u8,
     fields: []const []const u8,
+    defaults: []const Value,
 
     pub fn init(
         allocator: std.mem.Allocator,
         type_name: []const u8,
         fields: []const []const u8,
     ) !*NamedTupleFactory {
+        return initWithDefaults(allocator, type_name, fields, &.{});
+    }
+
+    pub fn initWithDefaults(
+        allocator: std.mem.Allocator,
+        type_name: []const u8,
+        fields: []const []const u8,
+        defaults: []const Value,
+    ) !*NamedTupleFactory {
         const self = try allocator.create(NamedTupleFactory);
-        self.* = .{ .type_name = type_name, .fields = fields };
+        self.* = .{ .type_name = type_name, .fields = fields, .defaults = defaults };
         return self;
     }
 };

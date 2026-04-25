@@ -357,6 +357,13 @@ pub const Value = union(Tag) {
                     .tuple => |t| {
                         if (t.items.len == 0) return;
                         if (t.items.len == 1) {
+                            // KeyError formats `args[0]` via repr,
+                            // matching CPython: `str(KeyError("x"))`
+                            // is `'x'`, not `x`.
+                            if (instanceIsClass(obj, "KeyError")) {
+                                try t.items[0].writeRepr(w);
+                                return;
+                            }
                             try t.items[0].writeStr(w);
                             return;
                         }
@@ -369,6 +376,15 @@ pub const Value = union(Tag) {
             },
             else => try self.writeRepr(w),
         }
+    }
+
+    fn instanceIsClass(obj: anytype, name: []const u8) bool {
+        var cls: ?*@import("class.zig").Class = obj.cls;
+        while (cls) |c| {
+            if (std.mem.eql(u8, c.name, name)) return true;
+            cls = if (c.bases.len > 0) c.bases[0] else null;
+        }
+        return false;
     }
 
     /// Bytes-content escaping used by both `bytes` and `bytearray`
