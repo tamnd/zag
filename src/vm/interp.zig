@@ -27,6 +27,10 @@ const random_mod = @import("random_mod.zig");
 const json_mod = @import("json_mod.zig");
 const string_mod = @import("string_mod.zig");
 const copy_mod = @import("copy_mod.zig");
+const io_mod = @import("io_mod.zig");
+const hashlib_mod = @import("hashlib_mod.zig");
+const base64_mod = @import("base64_mod.zig");
+const textwrap_mod = @import("textwrap_mod.zig");
 const re_mod = @import("re_mod.zig");
 
 pub const Interp = struct {
@@ -57,6 +61,10 @@ pub const Interp = struct {
     json_module: ?*Module = null,
     string_module: ?*Module = null,
     copy_module: ?*Module = null,
+    io_module: ?*Module = null,
+    hashlib_module: ?*Module = null,
+    base64_module: ?*Module = null,
+    textwrap_module: ?*Module = null,
     re_module: ?*Module = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
@@ -372,6 +380,30 @@ pub const Interp = struct {
             if (self.re_module) |m| return m;
             const m = re_mod.build(self) catch return null;
             self.re_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "io")) {
+            if (self.io_module) |m| return m;
+            const m = io_mod.build(self) catch return null;
+            self.io_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "hashlib")) {
+            if (self.hashlib_module) |m| return m;
+            const m = hashlib_mod.build(self) catch return null;
+            self.hashlib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "base64")) {
+            if (self.base64_module) |m| return m;
+            const m = base64_mod.build(self) catch return null;
+            self.base64_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "textwrap")) {
+            if (self.textwrap_module) |m| return m;
+            const m = textwrap_mod.build(self) catch return null;
+            self.textwrap_module = m;
             return m;
         }
         return null;
