@@ -9,6 +9,39 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.42] - 2026-04-25
+
+### Added
+
+- `41_importlib` fixture and the `_41_state` helper, byte-equal
+  against CPython 3.14. Exercises the importlib façade end to
+  end: absolute dotted import returning the *innermost* module
+  (`importlib.import_module("_39pkg.sub.leaf")`), single-segment
+  import, `reload()` resetting a mutated module attribute back
+  to its body's initial value, relative resolution via the
+  `package=` keyword (`import_module(".sub", package="_39pkg")`),
+  hitting a builtin module (`asyncio`), and the `ImportError`
+  surface for a missing name.
+- A pinhole `importlib` builtin module (`src/vm/importlib.zig`).
+  Lazily built on first import via `Interp.getBuiltinModule`, the
+  same hook that already serves `asyncio`. Two callables:
+  - `import_module(name, package=None)` resolves leading dots
+    against `package` the same way `IMPORT_NAME` does, then
+    delegates to `loadModuleChain`. Differs from `import a.b.c`
+    in one place — it returns the innermost module of the chain
+    rather than the top, which is the whole point of the
+    function.
+  - `reload(mod)` re-runs the module body against the existing
+    `mod.attrs` dict so module-level rebindings reset, while the
+    module identity is preserved (callers holding the old
+    reference still see the same object).
+
+### Changed
+
+- `Interp.importlib_module` cache field (twin of
+  `asyncio_module`). Lazy build pattern means scripts that don't
+  reach for importlib pay nothing.
+
 ## [0.0.41] - 2026-04-25
 
 ### Added

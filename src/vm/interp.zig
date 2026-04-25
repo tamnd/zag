@@ -15,6 +15,7 @@ const Frame = @import("frame.zig").Frame;
 const dispatch = @import("dispatch.zig");
 const builtins = @import("builtins.zig");
 const asyncio_mod = @import("asyncio.zig");
+const importlib_mod = @import("importlib.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -29,10 +30,10 @@ pub const Interp = struct {
     /// The value produced by the most recent YIELD_VALUE. Read by the
     /// generator-send wrapper after `error.GenYield` escapes dispatch.
     gen_yielded: ?Value = null,
-    /// Cached builtin modules. Today only `asyncio`; lazily built on
-    /// first IMPORT_NAME so a script that doesn't import it pays
-    /// nothing.
+    /// Cached builtin modules. Lazily built on first import so a
+    /// script that doesn't reach for them pays nothing.
     asyncio_module: ?*Module = null,
+    importlib_module: ?*Module = null,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every
     /// helper `.pyc`; the CLI pre-registers siblings of the entry
@@ -234,14 +235,19 @@ pub const Interp = struct {
         return Chain{ .top = top.?, .innermost = innermost.? };
     }
 
-    /// Hand back the builtin module of the given name (today: just
-    /// `asyncio`). Cached on first access so identity holds across
-    /// re-imports.
+    /// Hand back the builtin module of the given name. Cached on
+    /// first access so identity holds across re-imports.
     pub fn getBuiltinModule(self: *Interp, name: []const u8) ?*Module {
         if (std.mem.eql(u8, name, "asyncio")) {
             if (self.asyncio_module) |m| return m;
             const m = asyncio_mod.build(self) catch return null;
             self.asyncio_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "importlib")) {
+            if (self.importlib_module) |m| return m;
+            const m = importlib_mod.build(self) catch return null;
+            self.importlib_module = m;
             return m;
         }
         return null;
