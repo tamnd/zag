@@ -9,6 +9,27 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.41] - 2026-04-25
+
+### Added
+
+- `40_packages_stress` fixture and the `_40pkg/` helper package,
+  byte-equal against CPython 3.14. Stress-tests the package
+  loader added in m40: eager re-export from a top-level
+  `__init__` (`from . import a`, `from .a import b`, `from .a.b
+  import compute`), three-dot relative imports reaching back up
+  to the root package (`from ... import PKG_NAME`), idempotent
+  re-import (`import x.y.z` twice returns the same object), and
+  the two import-failure surfaces — `ImportError` for a missing
+  name `from x import nope` and `ModuleNotFoundError` for a
+  missing path `import x.does_not_exist`.
+
+### Notes
+
+- No opcode or runtime changes. The m40 package machinery
+  covers this stress variant verbatim — the value of this round
+  is the regression-test evidence, not new code.
+
 ## [0.0.40] - 2026-04-25
 
 ### Added
