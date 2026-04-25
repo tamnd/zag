@@ -603,6 +603,8 @@ pub const Value = union(Tag) {
     /// (matching CPython's mixed-numeric coercion rule).
     pub fn equals(a: Value, b: Value) bool {
         if (a == .none and b == .none) return true;
+        if (a == .ellipsis and b == .ellipsis) return true;
+        if (a == .not_implemented and b == .not_implemented) return true;
         if (a == .complex_num or b == .complex_num) return complexEquals(a, b);
         if (a == .set and b == .set) return setEquals(a.set, b.set);
         if (a == .named_tuple and b == .named_tuple) {
