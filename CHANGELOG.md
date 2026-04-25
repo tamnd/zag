@@ -9,6 +9,17 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.85] - 2026-04-26
+
+### Added
+
+- `85_opcode_stress` fixture, byte-equal.
+- `bytes.decode()`.
+- `list.sort` (with key/reverse kwargs), `insert`, `remove`, `index`,
+  `count`, `clear`, `copy`.
+- `dict.update` (positional and keyword), `setdefault`, `clear`, `copy`.
+- Interpolation instance repr matches CPython.
+
 ## [0.0.84] - 2026-04-26
 
 ### Added
