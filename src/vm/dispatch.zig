@@ -3615,6 +3615,15 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
     }
+    // str.maketrans -- attribute access on the `str` builtin.
+    if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "str") and std.mem.eql(u8, name, "maketrans")) {
+        const v = Value{ .builtin_fn = &strmethods.maketrans_entry };
+        if (is_method) {
+            frame.push(v);
+            frame.push(Value.null_sentinel);
+        } else frame.push(v);
+        return;
+    }
     try interp.attributeError(obj.typeName(), name);
     return error.AttributeError;
 }
