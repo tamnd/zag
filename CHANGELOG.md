@@ -9,6 +9,17 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.24] - 2026-04-25
+
+### Added
+
+- `23_format_stress` fixture, lifted from goipy's testdata,
+  byte-equal against CPython 3.14. Comprehensive format-spec
+  coverage on int / float / str.
+- `:g` / `:G` float format, with the CPython rule for picking
+  fixed vs exponent representation (exp < -4 or exp >=
+  precision) and trailing-zero / dangling-dot stripping.
+
 ## [0.0.23] - 2026-04-25
 
 ### Added

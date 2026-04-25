@@ -193,6 +193,7 @@ fn formatFloat(alloc: std.mem.Allocator, f: f64, spec: Spec) ![]u8 {
         'f', 'F' => try std.fmt.bufPrint(&buf, "{d:.[1]}", .{ abs, prec }),
         'e' => try formatScientific(&buf, abs, prec, false),
         'E' => try formatScientific(&buf, abs, prec, true),
+        'g', 'G' => try formatG(&buf, abs, prec, t == 'G'),
         else => try std.fmt.bufPrint(&buf, "{d:.[1]}", .{ abs, prec }),
     };
     const body = try alloc.dupe(u8, written);
@@ -222,6 +223,44 @@ fn formatScientific(buf: []u8, abs: f64, prec: usize, upper: bool) ![]const u8 {
     const off = mantissa_text.len;
     const tail = try std.fmt.bufPrint(buf[off..], "{c}{c}{d:0>2}", .{ e_char, exp_sign, exp_abs });
     return buf[0 .. off + tail.len];
+}
+
+/// Python's `:g` -- pick fixed vs exponent based on the magnitude,
+/// then strip trailing zeros and a dangling decimal point.
+fn formatG(buf: []u8, abs: f64, precision: usize, upper: bool) ![]const u8 {
+    const p: usize = if (precision == 0) 1 else precision;
+    var exp: i32 = 0;
+    if (abs != 0.0) {
+        const lg = @log10(abs);
+        exp = @intFromFloat(@floor(lg));
+    }
+    const use_exp = exp < -4 or exp >= @as(i32, @intCast(p));
+    var raw_buf: [128]u8 = undefined;
+    const raw: []const u8 = if (use_exp)
+        try formatScientific(&raw_buf, abs, p - 1, upper)
+    else blk: {
+        const dec_digits: usize = @intCast(@as(i32, @intCast(p)) - 1 - exp);
+        break :blk try std.fmt.bufPrint(&raw_buf, "{d:.[1]}", .{ abs, dec_digits });
+    };
+    // Split mantissa/exponent.
+    var mant_end: usize = raw.len;
+    var exp_part: []const u8 = "";
+    for (raw, 0..) |c, i| {
+        if (c == 'e' or c == 'E') {
+            mant_end = i;
+            exp_part = raw[i..];
+            break;
+        }
+    }
+    var mant = raw[0..mant_end];
+    if (std.mem.indexOfScalar(u8, mant, '.')) |_| {
+        while (mant.len > 0 and mant[mant.len - 1] == '0') mant = mant[0 .. mant.len - 1];
+        if (mant.len > 0 and mant[mant.len - 1] == '.') mant = mant[0 .. mant.len - 1];
+    }
+    const total = mant.len + exp_part.len;
+    @memcpy(buf[0..mant.len], mant);
+    @memcpy(buf[mant.len..total], exp_part);
+    return buf[0..total];
 }
 
 fn formatStr(alloc: std.mem.Allocator, s: []const u8, spec: Spec) ![]u8 {
