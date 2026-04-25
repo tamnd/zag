@@ -297,6 +297,63 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .BUILD_INTERPOLATION => {
+            const arg = oparg(frame, ext_arg);
+            const fmt_spec: ?Value = if (arg & 1 != 0) frame.pop() else null;
+            const expr = frame.pop();
+            const value = frame.pop();
+            const conv_code: u32 = (arg >> 2) & 3;
+            const conv_str: ?[]const u8 = switch (conv_code) {
+                1 => "s",
+                2 => "r",
+                3 => "a",
+                else => null,
+            };
+            const a = interp.allocator;
+            if (interp.interpolation_class == null) {
+                interp.interpolation_class = try @import("../object/class.zig").Class.init(a, "Interpolation", &.{}, try @import("../object/dict.zig").Dict.init(a));
+            }
+            const inst = try @import("../object/instance.zig").Instance.init(a, interp.interpolation_class.?);
+            try inst.dict.setStr(a, "value", value);
+            try inst.dict.setStr(a, "expression", expr);
+            if (conv_str) |cs| {
+                try inst.dict.setStr(a, "conversion", Value{ .str = try @import("../object/string.zig").Str.init(a, cs) });
+            } else {
+                try inst.dict.setStr(a, "conversion", Value.none);
+            }
+            if (fmt_spec) |fs| {
+                try inst.dict.setStr(a, "format_spec", fs);
+            } else {
+                try inst.dict.setStr(a, "format_spec", Value{ .str = try @import("../object/string.zig").Str.init(a, "") });
+            }
+            frame.push(Value{ .instance = inst });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .BUILD_TEMPLATE => {
+            const interps = frame.pop();
+            const strs = frame.pop();
+            const a = interp.allocator;
+            if (interp.template_class == null) {
+                interp.template_class = try @import("../object/class.zig").Class.init(a, "Template", &.{}, try @import("../object/dict.zig").Dict.init(a));
+            }
+            const inst = try @import("../object/instance.zig").Instance.init(a, interp.template_class.?);
+            try inst.dict.setStr(a, "strings", strs);
+            try inst.dict.setStr(a, "interpolations", interps);
+            // values = tuple of interp.value for each interpolation
+            if (interps == .tuple) {
+                const vt = try Tuple.init(a, interps.tuple.items.len);
+                for (interps.tuple.items, 0..) |it, i| {
+                    if (it == .instance) {
+                        vt.items[i] = it.instance.dict.getStr("value") orelse Value.none;
+                    } else vt.items[i] = Value.none;
+                }
+                try inst.dict.setStr(a, "values", Value{ .tuple = vt });
+            }
+            frame.push(Value{ .instance = inst });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .EXTENDED_ARG => {
             const arg = oparg(frame, ext_arg);
             ext_arg = arg << 8;
