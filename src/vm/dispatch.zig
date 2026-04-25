@@ -140,6 +140,14 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .STORE_GLOBAL => {
+            const arg = oparg(frame, ext_arg);
+            const name = frame.code.names[arg];
+            const v = frame.pop();
+            try frame.globals.setStr(interp.allocator, name, v);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .LOAD_GLOBAL => {
             const arg = oparg(frame, ext_arg);
             const name_idx = arg >> 1;
@@ -1756,18 +1764,22 @@ fn sendStep(interp: *Interp, receiver: Value, sent_value: Value) SendError!Value
 
 pub fn nextBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    if (args.len != 1) {
-        try interp.typeError("next expects one argument");
+    if (args.len < 1 or args.len > 2) {
+        try interp.typeError("next expects 1 or 2 arguments");
         return error.TypeError;
     }
+    const has_default = args.len == 2;
+    const default_v: Value = if (has_default) args[1] else Value.none;
     switch (args[0]) {
         .generator => |g| {
             if (try genResume(interp, g, Value.none)) |v| return v;
+            if (has_default) return default_v;
             try interp.raisePy("StopIteration", "");
             return error.PyException;
         },
         .iter => |it| {
             if (it.next()) |v| return v;
+            if (has_default) return default_v;
             try interp.raisePy("StopIteration", "");
             return error.PyException;
         },
@@ -1776,6 +1788,17 @@ pub fn nextBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
             return error.TypeError;
         },
     }
+}
+
+pub fn iterBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.typeError("iter expects one argument");
+        return error.TypeError;
+    }
+    if (args[0] == .iter or args[0] == .generator) return args[0];
+    const it = try makeIter(interp, args[0]);
+    return Value{ .iter = it };
 }
 
 pub fn genSendBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {

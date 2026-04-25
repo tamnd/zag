@@ -9,6 +9,21 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-04-25
+
+### Added
+
+- `17_walrus` fixture, lifted from goipy's testdata, running
+  byte-equal against CPython 3.14. Covers walrus in an `if`
+  head, a `while next(it, None) is not None` loop, and a list
+  comprehension whose filter binds via walrus.
+- `STORE_GLOBAL` opcode -- the comprehension's walrus binds to
+  the enclosing scope, not the comprehension's locals.
+- `iter` builtin: pass-through for iterators and generators,
+  otherwise delegate to `makeIter`.
+- Two-argument `next(it, default)`: returns `default` instead of
+  raising `StopIteration` when the iterator is exhausted.
+
 ## [0.0.17] - 2026-04-25
 
 ### Added

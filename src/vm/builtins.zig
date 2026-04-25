@@ -512,6 +512,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("classmethod", classmethodBuiltin);
     try interp.registerBuiltin("staticmethod", staticmethodBuiltin);
     try interp.registerBuiltin("next", dispatch.nextBuiltin);
+    try interp.registerBuiltin("iter", dispatch.iterBuiltin);
     try installExceptions(interp);
 }
 
