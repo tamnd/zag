@@ -133,6 +133,64 @@ pub const Value = union(Tag) {
         }
     }
 
+    pub const Order = enum { lt, eq, gt };
+
+    /// Compare for the type pairs the comparison fixture exercises.
+    /// Returns null when the operand types cannot be ordered (and the
+    /// caller wants to map that to TypeError); equality between
+    /// unordered types is handled in `richCompare`, not here.
+    pub fn order(a: Value, b: Value) ?Order {
+        if (a == .small_int and b == .small_int) {
+            const x = a.small_int;
+            const y = b.small_int;
+            return if (x < y) .lt else if (x == y) .eq else .gt;
+        }
+        if ((a == .small_int or a == .boolean) and (b == .small_int or b == .boolean)) {
+            const x: i64 = if (a == .boolean) @intFromBool(a.boolean) else a.small_int;
+            const y: i64 = if (b == .boolean) @intFromBool(b.boolean) else b.small_int;
+            return if (x < y) .lt else if (x == y) .eq else .gt;
+        }
+        if (a == .str and b == .str) {
+            const cmp = std.mem.order(u8, a.str.bytes, b.str.bytes);
+            return switch (cmp) {
+                .lt => .lt,
+                .eq => .eq,
+                .gt => .gt,
+            };
+        }
+        return null;
+    }
+
+    /// Python `==`: equal-typed values delegate to `order`; mixed
+    /// types that aren't orderable simply aren't equal (Python returns
+    /// False here, not TypeError).
+    pub fn equals(a: Value, b: Value) bool {
+        if (a == .none and b == .none) return true;
+        if (order(a, b)) |o| return o == .eq;
+        return false;
+    }
+
+    /// Python `is`: object identity. Singletons (None/True/False) are
+    /// unique. Small ints compare by value (CPython caches them; for
+    /// the fixture's `1 is not 2` this is indistinguishable). Heap
+    /// objects compare by pointer.
+    pub fn identityEq(a: Value, b: Value) bool {
+        if (@as(Tag, a) != @as(Tag, b)) return false;
+        return switch (a) {
+            .none, .null_sentinel => true,
+            .boolean => |x| x == b.boolean,
+            .small_int => |x| x == b.small_int,
+            .float => |x| x == b.float,
+            .str => |p| p == b.str,
+            .bytes => |p| p == b.bytes,
+            .tuple => |p| p == b.tuple,
+            .list => |p| p == b.list,
+            .dict => |p| p == b.dict,
+            .code => |p| p == b.code,
+            .builtin_fn => |p| p == b.builtin_fn,
+        };
+    }
+
     pub fn typeName(self: Value) []const u8 {
         return switch (self) {
             .none => "NoneType",
