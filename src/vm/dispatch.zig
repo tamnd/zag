@@ -553,6 +553,8 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             }
             switch (arg) {
                 1 => fn_val.function.defaults = attr_val.tuple,
+                2 => fn_val.function.kw_defaults = attr_val.dict,
+                4 => {}, // annotations: ignored
                 8 => fn_val.function.closure = attr_val.tuple,
                 else => {
                     try interp.stderr.print(
@@ -667,6 +669,19 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             }
             frame.sp = base;
             frame.push(Value{ .set = s });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .SET_UPDATE => {
+            const arg = oparg(frame, ext_arg);
+            const iterable = frame.pop();
+            const set_val = frame.stack[frame.sp - arg];
+            if (set_val != .set) {
+                try interp.typeError("SET_UPDATE target is not a set");
+                return error.TypeError;
+            }
+            const drained = try @import("builtins.zig").materialize(interp, iterable);
+            for (drained.items.items) |it| try set_val.set.add(interp.allocator, it);
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -1060,11 +1075,23 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
         },
 
         .CALL_INTRINSIC_1 => {
-            // Only the `INTRINSIC_STOPITERATION_ERROR` (3) form is
-            // emitted by the generator prologue. It wraps a leaked
-            // StopIteration into a RuntimeError per PEP 479; the
-            // fixture never trips it on the golden path, so leave the
-            // value as-is.
+            const which = oparg(frame, ext_arg);
+            switch (which) {
+                3 => {}, // INTRINSIC_STOPITERATION_ERROR — pass-through.
+                6 => {
+                    // INTRINSIC_LIST_TO_TUPLE: TOS list -> tuple in place.
+                    const list_val = frame.pop();
+                    if (list_val != .list) {
+                        try interp.typeError("LIST_TO_TUPLE: TOS is not a list");
+                        return error.TypeError;
+                    }
+                    const items = list_val.list.items.items;
+                    const t = try Tuple.init(interp.allocator, items.len);
+                    for (items, 0..) |it, i| t.items[i] = it;
+                    frame.push(Value{ .tuple = t });
+                },
+                else => {},
+            }
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -2130,6 +2157,16 @@ fn callPyFunction(
     }
 
     // 3. Fill missing positional/kw-only slots from defaults.
+    if (fn_val.kw_defaults) |kwd| {
+        var s: u32 = argcount;
+        while (s < argcount + kwonly) : (s += 1) {
+            if (new_frame.fast[s] == .null_sentinel) {
+                if (kwd.getStr(code.localsplusnames[s])) |dv| {
+                    new_frame.fast[s] = dv;
+                }
+            }
+        }
+    }
     if (fn_val.defaults) |def_tuple| {
         const defaults = def_tuple.items;
         // Defaults align to the right of positional args.

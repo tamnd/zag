@@ -14,6 +14,7 @@ pub const Function = struct {
     globals: *Dict,
     defaults: ?*Tuple = null,
     closure: ?*Tuple = null,
+    kw_defaults: ?*Dict = null,
 
     pub fn init(allocator: std.mem.Allocator, code: *Code, globals: *Dict) !*Function {
         const self = try allocator.create(Function);
