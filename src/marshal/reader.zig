@@ -13,6 +13,7 @@ const Tuple = @import("../object/tuple.zig").Tuple;
 const List = @import("../object/list.zig").List;
 const Dict = @import("../object/dict.zig").Dict;
 const Code = @import("../object/code.zig").Code;
+const Slice = @import("../object/slice.zig").Slice;
 
 const FLAG_REF: u8 = 0x80;
 
@@ -249,10 +250,12 @@ pub const Reader = struct {
             },
 
             .slice => {
-                _ = try self.readObject(); // start
-                _ = try self.readObject(); // stop
-                _ = try self.readObject(); // step
-                return self.setRef(try self.reserveRef(have_flag), Value.none);
+                const ref = try self.reserveRef(have_flag);
+                const start = try self.readObject();
+                const stop = try self.readObject();
+                const step = try self.readObject();
+                const sl = try Slice.init(self.allocator, start, stop, step);
+                return self.setRef(ref, Value{ .slice = sl });
             },
 
             .code => return self.readCode(have_flag),
