@@ -30,14 +30,16 @@ pub fn build(interp: *Interp) !*Module {
     try register(interp, m, "takewhile", takeWhileFn, null);
     try register(interp, m, "starmap", starmapFn, null);
     try register(interp, m, "zip_longest", zipLongestFn, zipLongestKw);
-    try register(interp, m, "product", productFn, null);
+    try register(interp, m, "product", productFn, productKw);
     try register(interp, m, "permutations", permutationsFn, null);
     try register(interp, m, "combinations", combinationsFn, null);
     try register(interp, m, "combinations_with_replacement", combinationsWithReplacementFn, null);
-    try register(interp, m, "accumulate", accumulateFn, null);
+    try register(interp, m, "accumulate", accumulateFn, accumulateKw);
     try register(interp, m, "pairwise", pairwiseFn, null);
     try register(interp, m, "filterfalse", filterFalseFn, null);
     try register(interp, m, "islice", isliceFn, null);
+    try register(interp, m, "groupby", groupbyFn, groupbyKw);
+    try register(interp, m, "tee", teeFn, null);
 
     // `chain` is callable AND carries `from_iterable` -- LOAD_ATTR on
     // the chain builtin needs to find that sibling. Sleight of hand:
@@ -110,15 +112,47 @@ fn countKw(
     kw_values: []const Value,
 ) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    var start: i64 = 0;
-    var step: i64 = 1;
-    if (args.len >= 1) start = try intArg(interp, args[0]);
-    if (args.len >= 2) step = try intArg(interp, args[1]);
+    var start_v: Value = Value{ .small_int = 0 };
+    var step_v: Value = Value{ .small_int = 1 };
+    if (args.len >= 1) start_v = args[0];
+    if (args.len >= 2) step_v = args[1];
     for (kw_names, kw_values) |kn, kv| {
         if (kn != .str) continue;
-        if (std.mem.eql(u8, kn.str.bytes, "start")) start = try intArg(interp, kv);
-        if (std.mem.eql(u8, kn.str.bytes, "step")) step = try intArg(interp, kv);
+        if (std.mem.eql(u8, kn.str.bytes, "start")) start_v = kv;
+        if (std.mem.eql(u8, kn.str.bytes, "step")) step_v = kv;
     }
+    const is_float = start_v == .float or step_v == .float;
+    if (is_float) {
+        // Materialize a long-but-finite stream; islice truncates.
+        const want: usize = 1 << 12;
+        const out = try List.init(interp.allocator);
+        var cur: f64 = switch (start_v) {
+            .float => |f| f,
+            .small_int => |i| @floatFromInt(i),
+            .boolean => |b| @floatFromInt(@intFromBool(b)),
+            else => {
+                try interp.typeError("count: numeric start required");
+                return error.TypeError;
+            },
+        };
+        const stp: f64 = switch (step_v) {
+            .float => |f| f,
+            .small_int => |i| @floatFromInt(i),
+            .boolean => |b| @floatFromInt(@intFromBool(b)),
+            else => {
+                try interp.typeError("count: numeric step required");
+                return error.TypeError;
+            },
+        };
+        var i: usize = 0;
+        while (i < want) : (i += 1) {
+            try out.append(interp.allocator, Value{ .float = cur });
+            cur += stp;
+        }
+        return iterFromList(interp, out);
+    }
+    const start = try intArg(interp, start_v);
+    const step = try intArg(interp, step_v);
     const it = try Iter.init(interp.allocator, .{ .range = .{ .current = start, .stop = std.math.maxInt(i64), .step = step } });
     return Value{ .iter = it };
 }
@@ -312,36 +346,53 @@ fn zipLongestKw(
 
 /// `product(*iters)`.
 fn productFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return productKw(interp_opaque, args, &.{}, &.{});
+}
+
+fn productKw(
+    interp_opaque: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    if (args.len == 0) {
+    var repeat: usize = 1;
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "repeat")) {
+            const v = try intArg(interp, kv);
+            repeat = if (v < 0) 0 else @intCast(v);
+        }
+    }
+    const dim_count = args.len * repeat;
+    if (dim_count == 0) {
         const out = try List.init(interp.allocator);
         const empty_t = try Tuple.init(interp.allocator, 0);
         try out.append(interp.allocator, Value{ .tuple = empty_t });
         return iterFromList(interp, out);
     }
-    const lists = try interp.allocator.alloc(*List, args.len);
+    const base_lists = try interp.allocator.alloc(*List, args.len);
+    defer interp.allocator.free(base_lists);
+    for (args, 0..) |a, i| base_lists[i] = try iterToList(interp, a);
+
+    const lists = try interp.allocator.alloc(*List, dim_count);
     defer interp.allocator.free(lists);
-    for (args, 0..) |a, i| lists[i] = try iterToList(interp, a);
+    var d: usize = 0;
+    while (d < dim_count) : (d += 1) lists[d] = base_lists[d % args.len];
 
     const out = try List.init(interp.allocator);
-    const indices = try interp.allocator.alloc(usize, args.len);
+    for (lists) |l| if (l.items.items.len == 0) return iterFromList(interp, out);
+
+    const indices = try interp.allocator.alloc(usize, dim_count);
     defer interp.allocator.free(indices);
     for (indices) |*ix| ix.* = 0;
 
     while (true) {
-        var any_empty = false;
-        for (lists) |l| if (l.items.items.len == 0) {
-            any_empty = true;
-            break;
-        };
-        if (any_empty) break;
-
-        const t = try Tuple.init(interp.allocator, args.len);
+        const t = try Tuple.init(interp.allocator, dim_count);
         for (lists, indices, 0..) |l, ix, i| t.items[i] = l.items.items[ix];
         try out.append(interp.allocator, Value{ .tuple = t });
 
-        // Increment in odometer order, rightmost-first.
-        var dim: usize = args.len;
+        var dim: usize = dim_count;
         while (dim > 0) {
             dim -= 1;
             indices[dim] += 1;
@@ -350,7 +401,6 @@ fn productFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
             if (dim == 0) return iterFromList(interp, out);
         }
     }
-    return iterFromList(interp, out);
 }
 
 /// `permutations(iterable, r)` -- distinct r-length orderings.
@@ -459,21 +509,43 @@ fn combRepRec(interp: *Interp, items: []const Value, indices: []usize, depth: us
     }
 }
 
-/// `accumulate(iter[, fn])`. Default reduction is `+`; the fixture
-/// passes a lambda.
+/// `accumulate(iter[, fn], *, initial=None)`.
 fn accumulateFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return accumulateKw(interp_opaque, args, &.{}, &.{});
+}
+
+fn accumulateKw(
+    interp_opaque: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len < 1 or args.len > 2) {
         try interp.typeError("accumulate expects 1 or 2 arguments");
         return error.TypeError;
     }
+    var initial: ?Value = null;
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "initial")) {
+            if (kv != .none) initial = kv;
+        }
+    }
     const lst = try iterToList(interp, args[0]);
     const out = try List.init(interp.allocator);
-    if (lst.items.items.len == 0) return iterFromList(interp, out);
-
-    var acc: Value = lst.items.items[0];
-    try out.append(interp.allocator, acc);
-    var i: usize = 1;
+    var acc: Value = undefined;
+    var start_idx: usize = 0;
+    if (initial) |iv| {
+        acc = iv;
+        try out.append(interp.allocator, acc);
+    } else {
+        if (lst.items.items.len == 0) return iterFromList(interp, out);
+        acc = lst.items.items[0];
+        try out.append(interp.allocator, acc);
+        start_idx = 1;
+    }
+    var i: usize = start_idx;
     while (i < lst.items.items.len) : (i += 1) {
         if (args.len == 2) {
             acc = try dispatch.invoke(interp, args[1], &.{ acc, lst.items.items[i] });
@@ -524,6 +596,78 @@ fn filterFalseFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value 
         if (!r.isTruthy()) try out.append(interp.allocator, x);
     }
     return iterFromList(interp, out);
+}
+
+/// `groupby(iter, key=None)` -- group consecutive items by `key`. We
+/// build the output eagerly: a list of (key, list-of-items) tuples.
+fn groupbyFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return groupbyKw(interp_opaque, args, &.{}, &.{});
+}
+
+fn groupbyKw(
+    interp_opaque: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 1 or args.len > 2) {
+        try interp.typeError("groupby expects (iter[, key])");
+        return error.TypeError;
+    }
+    var key_fn: Value = if (args.len == 2) args[1] else Value.none;
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "key")) key_fn = kv;
+    }
+    const lst = try iterToList(interp, args[0]);
+    const out = try List.init(interp.allocator);
+    if (lst.items.items.len == 0) return iterFromList(interp, out);
+
+    var i: usize = 0;
+    while (i < lst.items.items.len) {
+        const x = lst.items.items[i];
+        const k = if (key_fn == .none) x else try dispatch.invoke(interp, key_fn, &.{x});
+        const group = try List.init(interp.allocator);
+        try group.append(interp.allocator, x);
+        var j: usize = i + 1;
+        while (j < lst.items.items.len) : (j += 1) {
+            const y = lst.items.items[j];
+            const ky = if (key_fn == .none) y else try dispatch.invoke(interp, key_fn, &.{y});
+            if (!Value.equals(k, ky)) break;
+            try group.append(interp.allocator, y);
+        }
+        const group_iter = try iterFromList(interp, group);
+        const t = try Tuple.init(interp.allocator, 2);
+        t.items[0] = k;
+        t.items[1] = group_iter;
+        try out.append(interp.allocator, Value{ .tuple = t });
+        i = j;
+    }
+    return iterFromList(interp, out);
+}
+
+/// `tee(iter[, n])` -- n independent iterators, eager copy.
+fn teeFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 1 or args.len > 2) {
+        try interp.typeError("tee expects (iter[, n])");
+        return error.TypeError;
+    }
+    var n: usize = 2;
+    if (args.len == 2) {
+        const v = try intArg(interp, args[1]);
+        n = if (v < 0) 0 else @intCast(v);
+    }
+    const src = try iterToList(interp, args[0]);
+    const out = try Tuple.init(interp.allocator, n);
+    var i: usize = 0;
+    while (i < n) : (i += 1) {
+        const cp = try List.init(interp.allocator);
+        for (src.items.items) |x| try cp.append(interp.allocator, x);
+        out.items[i] = try iterFromList(interp, cp);
+    }
+    return Value{ .tuple = out };
 }
 
 /// `islice(iter, stop)` / `islice(iter, start, stop[, step])`.

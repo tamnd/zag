@@ -2994,8 +2994,8 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
         }
     }
     if (obj == .cached_fn) {
+        const c = obj.cached_fn;
         if (std.mem.eql(u8, name, "__name__")) {
-            const c = obj.cached_fn;
             const text: []const u8 = blk: {
                 if (c.name_override) |n| break :blk n;
                 if (c.func == .function) {
@@ -3011,6 +3011,29 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
                 frame.push(v);
                 frame.push(Value.null_sentinel);
             } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "__wrapped__")) {
+            const v = c.func;
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "cache_info") or std.mem.eql(u8, name, "cache_clear")) {
+            const meth: *value_mod.BuiltinFn = if (std.mem.eql(u8, name, "cache_info"))
+                &cache_info_method
+            else
+                &cache_clear_method;
+            if (is_method) {
+                frame.push(Value{ .builtin_fn = meth });
+                frame.push(obj);
+            } else {
+                const BoundMethod = @import("../object/bound_method.zig").BoundMethod;
+                const bm = try BoundMethod.init(interp.allocator, Value{ .builtin_fn = meth }, obj);
+                frame.push(Value{ .bound_method = bm });
+            }
             return;
         }
     }
@@ -3239,25 +3262,63 @@ fn invokeKw(
             defer interp.allocator.free(merged_args);
             @memcpy(merged_args[0..p.args.len], p.args);
             @memcpy(merged_args[p.args.len..], positional);
-            const merged_names = try interp.allocator.alloc(Value, p.kw_names.len + kw_names.len);
-            defer interp.allocator.free(merged_names);
-            const merged_vals = try interp.allocator.alloc(Value, p.kw_values.len + kw_values.len);
-            defer interp.allocator.free(merged_vals);
-            @memcpy(merged_names[0..p.kw_names.len], p.kw_names);
-            @memcpy(merged_names[p.kw_names.len..], kw_names);
-            @memcpy(merged_vals[0..p.kw_values.len], p.kw_values);
-            @memcpy(merged_vals[p.kw_values.len..], kw_values);
-            return invokeKw(interp, p.func, merged_args, merged_names, merged_vals);
+            // Call-time kwargs override bound ones. Walk the bound list,
+            // skip any name that the call also provides, then concat the
+            // call-side names verbatim.
+            var name_buf: std.ArrayList(Value) = .empty;
+            defer name_buf.deinit(interp.allocator);
+            var val_buf: std.ArrayList(Value) = .empty;
+            defer val_buf.deinit(interp.allocator);
+            for (p.kw_names, p.kw_values) |bn, bv| {
+                var shadowed = false;
+                for (kw_names) |cn| {
+                    if (bn == .str and cn == .str and std.mem.eql(u8, bn.str.bytes, cn.str.bytes)) {
+                        shadowed = true;
+                        break;
+                    }
+                }
+                if (!shadowed) {
+                    try name_buf.append(interp.allocator, bn);
+                    try val_buf.append(interp.allocator, bv);
+                }
+            }
+            for (kw_names, kw_values) |cn, cv| {
+                try name_buf.append(interp.allocator, cn);
+                try val_buf.append(interp.allocator, cv);
+            }
+            return invokeKw(interp, p.func, merged_args, name_buf.items, val_buf.items);
         },
         .cached_fn => |c| {
-            if (kw_names.len != 0) {
-                return invokeKw(interp, c.func, positional, kw_names, kw_values);
-            }
             const CachedFn = @import("../object/cached_fn.zig").CachedFn;
-            const key = try CachedFn.keyFor(interp.allocator, positional);
-            if (c.cache.getKey(key)) |hit| return hit;
+            const key = try CachedFn.compositeKey(interp.allocator, positional, kw_names, kw_values);
+            // Linear scan -- the cache holds at most `maxsize` entries
+            // and the fixture sticks to small N. Found-index lets us
+            // touch the LRU order without a second lookup.
+            var found_idx: ?usize = null;
+            for (c.cache.pairs.items, 0..) |p, i| {
+                if (p.key.equals(key)) {
+                    found_idx = i;
+                    break;
+                }
+            }
+            if (found_idx) |idx| {
+                const hit = c.cache.pairs.items[idx].value;
+                // LRU touch: move to the back of the ordered list.
+                const pair = c.cache.pairs.items[idx];
+                _ = c.cache.pairs.orderedRemove(idx);
+                try c.cache.pairs.append(interp.allocator, pair);
+                c.hits += 1;
+                return hit;
+            }
+            c.misses += 1;
             const result = try invokeKw(interp, c.func, positional, kw_names, kw_values);
-            try c.cache.setKey(interp.allocator, key, result);
+            // Evict LRU entry (the oldest) if at capacity.
+            if (c.maxsize) |ms| {
+                if (c.cache.pairs.items.len >= ms and ms > 0) {
+                    _ = c.cache.pairs.orderedRemove(0);
+                }
+            }
+            try c.cache.pairs.append(interp.allocator, .{ .key = key, .value = result });
             return result;
         },
         .function => |fn_val| return callPyFunction(interp, fn_val, positional, kw_names, kw_values, null),
@@ -3447,6 +3508,37 @@ pub fn complexConjugateBuiltin(interp_opaque: *anyopaque, args: []const Value) a
 }
 
 var complex_conjugate_method: value_mod.BuiltinFn = .{ .name = "conjugate", .func = complexConjugateBuiltin };
+
+fn cacheInfoImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1 or args[0] != .cached_fn) {
+        try interp.typeError("cache_info expects cached function");
+        return error.TypeError;
+    }
+    const c = args[0].cached_fn;
+    const t = try Tuple.init(interp.allocator, 4);
+    t.items[0] = Value{ .small_int = @intCast(c.hits) };
+    t.items[1] = Value{ .small_int = @intCast(c.misses) };
+    t.items[2] = if (c.maxsize) |m| Value{ .small_int = @intCast(m) } else Value.none;
+    t.items[3] = Value{ .small_int = @intCast(c.cache.pairs.items.len) };
+    return Value{ .tuple = t };
+}
+
+fn cacheClearImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1 or args[0] != .cached_fn) {
+        try interp.typeError("cache_clear expects cached function");
+        return error.TypeError;
+    }
+    const c = args[0].cached_fn;
+    c.hits = 0;
+    c.misses = 0;
+    c.cache.pairs.clearRetainingCapacity();
+    return Value.none;
+}
+
+var cache_info_method: value_mod.BuiltinFn = .{ .name = "cache_info", .func = cacheInfoImpl };
+var cache_clear_method: value_mod.BuiltinFn = .{ .name = "cache_clear", .func = cacheClearImpl };
 
 fn callPyFunction(
     interp: *Interp,
