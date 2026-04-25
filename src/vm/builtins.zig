@@ -1979,9 +1979,10 @@ fn installExceptions(interp: *Interp) !void {
         const cls = try Class.init(a, "ExceptionGroup", &.{ beg.class, exc.class }, try Dict.init(a));
         try interp.builtins.setStr(a, "ExceptionGroup", Value{ .class = cls });
     }
-    // IOError is a CPython alias for OSError.
+    // IOError and EnvironmentError are CPython aliases for OSError.
     if (interp.builtins.getStr("OSError")) |v| {
         try interp.builtins.setStr(a, "IOError", v);
+        try interp.builtins.setStr(a, "EnvironmentError", v);
     }
 }
 

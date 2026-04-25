@@ -152,7 +152,7 @@ fn excInfoFn(p: *anyopaque, _: []const Value) anyerror!Value {
 
 fn exitFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
-    const code: i32 = if (args.len > 0 and args[0] == .small_int) @intCast(args[0].small_int) else 0;
-    try interp.stdout.flush();
-    std.process.exit(@intCast(@as(u8, @intCast(code & 0xff))));
+    const arg: Value = if (args.len > 0) args[0] else Value.none;
+    try interp.raisePyValue("SystemExit", arg);
+    return error.PyException;
 }
