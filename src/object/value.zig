@@ -166,12 +166,24 @@ pub const Value = union(Tag) {
                 try w.writeByte('}');
             },
             .set => |s| {
+                if (s.frozen) {
+                    if (s.items.items.len == 0) {
+                        try w.writeAll("frozenset()");
+                        return;
+                    }
+                    try w.writeAll("frozenset(");
+                }
+                if (s.items.items.len == 0 and !s.frozen) {
+                    try w.writeAll("set()");
+                    return;
+                }
                 try w.writeByte('{');
                 for (s.items.items, 0..) |it, i| {
                     if (i != 0) try w.writeAll(", ");
                     try it.writeRepr(w);
                 }
                 try w.writeByte('}');
+                if (s.frozen) try w.writeByte(')');
             },
             .code => |c| try w.print("<code object {s}>", .{c.name}),
             .builtin_fn => |f| try w.print("<built-in function {s}>", .{f.name}),
@@ -332,8 +344,23 @@ pub const Value = union(Tag) {
     pub fn equals(a: Value, b: Value) bool {
         if (a == .none and b == .none) return true;
         if (a == .complex_num or b == .complex_num) return complexEquals(a, b);
+        if (a == .set and b == .set) return setEquals(a.set, b.set);
         if (order(a, b)) |o| return o == .eq;
         return false;
+    }
+
+    /// Set / frozenset equality is element-wise, order-insensitive,
+    /// and indifferent to the `frozen` flag — `frozenset({1,2}) ==
+    /// {1,2}` is True in CPython.
+    fn setEquals(a: anytype, b: anytype) bool {
+        if (a.items.items.len != b.items.items.len) return false;
+        outer: for (a.items.items) |x| {
+            for (b.items.items) |y| {
+                if (x.equals(y)) continue :outer;
+            }
+            return false;
+        }
+        return true;
     }
 
     fn complexEquals(a: Value, b: Value) bool {
@@ -412,7 +439,7 @@ pub const Value = union(Tag) {
                 .staticmethod => "staticmethod",
             },
             .generator => "generator",
-            .set => "set",
+            .set => |s| if (s.frozen) "frozenset" else "set",
             .enum_iter => "enumerate",
             .module => "module",
         };

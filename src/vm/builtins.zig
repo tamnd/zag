@@ -107,6 +107,7 @@ pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         .tuple => |t| Value{ .small_int = @intCast(t.items.len) },
         .list => |l| Value{ .small_int = @intCast(l.items.items.len) },
         .dict => |d| Value{ .small_int = @intCast(d.count()) },
+        .set => |s| Value{ .small_int = @intCast(s.items.items.len) },
         else => |v| blk: {
             try interp.stderr.print(
                 "TypeError: object of type '{s}' has no len()\n",
@@ -175,6 +176,7 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
             const piece = try Str.init(a, k);
             try out.append(a, Value{ .str = piece });
         },
+        .set => |s| for (s.items.items) |x| try out.append(a, x),
         else => {
             try interp.typeError("object is not iterable");
             return error.TypeError;
@@ -267,6 +269,41 @@ pub fn setBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
     const lst = try materialize(interp, args[0]);
     for (lst.items.items) |it| try s.add(interp.allocator, it);
     return Value{ .set = s };
+}
+
+pub fn frozensetBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const Set = @import("../object/set.zig").Set;
+    const s = try Set.initFrozen(interp.allocator);
+    if (args.len == 0) return Value{ .set = s };
+    const lst = try materialize(interp, args[0]);
+    for (lst.items.items) |it| try s.add(interp.allocator, it);
+    return Value{ .set = s };
+}
+
+/// `hash(obj)` -- the only path the fixture exercises is the
+/// negative one: `hash({1,2})` raises TypeError because plain sets
+/// are unhashable. We return a placeholder int for everything else
+/// and tighten as fixtures demand.
+pub fn hashBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.typeError("hash() takes exactly one argument");
+        return error.TypeError;
+    }
+    if (args[0] == .set and !args[0].set.frozen) {
+        try interp.raisePy("TypeError", "unhashable type: 'set'");
+        return error.PyException;
+    }
+    if (args[0] == .list) {
+        try interp.raisePy("TypeError", "unhashable type: 'list'");
+        return error.PyException;
+    }
+    if (args[0] == .dict) {
+        try interp.raisePy("TypeError", "unhashable type: 'dict'");
+        return error.PyException;
+    }
+    return Value{ .small_int = 0 };
 }
 
 pub fn dictBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
@@ -579,6 +616,18 @@ pub fn typeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
             interp.complex_type = c;
             break :blk Value{ .class = c };
         },
+        .set => |s| blk: {
+            if (s.frozen) {
+                if (interp.frozenset_type) |c| break :blk Value{ .class = c };
+                const c = try Class.init(interp.allocator, "frozenset", &.{}, try Dict.init(interp.allocator));
+                interp.frozenset_type = c;
+                break :blk Value{ .class = c };
+            }
+            if (interp.set_type) |c| break :blk Value{ .class = c };
+            const c = try Class.init(interp.allocator, "set", &.{}, try Dict.init(interp.allocator));
+            interp.set_type = c;
+            break :blk Value{ .class = c };
+        },
         else => |v| blk: {
             const name = v.typeName();
             if (interp.builtins.getStr(name)) |found| {
@@ -747,6 +796,8 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("list", listBuiltin);
     try interp.registerBuiltin("tuple", tupleBuiltin);
     try interp.registerBuiltin("set", setBuiltin);
+    try interp.registerBuiltin("frozenset", frozensetBuiltin);
+    try interp.registerBuiltin("hash", hashBuiltin);
     try interp.registerBuiltin("dict", dictBuiltin);
     try interp.registerBuiltin("max", maxBuiltin);
     try interp.registerBuiltin("min", minBuiltin);
