@@ -38,7 +38,64 @@ pub fn build(interp: *Interp) !*Module {
     try regKw(interp, m, "choices", choicesFn, choicesKw);
     try reg(interp, m, "shuffle", shuffleFn);
     try reg(interp, m, "sample", sampleFn);
+    try reg(interp, m, "randrange", randrangeFn);
+    try reg(interp, m, "uniform", uniformFn);
     return m;
+}
+
+fn randrangeFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args.len > 3) {
+        try interp.typeError("randrange expects 1 to 3 ints");
+        return error.TypeError;
+    }
+    var start: i64 = 0;
+    var stop: i64 = 0;
+    var step: i64 = 1;
+    if (args.len == 1) {
+        stop = asI64(args[0]);
+    } else {
+        start = asI64(args[0]);
+        stop = asI64(args[1]);
+        if (args.len == 3) step = asI64(args[2]);
+    }
+    if (step == 0) {
+        try interp.raisePy("ValueError", "randrange() arg 3 must not be zero");
+        return error.PyException;
+    }
+    const span = stop - start;
+    const count: i64 = if (step > 0)
+        (if (span <= 0) 0 else @divFloor(span - 1, step) + 1)
+    else
+        (if (span >= 0) 0 else @divFloor(-span - 1, -step) + 1);
+    if (count <= 0) {
+        try interp.raisePy("ValueError", "empty range for randrange()");
+        return error.PyException;
+    }
+    const k = g_state.random().intRangeLessThan(i64, 0, count);
+    return Value{ .small_int = start + k * step };
+}
+
+fn uniformFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len != 2) {
+        try interp.typeError("uniform expects (a, b)");
+        return error.TypeError;
+    }
+    const a: f64 = switch (args[0]) {
+        .float => |f| f,
+        .small_int => |i| @floatFromInt(i),
+        .boolean => |b| if (b) 1.0 else 0.0,
+        else => 0.0,
+    };
+    const b: f64 = switch (args[1]) {
+        .float => |f| f,
+        .small_int => |i| @floatFromInt(i),
+        .boolean => |bb| if (bb) 1.0 else 0.0,
+        else => 0.0,
+    };
+    const r = g_state.random().float(f64);
+    return Value{ .float = a + (b - a) * r };
 }
 
 fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {

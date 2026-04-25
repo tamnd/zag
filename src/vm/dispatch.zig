@@ -2001,6 +2001,42 @@ fn multiply(interp: *Interp, a: Value, b: Value) !Value {
     if ((a == .float or b == .float) and asFloat(a) != null and asFloat(b) != null) {
         return Value{ .float = asFloat(a).? * asFloat(b).? };
     }
+    // Sequence repetition: `[x] * n` / `n * [x]`. Same for tuple.
+    const SeqOp = struct {
+        fn intFrom(v: Value) ?i64 {
+            return switch (v) {
+                .small_int => |i| i,
+                .boolean => |x| @intFromBool(x),
+                else => null,
+            };
+        }
+    };
+    if (a == .list or b == .list) {
+        const lst = if (a == .list) a.list else b.list;
+        const n_opt = if (a == .list) SeqOp.intFrom(b) else SeqOp.intFrom(a);
+        if (n_opt) |n| {
+            const rep: usize = if (n < 0) 0 else @intCast(n);
+            const out = try @import("../object/list.zig").List.init(interp.allocator);
+            var i: usize = 0;
+            while (i < rep) : (i += 1) {
+                for (lst.items.items) |x| try out.append(interp.allocator, x);
+            }
+            return Value{ .list = out };
+        }
+    }
+    if (a == .tuple or b == .tuple) {
+        const tup = if (a == .tuple) a.tuple else b.tuple;
+        const n_opt = if (a == .tuple) SeqOp.intFrom(b) else SeqOp.intFrom(a);
+        if (n_opt) |n| {
+            const rep: usize = if (n < 0) 0 else @intCast(n);
+            const out = try @import("../object/tuple.zig").Tuple.init(interp.allocator, tup.items.len * rep);
+            var i: usize = 0;
+            while (i < rep) : (i += 1) {
+                @memcpy(out.items[i * tup.items.len .. (i + 1) * tup.items.len], tup.items);
+            }
+            return Value{ .tuple = out };
+        }
+    }
     try interp.typeError("unsupported operand type(s) for *");
     return error.TypeError;
 }
