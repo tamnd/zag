@@ -9,6 +9,15 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.98] - 2026-04-26
+
+### Added
+
+- `98_threadsafe_memoryview` fixture, byte-equal. memoryview gains
+  ndim/shape/strides/suboffsets/c_contiguous/f_contiguous/contiguous/
+  obj attributes; bytearray tracks a view count, and mutating
+  methods raise BufferError while a view is still holding the buffer.
+
 ## [0.0.97] - 2026-04-26
 
 ### Added
