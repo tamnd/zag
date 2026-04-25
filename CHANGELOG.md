@@ -9,6 +9,16 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.90] - 2026-04-26
+
+### Added
+
+- `90_dict_set_methods` fixture, byte-equal.
+- dict: `popitem`; `dict.fromkeys` via class-level attr access;
+  `dict | dict` and `dict |= dict` produce a merged dict.
+- set: `pop`, `clear`, `update`, `intersection_update`,
+  `difference_update`, `symmetric_difference_update`.
+
 ## [0.0.89] - 2026-04-26
 
 ### Added
