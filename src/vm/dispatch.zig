@@ -12,10 +12,17 @@ const Value = value_mod.Value;
 const Str = @import("../object/string.zig").Str;
 const List = @import("../object/list.zig").List;
 const Iter = @import("../object/iter.zig").Iter;
+const Tuple = @import("../object/tuple.zig").Tuple;
+const Code = @import("../object/code.zig").Code;
+const FastKind = @import("../object/code.zig").FastKind;
+const Function = @import("../object/function.zig").Function;
+const Cell = @import("../object/cell.zig").Cell;
+const Dict = @import("../object/dict.zig").Dict;
 const Frame = @import("frame.zig").Frame;
 const Interp = @import("interp.zig").Interp;
 const strmethods = @import("strmethods.zig");
 const listmethods = @import("listmethods.zig");
+const dictmethods = @import("dictmethods.zig");
 
 pub const DispatchError = error{
     UnknownOpcode,
@@ -141,6 +148,7 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
                 const method: ?*value_mod.BuiltinFn = switch (obj) {
                     .str => strmethods.lookup(name),
                     .list => listmethods.lookup(name),
+                    .dict => dictmethods.lookup(name),
                     else => null,
                 };
                 if (method) |m| {
@@ -371,6 +379,146 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .LOAD_FAST_BORROW_LOAD_FAST_BORROW => {
+            const arg = oparg(frame, ext_arg);
+            const hi = (arg >> 4) & 0xF;
+            const lo = arg & 0xF;
+            frame.push(frame.fast[hi]);
+            frame.push(frame.fast[lo]);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .LOAD_FAST_LOAD_FAST => {
+            const arg = oparg(frame, ext_arg);
+            frame.push(frame.fast[(arg >> 4) & 0xF]);
+            frame.push(frame.fast[arg & 0xF]);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .BUILD_TUPLE => {
+            const n = oparg(frame, ext_arg);
+            const t = try Tuple.init(interp.allocator, n);
+            const base = frame.sp - n;
+            @memcpy(t.items, frame.stack[base .. base + n]);
+            frame.sp = base;
+            frame.push(Value{ .tuple = t });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .MAKE_FUNCTION => {
+            const code_val = frame.pop();
+            if (code_val != .code) {
+                try interp.typeError("MAKE_FUNCTION expects a code object");
+                return error.TypeError;
+            }
+            const f = try Function.init(interp.allocator, code_val.code, frame.globals);
+            frame.push(Value{ .function = f });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .SET_FUNCTION_ATTRIBUTE => {
+            const arg = oparg(frame, ext_arg);
+            const fn_val = frame.pop();
+            const attr_val = frame.pop();
+            if (fn_val != .function) {
+                try interp.typeError("SET_FUNCTION_ATTRIBUTE on non-function");
+                return error.TypeError;
+            }
+            switch (arg) {
+                1 => fn_val.function.defaults = attr_val.tuple,
+                8 => fn_val.function.closure = attr_val.tuple,
+                else => {
+                    try interp.stderr.print(
+                        "zag: SET_FUNCTION_ATTRIBUTE arg {d} not supported\n",
+                        .{arg},
+                    );
+                    try interp.stderr.flush();
+                    return error.TypeError;
+                },
+            }
+            frame.push(fn_val);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .MAKE_CELL => {
+            const arg = oparg(frame, ext_arg);
+            const existing = frame.fast[arg];
+            const cell = try Cell.init(interp.allocator, existing);
+            frame.fast[arg] = Value{ .cell = cell };
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .LOAD_DEREF => {
+            const arg = oparg(frame, ext_arg);
+            const slot = frame.fast[arg];
+            if (slot != .cell) {
+                try interp.typeError("LOAD_DEREF on non-cell slot");
+                return error.TypeError;
+            }
+            frame.push(slot.cell.value);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .STORE_DEREF => {
+            const arg = oparg(frame, ext_arg);
+            const slot = frame.fast[arg];
+            if (slot != .cell) {
+                try interp.typeError("STORE_DEREF on non-cell slot");
+                return error.TypeError;
+            }
+            slot.cell.value = frame.pop();
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .COPY_FREE_VARS => {
+            // The function's closure tuple is held by the running
+            // function; we stashed it on the frame at call time.
+            const n = oparg(frame, ext_arg);
+            const closure = frame.closure orelse {
+                try interp.typeError("COPY_FREE_VARS without closure");
+                return error.TypeError;
+            };
+            // Free vars sit at the END of the fast array.
+            const start = frame.fast.len - n;
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                frame.fast[start + i] = closure.items[i];
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .CALL_KW => {
+            const argc = oparg(frame, ext_arg);
+            // Stack: [..., callable, self_or_null, arg0, ..., arg_{argc-1}, names_tuple]
+            const names_val = frame.pop();
+            if (names_val != .tuple) {
+                try interp.typeError("CALL_KW: kw names not a tuple");
+                return error.TypeError;
+            }
+            const names = names_val.tuple.items;
+            const args_start = frame.sp - argc;
+            const self_slot = frame.stack[args_start - 1];
+            const callable = frame.stack[args_start - 2];
+
+            var args_base = args_start;
+            var n_real: u32 = argc;
+            if (self_slot != .null_sentinel) {
+                args_base = args_start - 1;
+                n_real = argc + 1;
+            }
+            const all_args = frame.stack[args_base .. args_base + n_real];
+            // Last `names.len` of `argc` (NOT n_real) are kw values.
+            const n_kw: u32 = @intCast(names.len);
+            const n_pos = n_real - n_kw;
+            const positional = all_args[0..n_pos];
+            const kw_values = all_args[n_pos..];
+
+            const result = try invokeKw(interp, callable, positional, names, kw_values);
+            frame.sp = args_start - 2;
+            frame.push(result);
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.CALL_KW)]);
+        },
+
         .RETURN_VALUE => {
             return frame.pop();
         },
@@ -401,8 +549,10 @@ inline fn advance(frame: *Frame, ext_arg: *u32, cw: u8) Opcode {
 /// thing.
 fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
     return switch (arg) {
+        0 => add(interp, a, b),
         5 => multiply(interp, a, b),
         6 => remainder(interp, a, b),
+        10 => subtract(interp, a, b),
         13 => inplaceAdd(interp, a, b),
         26 => subscript(interp, a, b),
         else => blk: {
@@ -414,6 +564,31 @@ fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
             break :blk error.TypeError;
         },
     };
+}
+
+/// `+` for int+int and str+str. Other operand combos wait for a
+/// fixture.
+fn add(interp: *Interp, a: Value, b: Value) !Value {
+    if (a == .small_int and b == .small_int) {
+        return Value{ .small_int = a.small_int +% b.small_int };
+    }
+    if (a == .str and b == .str) {
+        const buf = try interp.allocator.alloc(u8, a.str.bytes.len + b.str.bytes.len);
+        @memcpy(buf[0..a.str.bytes.len], a.str.bytes);
+        @memcpy(buf[a.str.bytes.len..], b.str.bytes);
+        const s = try Str.fromOwnedSlice(interp.allocator, buf);
+        return Value{ .str = s };
+    }
+    try interp.typeError("unsupported operand type(s) for +");
+    return error.TypeError;
+}
+
+fn subtract(interp: *Interp, a: Value, b: Value) !Value {
+    if (a == .small_int and b == .small_int) {
+        return Value{ .small_int = a.small_int -% b.small_int };
+    }
+    try interp.typeError("unsupported operand type(s) for -");
+    return error.TypeError;
 }
 
 fn multiply(interp: *Interp, a: Value, b: Value) !Value {
@@ -629,11 +804,129 @@ fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
 }
 
 fn invoke(interp: *Interp, callable: Value, args: []const Value) !Value {
+    return invokeKw(interp, callable, args, &.{}, &.{});
+}
+
+fn invokeKw(
+    interp: *Interp,
+    callable: Value,
+    positional: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) !Value {
     switch (callable) {
-        .builtin_fn => |f| return try f.func(@ptrCast(interp), args),
+        .builtin_fn => |f| {
+            if (kw_names.len != 0) {
+                try interp.typeError("builtin does not take keyword arguments");
+                return error.TypeError;
+            }
+            return try f.func(@ptrCast(interp), positional);
+        },
+        .function => |fn_val| return callPyFunction(interp, fn_val, positional, kw_names, kw_values),
         else => {
             try interp.typeError("object is not callable");
             return error.TypeError;
         },
     }
+}
+
+const CO_VARARGS: i32 = 0x04;
+const CO_VARKEYWORDS: i32 = 0x08;
+
+fn callPyFunction(
+    interp: *Interp,
+    fn_val: *Function,
+    positional: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) !Value {
+    const code = fn_val.code;
+    const argcount: u32 = @intCast(code.argcount);
+    const kwonly: u32 = @intCast(code.kwonlyargcount);
+    const has_varargs = (code.flags & CO_VARARGS) != 0;
+    const has_varkw = (code.flags & CO_VARKEYWORDS) != 0;
+
+    const new_frame = try Frame.init(interp.allocator, code, fn_val.globals, interp.builtins, fn_val.globals);
+    new_frame.closure = fn_val.closure;
+
+    // 1. Bind positional args.
+    const n_pos = positional.len;
+    if (n_pos > argcount and !has_varargs) {
+        try interp.typeError("too many positional arguments");
+        return error.TypeError;
+    }
+    const fill = @min(n_pos, argcount);
+    var i: usize = 0;
+    while (i < fill) : (i += 1) {
+        new_frame.fast[i] = positional[i];
+    }
+    // *args slot collects overflow.
+    if (has_varargs) {
+        const overflow_n = if (n_pos > argcount) n_pos - argcount else 0;
+        const t = try Tuple.init(interp.allocator, overflow_n);
+        var j: usize = 0;
+        while (j < overflow_n) : (j += 1) t.items[j] = positional[argcount + j];
+        new_frame.fast[argcount + kwonly] = Value{ .tuple = t };
+    }
+    // **kw slot starts as empty dict; populated below.
+    const varkw_slot: ?u32 = if (has_varkw) argcount + kwonly + (@as(u32, if (has_varargs) 1 else 0)) else null;
+    var kw_dict: ?*Dict = null;
+    if (varkw_slot) |slot| {
+        kw_dict = try Dict.init(interp.allocator);
+        new_frame.fast[slot] = Value{ .dict = kw_dict.? };
+    }
+
+    // 2. Bind keyword args by name.
+    var k: usize = 0;
+    while (k < kw_names.len) : (k += 1) {
+        const name = kw_names[k].str.bytes;
+        const v = kw_values[k];
+        var matched = false;
+        var s: u32 = 0;
+        while (s < argcount + kwonly) : (s += 1) {
+            if (std.mem.eql(u8, code.localsplusnames[s], name)) {
+                if (new_frame.fast[s] != .null_sentinel) {
+                    try interp.typeError("got multiple values for argument");
+                    return error.TypeError;
+                }
+                new_frame.fast[s] = v;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            if (kw_dict) |d| {
+                try d.setStr(interp.allocator, name, v);
+            } else {
+                try interp.typeError("got an unexpected keyword argument");
+                return error.TypeError;
+            }
+        }
+    }
+
+    // 3. Fill missing positional/kw-only slots from defaults.
+    if (fn_val.defaults) |def_tuple| {
+        const defaults = def_tuple.items;
+        // Defaults align to the right of positional args.
+        const default_start = argcount - defaults.len;
+        var s: u32 = 0;
+        while (s < argcount) : (s += 1) {
+            if (new_frame.fast[s] == .null_sentinel and s >= default_start) {
+                new_frame.fast[s] = defaults[s - default_start];
+            }
+        }
+    }
+
+    // 4. Verify all required positional/kw-only slots are filled.
+    var s: u32 = 0;
+    while (s < argcount + kwonly) : (s += 1) {
+        if (new_frame.fast[s] == .null_sentinel) {
+            try interp.typeError("missing required argument");
+            return error.TypeError;
+        }
+    }
+
+    const result = try run(interp, new_frame);
+    new_frame.deinit(interp.allocator);
+    return result;
 }
