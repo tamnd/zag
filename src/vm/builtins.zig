@@ -609,6 +609,66 @@ pub fn bytesBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
     return Value{ .bytes = out };
 }
 
+pub fn boolBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    _ = interp_opaque;
+    if (args.len == 0) return Value{ .boolean = false };
+    return Value{ .boolean = args[0].isTruthy() };
+}
+
+pub fn roundBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 1 or args.len > 2) {
+        try interp.typeError("round() takes 1 or 2 arguments");
+        return error.TypeError;
+    }
+    const ndigits: ?i64 = if (args.len == 2) switch (args[1]) {
+        .small_int => |i| i,
+        .boolean => |b| @intFromBool(b),
+        .none => null,
+        else => {
+            try interp.typeError("round() second argument must be int");
+            return error.TypeError;
+        },
+    } else null;
+    switch (args[0]) {
+        .small_int => |i| {
+            if (ndigits == null or ndigits.? >= 0) return Value{ .small_int = i };
+            // Negative ndigits: round to multiple of 10^|n|. Banker's
+            // rounding to mirror CPython.
+            const f: f64 = @floatFromInt(i);
+            const scale = std.math.pow(f64, 10.0, @floatFromInt(-ndigits.?));
+            const r = roundHalfToEven(f / scale) * scale;
+            return Value{ .small_int = @intFromFloat(r) };
+        },
+        .boolean => |b| return Value{ .small_int = @intFromBool(b) },
+        .float => |f| {
+            const n: i64 = ndigits orelse 0;
+            const scale = std.math.pow(f64, 10.0, @floatFromInt(n));
+            const r = roundHalfToEven(f * scale) / scale;
+            if (ndigits == null) return Value{ .small_int = @intFromFloat(r) };
+            return Value{ .float = r };
+        },
+        else => {
+            try interp.typeError("round() argument must be a number");
+            return error.TypeError;
+        },
+    }
+}
+
+/// Banker's rounding -- round-half-to-even, matching CPython's
+/// `round()` and IEEE 754 `roundeven`. `@round` in Zig rounds away
+/// from zero, which would diverge on `.5` ties.
+fn roundHalfToEven(x: f64) f64 {
+    const floor = @floor(x);
+    const diff = x - floor;
+    if (diff < 0.5) return floor;
+    if (diff > 0.5) return floor + 1.0;
+    // Exact tie -- pick the even neighbour.
+    const fi: i64 = @intFromFloat(floor);
+    if (@mod(fi, 2) == 0) return floor;
+    return floor + 1.0;
+}
+
 pub fn reprBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len != 1) {
@@ -706,6 +766,8 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("float", floatBuiltin);
     try interp.registerBuiltin("complex", complexBuiltin);
     try interp.registerBuiltin("repr", reprBuiltin);
+    try interp.registerBuiltin("bool", boolBuiltin);
+    try interp.registerBuiltin("round", roundBuiltin);
     try interp.registerBuiltin("str", strBuiltin);
     try interp.registerBuiltin("bytes", bytesBuiltin);
     try interp.registerBuiltin("type", typeBuiltin);
