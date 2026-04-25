@@ -44,6 +44,10 @@ const difflib_mod = @import("difflib_mod.zig");
 const shlex_mod = @import("shlex_mod.zig");
 const gzip_mod = @import("gzip_mod.zig");
 const fnmatch_mod = @import("fnmatch_mod.zig");
+const statistics_mod = @import("statistics_mod.zig");
+const calendar_mod = @import("calendar_mod.zig");
+const pprint_mod = @import("pprint_mod.zig");
+const html_mod = @import("html_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -91,6 +95,10 @@ pub const Interp = struct {
     shlex_module: ?*Module = null,
     gzip_module: ?*Module = null,
     fnmatch_module: ?*Module = null,
+    statistics_module: ?*Module = null,
+    calendar_module: ?*Module = null,
+    pprint_module: ?*Module = null,
+    html_module: ?*Module = null,
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
@@ -516,6 +524,30 @@ pub const Interp = struct {
             if (self.fnmatch_module) |m| return m;
             const m = fnmatch_mod.build(self) catch return null;
             self.fnmatch_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "statistics")) {
+            if (self.statistics_module) |m| return m;
+            const m = statistics_mod.build(self) catch return null;
+            self.statistics_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "calendar")) {
+            if (self.calendar_module) |m| return m;
+            const m = calendar_mod.build(self) catch return null;
+            self.calendar_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "pprint")) {
+            if (self.pprint_module) |m| return m;
+            const m = pprint_mod.build(self) catch return null;
+            self.pprint_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "html")) {
+            if (self.html_module) |m| return m;
+            const m = html_mod.build(self) catch return null;
+            self.html_module = m;
             return m;
         }
         return null;
