@@ -9,6 +9,14 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.84] - 2026-04-26
+
+### Added
+
+- `84_init_check` fixture, byte-equal.
+- TypeError when `__init__` returns a non-None value, matching CPython's
+  EXIT_INIT_CHECK opcode semantics.
+
 ## [0.0.83] - 2026-04-26
 
 ### Added
