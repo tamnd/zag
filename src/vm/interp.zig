@@ -62,6 +62,9 @@ pub const Interp = struct {
     bytearray_type: ?*@import("../object/class.zig").Class = null,
     bytes_type: ?*@import("../object/class.zig").Class = null,
     memoryview_type: ?*@import("../object/class.zig").Class = null,
+    ellipsis_type: ?*@import("../object/class.zig").Class = null,
+    not_implemented_type: ?*@import("../object/class.zig").Class = null,
+    slice_type: ?*@import("../object/class.zig").Class = null,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 
