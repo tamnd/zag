@@ -9,6 +9,21 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.25] - 2026-04-25
+
+### Added
+
+- `24_unpack_stress` fixture, lifted from goipy's testdata,
+  byte-equal against CPython 3.14. Stars in every unpack
+  position, nested unpack, for-loop unpack, splat call sites
+  with positional / kwargs / mixed.
+- `INTRINSIC_LIST_TO_TUPLE` (`CALL_INTRINSIC_1` oparg 6) for
+  star-prefixed tuple literals.
+- `SET_UPDATE` for set-spread literals.
+- `SET_FUNCTION_ATTRIBUTE` flags 2 (kw_defaults) and 4
+  (annotations — ignored). `callPyFunction` walks
+  `kw_defaults` to fill missing kw-only slots.
+
 ## [0.0.24] - 2026-04-25
 
 ### Added
