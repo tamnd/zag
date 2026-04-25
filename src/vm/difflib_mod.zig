@@ -134,7 +134,8 @@ fn getCloseMatchesKw(p: *anyopaque, args: []const Value, kw_names: []const Value
     }
     std.sort.block(Item, items.items, {}, struct {
         fn lt(_: void, x: Item, y: Item) bool {
-            return x.ratio > y.ratio;
+            if (x.ratio != y.ratio) return x.ratio > y.ratio;
+            return std.mem.order(u8, x.str, y.str) == .gt;
         }
     }.lt);
     const list = try List.init(a);
@@ -244,6 +245,15 @@ fn unifiedDiffKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw
         else if (std.mem.eql(u8, kn.str.bytes, "tofile")) tofile = kv.str.bytes;
     }
     const list = try List.init(a);
+    // Skip entirely when sequences are identical.
+    if (aa.len == bb.len) {
+        var same = true;
+        for (aa, bb) |x, y| if (!std.mem.eql(u8, x, y)) {
+            same = false;
+            break;
+        };
+        if (same) return Value{ .list = list };
+    }
     {
         const h = try std.fmt.allocPrint(a, "--- {s}\n", .{fromfile});
         const s = try Str.init(a, h);
@@ -282,6 +292,9 @@ fn ensureClass(interp: *Interp) !void {
     try methodReg(a, d, "ratio", smRatio);
     try methodReg(a, d, "quick_ratio", smRatio);
     try methodReg(a, d, "real_quick_ratio", smRatio);
+    try methodReg(a, d, "set_seq1", smSetSeq1);
+    try methodReg(a, d, "set_seq2", smSetSeq2);
+    try methodReg(a, d, "set_seqs", smSetSeqs);
     interp.difflib_seqmatch_class = try Class.init(a, "SequenceMatcher", &.{}, d);
 }
 
@@ -292,21 +305,50 @@ fn seqMatcherFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const inst = try Instance.init(a, interp.difflib_seqmatch_class.?);
     if (args.len >= 2 and args[1] == .str) {
         const s = try Str.init(a, args[1].str.bytes);
-        try inst.dict.setStr(a, "_a", Value{ .str = s });
+        try inst.dict.setStr(a, "a", Value{ .str = s });
     }
     if (args.len >= 3 and args[2] == .str) {
         const s = try Str.init(a, args[2].str.bytes);
-        try inst.dict.setStr(a, "_b", Value{ .str = s });
+        try inst.dict.setStr(a, "b", Value{ .str = s });
     }
     return Value{ .instance = inst };
+}
+
+fn smSetSeq1(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 2 or args[0] != .instance or args[1] != .str) return error.TypeError;
+    const s = try Str.init(a, args[1].str.bytes);
+    try args[0].instance.dict.setStr(a, "a", Value{ .str = s });
+    return Value.none;
+}
+
+fn smSetSeq2(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 2 or args[0] != .instance or args[1] != .str) return error.TypeError;
+    const s = try Str.init(a, args[1].str.bytes);
+    try args[0].instance.dict.setStr(a, "b", Value{ .str = s });
+    return Value.none;
+}
+
+fn smSetSeqs(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 3 or args[0] != .instance or args[1] != .str or args[2] != .str) return error.TypeError;
+    const s1 = try Str.init(a, args[1].str.bytes);
+    const s2 = try Str.init(a, args[2].str.bytes);
+    try args[0].instance.dict.setStr(a, "a", Value{ .str = s1 });
+    try args[0].instance.dict.setStr(a, "b", Value{ .str = s2 });
+    return Value.none;
 }
 
 fn smRatio(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = p;
     if (args.len < 1 or args[0] != .instance) return error.TypeError;
     const inst = args[0].instance;
-    const a_v = inst.dict.getStr("_a") orelse return Value{ .float = 0.0 };
-    const b_v = inst.dict.getStr("_b") orelse return Value{ .float = 0.0 };
+    const a_v = inst.dict.getStr("a") orelse return Value{ .float = 0.0 };
+    const b_v = inst.dict.getStr("b") orelse return Value{ .float = 0.0 };
     if (a_v != .str or b_v != .str) return Value{ .float = 0.0 };
     return Value{ .float = ratio(a_v.str.bytes, b_v.str.bytes) };
 }
