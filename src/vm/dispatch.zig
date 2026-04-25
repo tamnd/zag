@@ -1322,15 +1322,25 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
 
         .CHECK_EXC_MATCH => {
             // Stack: [..., exc, type] -> [..., exc, bool]. Pops type,
-            // peeks exc, walks the exc's MRO looking for the type.
+            // peeks exc, walks the exc's MRO looking for the type. The
+            // type can be a tuple of classes — `except (A, B)` — in
+            // which case any class match wins.
             const typ = frame.pop();
             const e = frame.stack[frame.sp - 1];
             var matched = false;
-            if (e == .instance and typ == .class) {
-                for (e.instance.cls.mro) |c| {
-                    if (c == typ.class) {
-                        matched = true;
-                        break;
+            if (e == .instance) {
+                const candidates: []const Value = switch (typ) {
+                    .class => @as([]const Value, &[_]Value{typ}),
+                    .tuple => |t| t.items,
+                    else => &.{},
+                };
+                outer: for (candidates) |cand| {
+                    if (cand != .class) continue;
+                    for (e.instance.cls.mro) |c| {
+                        if (c == cand.class) {
+                            matched = true;
+                            break :outer;
+                        }
                     }
                 }
             }
