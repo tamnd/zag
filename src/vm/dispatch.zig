@@ -1221,6 +1221,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const value = frame.pop();
             switch (obj) {
                 .instance => |i| try i.dict.setStr(interp.allocator, name, value),
+                .class => |c| try c.dict.setStr(interp.allocator, name, value),
                 .module => |m| try m.attrs.setStr(interp.allocator, name, value),
                 else => {
                     try interp.attributeError(obj.typeName(), name);
@@ -2370,6 +2371,21 @@ pub fn iterStep(interp: *Interp, it: Value) DispatchError!?Value {
                 return Value{ .tuple = t };
             }
             return null;
+        },
+        .instance => {
+            const r = @import("dunder.zig").call(interp, it, "__next__", &.{}) catch |e| switch (e) {
+                error.PyException => {
+                    if (interp.current_exc) |cur| {
+                        if (cur == .instance and std.mem.eql(u8, cur.instance.cls.name, "StopIteration")) {
+                            interp.current_exc = null;
+                            return null;
+                        }
+                    }
+                    return e;
+                },
+                else => return e,
+            };
+            return r;
         },
         else => {
             try interp.typeError("FOR_ITER on non-iterator");
