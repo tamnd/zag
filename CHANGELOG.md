@@ -9,6 +9,14 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.97] - 2026-04-26
+
+### Added
+
+- `97_threadsafe_bytearray` fixture, byte-equal. `bytearray.copy()`
+  returns a fresh mutable copy; `bytes * n` and `bytearray * n` (and
+  the swapped forms) produce repeated buffers.
+
 ## [0.0.96] - 2026-04-26
 
 ### Added
