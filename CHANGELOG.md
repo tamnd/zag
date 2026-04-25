@@ -9,6 +9,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.22] - 2026-04-25
+
+### Added
+
+- `21_with_stress` fixture, lifted from goipy's testdata, running
+  byte-equal against CPython 3.14. Multi-item `with`, nested
+  `with`, exception swallowed via `__exit__` truthy return,
+  exception bubbling, early `return` inside `with`.
+- `issubclass(sub, cls)` builtin.
+- `DELETE_DEREF` opcode for cleaning up `except E as e:` cells.
+
+### Changed
+
+- "unsupported opcode" diagnostic reports the actual offending
+  byte at `code[ip]` instead of the dispatchOne entry opcode.
+
 ## [0.0.21] - 2026-04-25
 
 ### Added

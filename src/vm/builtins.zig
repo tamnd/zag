@@ -507,6 +507,7 @@ pub fn install(interp: *Interp) !void {
     const dispatch = @import("dispatch.zig");
     try interp.registerBuiltin("__build_class__", dispatch.buildClass);
     try interp.registerBuiltin("isinstance", dispatch.isInstanceBuiltin);
+    try interp.registerBuiltin("issubclass", dispatch.isSubclassBuiltin);
     try interp.registerBuiltin("super", superBuiltin);
     try interp.registerBuiltin("property", propertyBuiltin);
     try interp.registerBuiltin("classmethod", classmethodBuiltin);

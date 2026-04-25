@@ -597,6 +597,17 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .DELETE_DEREF => {
+            const arg = oparg(frame, ext_arg);
+            const slot = frame.fast[arg];
+            if (slot != .cell) {
+                try interp.typeError("DELETE_DEREF on non-cell slot");
+                return error.TypeError;
+            }
+            slot.cell.value = Value.null_sentinel;
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .COPY_FREE_VARS => {
             // The function's closure tuple is held by the running
             // function; we stashed it on the frame at call time.
@@ -1283,7 +1294,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
         },
 
         else => {
-            try interp.unsupportedOpcode(first_op, frame.ip);
+            try interp.unsupportedOpcode(code[frame.ip], frame.ip);
             return error.UnknownOpcode;
         },
     }
@@ -2201,6 +2212,22 @@ pub fn isInstanceBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerro
     if (args[0] != .instance) return Value{ .boolean = false };
     const target = args[1].class;
     for (args[0].instance.cls.mro) |c| {
+        if (c == target) return Value{ .boolean = true };
+    }
+    return Value{ .boolean = false };
+}
+
+/// `issubclass(sub, cls)` -- walks `sub.mro` for `cls`. Both args
+/// must be classes; the fixture-side `__exit__` uses this on
+/// exception types.
+pub fn isSubclassBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[0] != .class or args[1] != .class) {
+        try interp.typeError("issubclass expects (class, class)");
+        return error.TypeError;
+    }
+    const target = args[1].class;
+    for (args[0].class.mro) |c| {
         if (c == target) return Value{ .boolean = true };
     }
     return Value{ .boolean = false };
