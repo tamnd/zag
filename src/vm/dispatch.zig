@@ -20,6 +20,7 @@ const Cell = @import("../object/cell.zig").Cell;
 const Class = @import("../object/class.zig").Class;
 const Instance = @import("../object/instance.zig").Instance;
 const Generator = @import("../object/generator.zig").Generator;
+const Slice = @import("../object/slice.zig").Slice;
 const Dict = @import("../object/dict.zig").Dict;
 const Frame = @import("frame.zig").Frame;
 const Interp = @import("interp.zig").Interp;
@@ -612,6 +613,36 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .BINARY_SLICE => {
+            const stop = frame.pop();
+            const start = frame.pop();
+            const container = frame.pop();
+            const sl = try Slice.init(interp.allocator, start, stop, Value.none);
+            const r = try subscript(interp, container, Value{ .slice = sl });
+            frame.push(r);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .STORE_SLICE => {
+            const stop = frame.pop();
+            const start = frame.pop();
+            const container = frame.pop();
+            const value = frame.pop();
+            const sl = try Slice.init(interp.allocator, start, stop, Value.none);
+            try storeSubscr(interp, container, Value{ .slice = sl }, value);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .BUILD_SLICE => {
+            const arg = oparg(frame, ext_arg);
+            const step: Value = if (arg == 3) frame.pop() else Value.none;
+            const stop = frame.pop();
+            const start = frame.pop();
+            const sl = try Slice.init(interp.allocator, start, stop, step);
+            frame.push(Value{ .slice = sl });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .DELETE_SUBSCR => {
             const key = frame.pop();
             const container = frame.pop();
@@ -626,6 +657,32 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                         try interp.stderr.flush();
                         return error.TypeError;
                     }
+                },
+                .list => |l| switch (key) {
+                    .small_int => |i| {
+                        const n: i64 = @intCast(l.items.items.len);
+                        var idx = i;
+                        if (idx < 0) idx += n;
+                        if (idx < 0 or idx >= n) {
+                            try interp.indexError("list deletion index out of range");
+                            return error.IndexError;
+                        }
+                        _ = l.items.orderedRemove(@intCast(idx));
+                    },
+                    .slice => |sl| {
+                        const n: i64 = @intCast(l.items.items.len);
+                        const r = try resolveSlice(interp, sl, n);
+                        if (r.step != 1) {
+                            try interp.typeError("extended slice deletion not supported");
+                            return error.TypeError;
+                        }
+                        const lo: usize = @intCast(r.start);
+                        try l.items.replaceRange(interp.allocator, lo, r.count, &.{});
+                    },
+                    else => {
+                        try interp.typeError("list indices must be integers or slices");
+                        return error.TypeError;
+                    },
                 },
                 else => {
                     try interp.typeError("object does not support item deletion");
@@ -1317,16 +1374,17 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
                     return Value{ .str = piece };
                 },
                 .slice => |sl| {
-                    if (sl.step != .none) {
-                        try interp.typeError("slice step != 1 not supported");
-                        return error.TypeError;
-                    }
                     const n: i64 = @intCast(bytes.len);
-                    const start = clampSliceBound(sl.start, n, 0);
-                    const stop = clampSliceBound(sl.stop, n, n);
-                    const lo: usize = @intCast(start);
-                    const hi: usize = @intCast(if (stop < start) start else stop);
-                    const piece = try Str.init(interp.allocator, bytes[lo..hi]);
+                    const r = try resolveSlice(interp, sl, n);
+                    var buf = try interp.allocator.alloc(u8, r.count);
+                    var idx = r.start;
+                    var k: usize = 0;
+                    while (k < r.count) : (k += 1) {
+                        buf[k] = bytes[@intCast(idx)];
+                        idx += r.step;
+                    }
+                    const piece = try Str.init(interp.allocator, buf);
+                    interp.allocator.free(buf);
                     return Value{ .str = piece };
                 },
                 else => {
@@ -1348,17 +1406,15 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
                     return l.items.items[@intCast(idx)];
                 },
                 .slice => |sl| {
-                    if (sl.step != .none) {
-                        try interp.typeError("slice step != 1 not supported");
-                        return error.TypeError;
-                    }
                     const n: i64 = @intCast(l.items.items.len);
-                    const start = clampSliceBound(sl.start, n, 0);
-                    const stop = clampSliceBound(sl.stop, n, n);
-                    const lo: usize = @intCast(start);
-                    const hi: usize = @intCast(if (stop < start) start else stop);
+                    const r = try resolveSlice(interp, sl, n);
                     const out = try List.init(interp.allocator);
-                    for (l.items.items[lo..hi]) |it| try out.append(interp.allocator, it);
+                    var idx = r.start;
+                    var k: usize = 0;
+                    while (k < r.count) : (k += 1) {
+                        try out.append(interp.allocator, l.items.items[@intCast(idx)]);
+                        idx += r.step;
+                    }
                     return Value{ .list = out };
                 },
                 else => {
@@ -1402,6 +1458,68 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
     }
 }
 
+const Resolved = struct { start: i64, step: i64, count: usize };
+
+/// Apply Python slice semantics: resolve `None` defaults per step
+/// sign, normalize negative indices, clamp to `[0, n]` (or `[-1,
+/// n-1]` for negative step), and report the iteration count.
+fn resolveSlice(interp: *Interp, sl: *@import("../object/slice.zig").Slice, n: i64) !Resolved {
+    var step: i64 = 1;
+    switch (sl.step) {
+        .none => {},
+        .small_int => |i| step = i,
+        else => {
+            try interp.typeError("slice step must be an int");
+            return error.TypeError;
+        },
+    }
+    if (step == 0) {
+        try interp.typeError("slice step cannot be zero");
+        return error.TypeError;
+    }
+    const default_start: i64 = if (step > 0) 0 else n - 1;
+    const default_stop: i64 = if (step > 0) n else -1;
+    var start: i64 = default_start;
+    var stop: i64 = default_stop;
+    switch (sl.start) {
+        .none => {},
+        .small_int => |i| {
+            start = i;
+            if (start < 0) start += n;
+            if (step > 0) {
+                if (start < 0) start = 0;
+                if (start > n) start = n;
+            } else {
+                if (start < -1) start = -1;
+                if (start > n - 1) start = n - 1;
+            }
+        },
+        else => {},
+    }
+    switch (sl.stop) {
+        .none => {},
+        .small_int => |i| {
+            stop = i;
+            if (stop < 0) stop += n;
+            if (step > 0) {
+                if (stop < 0) stop = 0;
+                if (stop > n) stop = n;
+            } else {
+                if (stop < -1) stop = -1;
+                if (stop > n - 1) stop = n - 1;
+            }
+        },
+        else => {},
+    }
+    var count: usize = 0;
+    if (step > 0 and start < stop) {
+        count = @intCast(@divTrunc(stop - start - 1, step) + 1);
+    } else if (step < 0 and start > stop) {
+        count = @intCast(@divTrunc(start - stop - 1, -step) + 1);
+    }
+    return .{ .start = start, .step = step, .count = count };
+}
+
 fn clampSliceBound(v: Value, n: i64, default_: i64) i64 {
     return switch (v) {
         .none => default_,
@@ -1429,8 +1547,28 @@ fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !voi
                 }
                 l.items.items[@intCast(idx)] = value;
             },
+            .slice => |sl| {
+                const n: i64 = @intCast(l.items.items.len);
+                const r = try resolveSlice(interp, sl, n);
+                if (r.step != 1) {
+                    try interp.typeError("extended slice assignment not supported");
+                    return error.TypeError;
+                }
+                const src_items: []const Value = switch (value) {
+                    .list => |sl2| sl2.items.items,
+                    .tuple => |t| t.items,
+                    else => {
+                        try interp.typeError("can only assign an iterable");
+                        return error.TypeError;
+                    },
+                };
+                const lo: usize = @intCast(r.start);
+                const hi: usize = lo + r.count;
+                try l.items.replaceRange(interp.allocator, lo, r.count, src_items);
+                _ = hi;
+            },
             else => {
-                try interp.typeError("list indices must be integers");
+                try interp.typeError("list indices must be integers or slices");
                 return error.TypeError;
             },
         },
