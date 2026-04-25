@@ -9,6 +9,14 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.89] - 2026-04-26
+
+### Added
+
+- `89_range_methods` fixture, byte-equal.
+- range: `start`, `stop`, `step` attrs; `count`, `index` methods;
+  `len()` and `in` membership for positive- and negative-step ranges.
+
 ## [0.0.88] - 2026-04-26
 
 ### Added
