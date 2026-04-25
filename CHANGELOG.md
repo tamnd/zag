@@ -9,6 +9,49 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.9] - 2026-04-25
+
+### Added
+
+- `08_classes` fixture, lifted verbatim from goipy's testdata, running
+  byte-equal against CPython 3.14 stdout. Covers `class` definition,
+  `__init__`, attribute access, instance methods with `self` binding,
+  single inheritance with method override, and `isinstance`.
+- `Class` and `Instance` heap value arms. `Class` carries name, bases,
+  namespace dict, and a precomputed MRO (single-inheritance only:
+  self, then a dedup walk of `bases[i].mro`). `Instance` is a class
+  pointer plus a per-instance attribute dict — no `__slots__` yet.
+- `LOAD_BUILD_CLASS` pushes the `__build_class__` builtin. The
+  builtin runs the class body function with a fresh locals dict and
+  wraps the resulting namespace in a `Class`.
+- `LOAD_LOCALS` pushes the active frame's locals dict, which the
+  3.14 class-body prologue stashes into the `__classdict__` cell.
+- `STORE_ATTR name` for `obj.x = v`. Writes land in the instance
+  dict; setting attributes on a class itself isn't exercised by the
+  fixture and isn't wired up.
+- `LOAD_ATTR` extended for instances and classes. The lookup order
+  on an instance is the instance dict, then the class MRO; on a
+  class it's the MRO directly. The 3.14 method-form (low oparg bit)
+  pushes `(method, self)` so the existing bound-method branch in
+  `CALL` threads `self` through as `args[0]` without any new
+  calling-convention plumbing.
+- `CALL` on a `Class` instantiates: allocate an `Instance`, look up
+  `__init__` on the class, and if present invoke it with the new
+  instance as `args[0]`. Missing `__init__` is fine — the instance
+  is returned as-is.
+- `__build_class__` and `isinstance` builtins. `isinstance` walks
+  the instance's class MRO looking for the target class pointer.
+- `callPyFunction` grew a `locals_override` parameter so
+  `__build_class__` can run a code object with a separate locals
+  dict instead of the function default (locals == globals).
+
+### Out of scope
+
+- `super()`, descriptors, `__slots__`, metaclasses, `__new__`,
+  multiple inheritance with C3 linearization. The fixture defines
+  `__repr__` but never invokes it, so `repr()` / `str()` builtins
+  weren't needed this round either.
+
 ## [0.0.8] - 2026-04-25
 
 ### Added

@@ -167,4 +167,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("sum", sumBuiltin);
     try interp.registerBuiltin("sorted", sortedBuiltin);
     try interp.registerBuiltin("range", rangeBuiltin);
+    const dispatch = @import("dispatch.zig");
+    try interp.registerBuiltin("__build_class__", dispatch.buildClass);
+    try interp.registerBuiltin("isinstance", dispatch.isInstanceBuiltin);
 }

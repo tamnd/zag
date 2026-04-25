@@ -18,6 +18,8 @@ const Slice = @import("slice.zig").Slice;
 const Iter = @import("iter.zig").Iter;
 const Function = @import("function.zig").Function;
 const Cell = @import("cell.zig").Cell;
+const Class = @import("class.zig").Class;
+const Instance = @import("instance.zig").Instance;
 
 pub const Tag = enum(u8) {
     none,
@@ -33,6 +35,8 @@ pub const Tag = enum(u8) {
     builtin_fn,
     function,
     cell,
+    class,
+    instance,
     slice,
     iter,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
@@ -65,6 +69,8 @@ pub const Value = union(Tag) {
     builtin_fn: *BuiltinFn,
     function: *Function,
     cell: *Cell,
+    class: *Class,
+    instance: *Instance,
     slice: *Slice,
     iter: *Iter,
     null_sentinel,
@@ -80,7 +86,7 @@ pub const Value = union(Tag) {
             .tuple => |t| t.items.len != 0,
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
-            .code, .builtin_fn, .function, .cell, .slice, .iter => true,
+            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter => true,
         };
     }
 
@@ -133,6 +139,8 @@ pub const Value = union(Tag) {
             .builtin_fn => |f| try w.print("<built-in function {s}>", .{f.name}),
             .function => |f| try w.print("<function {s}>", .{f.code.qualname}),
             .cell => try w.writeAll("<cell>"),
+            .class => |c| try w.print("<class '{s}'>", .{c.name}),
+            .instance => |obj| try w.print("<{s} object>", .{obj.cls.name}),
             .iter => try w.writeAll("<iterator>"),
             .slice => |sl| {
                 try w.writeAll("slice(");
@@ -237,6 +245,8 @@ pub const Value = union(Tag) {
             .builtin_fn => |p| p == b.builtin_fn,
             .function => |p| p == b.function,
             .cell => |p| p == b.cell,
+            .class => |p| p == b.class,
+            .instance => |p| p == b.instance,
             .slice => |p| p == b.slice,
             .iter => |p| p == b.iter,
         };
@@ -258,6 +268,8 @@ pub const Value = union(Tag) {
             .builtin_fn => "builtin_function_or_method",
             .function => "function",
             .cell => "cell",
+            .class => "type",
+            .instance => |obj| obj.cls.name,
             .slice => "slice",
             .iter => "iterator",
         };
