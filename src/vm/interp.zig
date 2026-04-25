@@ -18,6 +18,8 @@ const asyncio_mod = @import("asyncio.zig");
 const importlib_mod = @import("importlib.zig");
 const functools_mod = @import("functools_mod.zig");
 const itertools_mod = @import("itertools_mod.zig");
+const operator_mod = @import("operator_mod.zig");
+const collections_mod = @import("collections_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -38,6 +40,8 @@ pub const Interp = struct {
     importlib_module: ?*Module = null,
     functools_module: ?*Module = null,
     itertools_module: ?*Module = null,
+    operator_module: ?*Module = null,
+    collections_module: ?*Module = null,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every
     /// helper `.pyc`; the CLI pre-registers siblings of the entry
@@ -280,6 +284,18 @@ pub const Interp = struct {
             if (self.itertools_module) |m| return m;
             const m = itertools_mod.build(self) catch return null;
             self.itertools_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "operator")) {
+            if (self.operator_module) |m| return m;
+            const m = operator_mod.build(self) catch return null;
+            self.operator_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "collections")) {
+            if (self.collections_module) |m| return m;
+            const m = collections_mod.build(self) catch return null;
+            self.collections_module = m;
             return m;
         }
         return null;

@@ -31,6 +31,7 @@ const setmethods = @import("setmethods.zig");
 const bytearraymethods = @import("bytearraymethods.zig");
 const memoryviewmethods = @import("memoryviewmethods.zig");
 const dictmethods = @import("dictmethods.zig");
+const collmethods = @import("collections_methods.zig");
 const exc = @import("exc.zig");
 const builtins_mod = @import("builtins.zig");
 const dunder = @import("dunder.zig");
@@ -1684,7 +1685,7 @@ inline fn advance(frame: *Frame, ext_arg: *u32, cw: u8) Opcode {
 /// forces). Other variants surface as TypeError so the next fixture
 /// to need them prompts a fix instead of silently doing the wrong
 /// thing.
-fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
+pub fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
     // User instances override arithmetic via dunders. Fall through to
     // the built-in dispatch only if neither operand defines the op.
     if (a == .instance or b == .instance) {
@@ -2092,7 +2093,7 @@ fn remainder(interp: *Interp, a: Value, b: Value) !Value {
     return error.TypeError;
 }
 
-fn subscript(interp: *Interp, container: Value, key: Value) !Value {
+pub fn subscript(interp: *Interp, container: Value, key: Value) !Value {
     if (container == .class) {
         if (container.class.lookup("__class_getitem__")) |hook| {
             return try invoke(interp, hook, &.{ container, key });
@@ -2286,6 +2287,64 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
             try interp.raisePy("KeyError", "key not found");
             return error.PyException;
         },
+        .deque => |dq| switch (key) {
+            .small_int => |i| {
+                const n: i64 = @intCast(dq.items.items.items.len);
+                var idx = i;
+                if (idx < 0) idx += n;
+                if (idx < 0 or idx >= n) {
+                    try interp.raisePy("IndexError", "deque index out of range");
+                    return error.PyException;
+                }
+                return dq.items.items.items[@intCast(idx)];
+            },
+            else => {
+                try interp.typeError("sequence index must be integer");
+                return error.TypeError;
+            },
+        },
+        .counter => |c| {
+            if (key != .str) {
+                try interp.typeError("Counter only supports str keys");
+                return error.TypeError;
+            }
+            return c.data.getStr(key.str.bytes) orelse Value{ .small_int = 0 };
+        },
+        .defaultdict => |dd| {
+            if (key != .str) {
+                try interp.typeError("defaultdict only supports str keys");
+                return error.TypeError;
+            }
+            if (dd.data.getStr(key.str.bytes)) |v| return v;
+            const v = if (dd.factory == .none) Value.none else try invoke(interp, dd.factory, &.{});
+            try dd.data.setStr(interp.allocator, key.str.bytes, v);
+            return v;
+        },
+        .ordered_dict => |od| {
+            if (key != .str) {
+                try interp.typeError("OrderedDict only supports str keys");
+                return error.TypeError;
+            }
+            if (od.data.getStr(key.str.bytes)) |v| return v;
+            try interp.raisePy("KeyError", key.str.bytes);
+            return error.PyException;
+        },
+        .named_tuple => |nt| switch (key) {
+            .small_int => |i| {
+                const n: i64 = @intCast(nt.items.len);
+                var idx = i;
+                if (idx < 0) idx += n;
+                if (idx < 0 or idx >= n) {
+                    try interp.raisePy("IndexError", "tuple index out of range");
+                    return error.PyException;
+                }
+                return nt.items[@intCast(idx)];
+            },
+            else => {
+                try interp.typeError("tuple indices must be integers");
+                return error.TypeError;
+            },
+        },
         .instance => {
             if (try @import("dunder.zig").call(interp, container, "__getitem__", &.{key})) |v| return v;
             try interp.typeError("object is not subscriptable");
@@ -2413,7 +2472,7 @@ fn clampSliceBound(v: Value, n: i64, default_: i64) i64 {
     };
 }
 
-fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !void {
+pub fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !void {
     switch (container) {
         .list => |l| switch (key) {
             .small_int => |i| {
@@ -2453,6 +2512,41 @@ fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !voi
         },
         .dict => |d| {
             try dictSetKey(interp, d, key, value);
+        },
+        .deque => |dq| {
+            if (key != .small_int) {
+                try interp.typeError("sequence index must be integer");
+                return error.TypeError;
+            }
+            const n: i64 = @intCast(dq.items.items.items.len);
+            var idx = key.small_int;
+            if (idx < 0) idx += n;
+            if (idx < 0 or idx >= n) {
+                try interp.raisePy("IndexError", "deque index out of range");
+                return error.PyException;
+            }
+            dq.items.items.items[@intCast(idx)] = value;
+        },
+        .counter => |c| {
+            if (key != .str) {
+                try interp.typeError("Counter only supports str keys");
+                return error.TypeError;
+            }
+            try c.data.setStr(interp.allocator, key.str.bytes, value);
+        },
+        .defaultdict => |dd| {
+            if (key != .str) {
+                try interp.typeError("defaultdict only supports str keys");
+                return error.TypeError;
+            }
+            try dd.data.setStr(interp.allocator, key.str.bytes, value);
+        },
+        .ordered_dict => |od| {
+            if (key != .str) {
+                try interp.typeError("OrderedDict only supports str keys");
+                return error.TypeError;
+            }
+            try od.data.setStr(interp.allocator, key.str.bytes, value);
         },
         .instance => {
             if (try @import("dunder.zig").call(interp, container, "__setitem__", &.{ key, value })) |_| return;
@@ -2637,7 +2731,7 @@ pub fn makeIter(interp: *Interp, v: Value) !*Iter {
     };
 }
 
-fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
+pub fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
     switch (container) {
         .str => |s| {
             if (item != .str) {
@@ -2740,7 +2834,7 @@ fn bytesContains(haystack: []const u8, item: Value) bool {
 /// 4 `>`, 5 `>=`. `==` / `!=` accept any pair of types (mismatched
 /// types compare unequal); ordering on unsupported types raises
 /// TypeError.
-fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
+pub fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
     if (a == .instance or b == .instance) {
         if (try @import("dunder.zig").compare(interp, a, b, kind)) |result| return result;
         // Equality with no dunder falls back to identity, matching CPython.
@@ -2831,6 +2925,43 @@ fn matchClassCheck(subject: Value, cls: Value) bool {
     if (std.mem.eql(u8, name, "set")) return subject == .set and !subject.set.frozen;
     if (std.mem.eql(u8, name, "frozenset")) return subject == .set and subject.set.frozen;
     return false;
+}
+
+/// Pinhole `LOAD_ATTR` that returns the resolved Value rather than
+/// pushing onto a frame. Enough for `operator.attrgetter` and
+/// `operator.methodcaller`: instance attr/method, then built-in
+/// method tables. Falls back to `AttributeError`.
+pub fn loadAttrValue(interp: *Interp, obj: Value, name: []const u8) !Value {
+    if (obj == .instance) {
+        if (obj.instance.dict.getStr(name)) |v| return v;
+        if (obj.instance.cls.lookup(name)) |v| {
+            if (v == .function) {
+                const BoundMethod = @import("../object/bound_method.zig").BoundMethod;
+                const bm = try BoundMethod.init(interp.allocator, v, obj);
+                return Value{ .bound_method = bm };
+            }
+            return v;
+        }
+    }
+    if (obj == .module) {
+        if (obj.module.attrs.getStr(name)) |v| return v;
+    }
+    const method: ?*value_mod.BuiltinFn = switch (obj) {
+        .str => strmethods.lookup(name),
+        .list => listmethods.lookup(name),
+        .dict => dictmethods.lookup(name),
+        .set => setmethods.lookup(name),
+        .bytearray => bytearraymethods.lookup(name),
+        .memoryview => memoryviewmethods.lookup(name),
+        else => null,
+    };
+    if (method) |m| {
+        const BoundMethod = @import("../object/bound_method.zig").BoundMethod;
+        const bm = try BoundMethod.init(interp.allocator, Value{ .builtin_fn = m }, obj);
+        return Value{ .bound_method = bm };
+    }
+    try interp.attributeError(obj.typeName(), name);
+    return error.AttributeError;
 }
 
 fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_method: bool) !void {
@@ -3156,8 +3287,46 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
     }
-    // Built-in methods on str/list/dict.
+    // Special attributes on collections values that aren't methods.
+    if (obj == .deque) {
+        if (std.mem.eql(u8, name, "maxlen")) {
+            const v: Value = if (obj.deque.maxlen) |ml| Value{ .small_int = @intCast(ml) } else Value.none;
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+    }
+    if (obj == .named_tuple) {
+        // Field access by name.
+        if (collmethods.ntFieldIndex(obj.named_tuple, name)) |i| {
+            const v = obj.named_tuple.items[i];
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+    }
+    if (obj == .named_tuple_factory and std.mem.eql(u8, name, "_fields")) {
+        const f = obj.named_tuple_factory;
+        const t = try Tuple.init(interp.allocator, f.fields.len);
+        for (f.fields, 0..) |fname, i| {
+            const s = try Str.init(interp.allocator, fname);
+            t.items[i] = Value{ .str = s };
+        }
+        const v = Value{ .tuple = t };
+        if (is_method) {
+            frame.push(v);
+            frame.push(Value.null_sentinel);
+        } else frame.push(v);
+        return;
+    }
+
+    // Built-in methods on str/list/dict and collections types.
     if (is_method) {
+        var self_for_method = obj;
         const method: ?*value_mod.BuiltinFn = switch (obj) {
             .str => strmethods.lookup(name),
             .list => listmethods.lookup(name),
@@ -3165,11 +3334,36 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             .set => setmethods.lookup(name),
             .bytearray => bytearraymethods.lookup(name),
             .memoryview => memoryviewmethods.lookup(name),
+            .deque => collmethods.dequeLookup(name),
+            .counter => |c| blk: {
+                if (collmethods.counterLookup(name)) |m| break :blk m;
+                if (dictmethods.lookup(name)) |m| {
+                    self_for_method = Value{ .dict = c.data };
+                    break :blk m;
+                }
+                break :blk null;
+            },
+            .ordered_dict => |od| blk: {
+                if (collmethods.orderedDictLookup(name)) |m| break :blk m;
+                if (dictmethods.lookup(name)) |m| {
+                    self_for_method = Value{ .dict = od.data };
+                    break :blk m;
+                }
+                break :blk null;
+            },
+            .defaultdict => |dd| blk: {
+                if (dictmethods.lookup(name)) |m| {
+                    self_for_method = Value{ .dict = dd.data };
+                    break :blk m;
+                }
+                break :blk null;
+            },
+            .named_tuple => collmethods.ntLookup(name),
             else => null,
         };
         if (method) |m| {
             frame.push(Value{ .builtin_fn = m });
-            frame.push(obj);
+            frame.push(self_for_method);
             return;
         }
     }
@@ -3323,6 +3517,49 @@ fn invokeKw(
         },
         .function => |fn_val| return callPyFunction(interp, fn_val, positional, kw_names, kw_values, null),
         .class => |cls| return instantiate(interp, cls, positional, kw_names, kw_values),
+        .named_tuple_factory => |f| {
+            const NamedTuple = @import("../object/named_tuple.zig").NamedTuple;
+            const items = try interp.allocator.alloc(Value, f.fields.len);
+            var filled = try interp.allocator.alloc(bool, f.fields.len);
+            defer interp.allocator.free(filled);
+            for (filled) |*b| b.* = false;
+            if (positional.len > f.fields.len) {
+                try interp.typeError("namedtuple: too many positional arguments");
+                return error.TypeError;
+            }
+            for (positional, 0..) |v, i| {
+                items[i] = v;
+                filled[i] = true;
+            }
+            for (kw_names, kw_values) |kn, kv| {
+                if (kn != .str) continue;
+                var matched = false;
+                for (f.fields, 0..) |fname, i| {
+                    if (std.mem.eql(u8, fname, kn.str.bytes)) {
+                        if (filled[i]) {
+                            try interp.typeError("namedtuple: multiple values for field");
+                            return error.TypeError;
+                        }
+                        items[i] = kv;
+                        filled[i] = true;
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) {
+                    try interp.typeError("namedtuple: unexpected field");
+                    return error.TypeError;
+                }
+            }
+            for (filled) |b| {
+                if (!b) {
+                    try interp.typeError("namedtuple: missing field");
+                    return error.TypeError;
+                }
+            }
+            const nt = try NamedTuple.init(interp.allocator, f, items);
+            return Value{ .named_tuple = nt };
+        },
         .instance => {
             if (try @import("dunder.zig").call(interp, callable, "__call__", positional)) |r| return r;
             try interp.typeError("object is not callable");
