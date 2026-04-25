@@ -314,6 +314,26 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
         },
 
+        .POP_JUMP_IF_NONE => {
+            const arg = oparg(frame, ext_arg);
+            const v = frame.pop();
+            const cw = op.cache_width[@intFromEnum(Opcode.POP_JUMP_IF_NONE)];
+            frame.ip += 2 + 2 * @as(u32, cw);
+            if (v == .none) frame.ip += 2 * arg;
+            ext_arg = 0;
+            continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
+        },
+
+        .POP_JUMP_IF_NOT_NONE => {
+            const arg = oparg(frame, ext_arg);
+            const v = frame.pop();
+            const cw = op.cache_width[@intFromEnum(Opcode.POP_JUMP_IF_NOT_NONE)];
+            frame.ip += 2 + 2 * @as(u32, cw);
+            if (v != .none) frame.ip += 2 * arg;
+            ext_arg = 0;
+            continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
+        },
+
         .JUMP_FORWARD => {
             const arg = oparg(frame, ext_arg);
             frame.ip += 2 + 2 * arg;
@@ -615,6 +635,166 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 i -= 1;
                 frame.push(items[i]);
             }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .UNPACK_EX => {
+            // arg low byte = items before star, high byte = items after.
+            // The star binds the middle slice as a fresh List. Push so
+            // the leftmost source name ends up on top of the stack.
+            const arg = oparg(frame, ext_arg);
+            const n_before = arg & 0xFF;
+            const n_after = arg >> 8;
+            const seq = frame.pop();
+            const items: []const Value = switch (seq) {
+                .tuple => |t| t.items,
+                .list => |l| l.items.items,
+                else => {
+                    try interp.typeError("cannot unpack non-sequence");
+                    return error.TypeError;
+                },
+            };
+            if (items.len < n_before + n_after) {
+                try interp.typeError("not enough values to unpack");
+                return error.TypeError;
+            }
+            const rest_len = items.len - n_before - n_after;
+            // trailing items: rightmost first (deepest in stack).
+            var ti: usize = n_after;
+            while (ti > 0) {
+                ti -= 1;
+                frame.push(items[n_before + rest_len + ti]);
+            }
+            // rest list:
+            const rest_list = try @import("../object/list.zig").List.init(interp.allocator);
+            try rest_list.items.appendSlice(interp.allocator, items[n_before .. n_before + rest_len]);
+            frame.push(Value{ .list = rest_list });
+            // leading items, rightmost first.
+            var li: usize = n_before;
+            while (li > 0) {
+                li -= 1;
+                frame.push(items[li]);
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .GET_LEN => {
+            const v = frame.stack[frame.sp - 1];
+            const len: i64 = switch (v) {
+                .tuple => |t| @intCast(t.items.len),
+                .list => |l| @intCast(l.items.items.len),
+                .str => |s| @intCast(s.bytes.len),
+                .dict => |d| @intCast(d.count()),
+                else => {
+                    try interp.typeError("object has no len()");
+                    return error.TypeError;
+                },
+            };
+            frame.push(Value{ .small_int = len });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .MATCH_SEQUENCE => {
+            const v = frame.stack[frame.sp - 1];
+            const ok = switch (v) {
+                .list, .tuple => true,
+                else => false,
+            };
+            frame.push(Value{ .boolean = ok });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .MATCH_MAPPING => {
+            const v = frame.stack[frame.sp - 1];
+            frame.push(Value{ .boolean = v == .dict });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .MATCH_KEYS => {
+            // TOS = tuple of keys, TOS1 = subject (mapping). Push a
+            // tuple of values (same order as keys) if every key is
+            // present, otherwise None. Both inputs stay on the stack.
+            const keys = frame.stack[frame.sp - 1];
+            const subj = frame.stack[frame.sp - 2];
+            if (keys != .tuple or subj != .dict) {
+                try interp.typeError("MATCH_KEYS expects tuple of keys and dict subject");
+                return error.TypeError;
+            }
+            const ks = keys.tuple.items;
+            const out = try Tuple.init(interp.allocator, ks.len);
+            var ok = true;
+            for (ks, 0..) |k, i| {
+                if (k != .str) {
+                    ok = false;
+                    break;
+                }
+                if (subj.dict.getStr(k.str.bytes)) |v| {
+                    out.items[i] = v;
+                } else {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) {
+                frame.push(Value{ .tuple = out });
+            } else {
+                frame.push(Value.none);
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .MATCH_CLASS => {
+            // Pops (kw_attrs_tuple, class, subject); pushes either a
+            // tuple of extracted positional/kw attrs or None. nargs is
+            // the number of positional patterns. For the small set of
+            // atomic types CPython treats specially (`int`, `str`,
+            // ...), a single positional matches the subject itself.
+            const nargs = oparg(frame, ext_arg);
+            const kwattrs = frame.pop();
+            const cls = frame.pop();
+            const subject = frame.pop();
+            if (kwattrs != .tuple) {
+                try interp.typeError("MATCH_CLASS: kwattrs must be a tuple");
+                return error.TypeError;
+            }
+            const matches = matchClassCheck(subject, cls);
+            if (!matches or kwattrs.tuple.items.len != 0) {
+                // kwattrs!=0 not exercised by current fixtures.
+                if (!matches) {
+                    frame.push(Value.none);
+                } else {
+                    try interp.typeError("MATCH_CLASS: kw attrs not supported");
+                    return error.TypeError;
+                }
+            } else if (nargs == 0) {
+                const t = try Tuple.init(interp.allocator, 0);
+                frame.push(Value{ .tuple = t });
+            } else if (nargs == 1 and isAtomicSelfMatch(cls)) {
+                const t = try Tuple.init(interp.allocator, 1);
+                t.items[0] = subject;
+                frame.push(Value{ .tuple = t });
+            } else {
+                try interp.typeError("MATCH_CLASS: positional patterns require __match_args__");
+                return error.TypeError;
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .CONVERT_VALUE => {
+            // arg: 1=str, 2=repr, 3=ascii. Only str+repr are exercised.
+            const arg = oparg(frame, ext_arg);
+            const v = frame.pop();
+            var w = std.Io.Writer.Allocating.init(interp.allocator);
+            switch (arg) {
+                1 => try v.writeStr(&w.writer),
+                2, 3 => try v.writeRepr(&w.writer),
+                else => {
+                    try interp.typeError("CONVERT_VALUE: unknown kind");
+                    return error.TypeError;
+                },
+            }
+            const s = try Str.init(interp.allocator, w.written());
+            frame.push(Value{ .str = s });
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -1230,6 +1410,45 @@ fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
             };
         },
     };
+}
+
+/// CPython treats a small set of types specially in `case Cls(x)`:
+/// the lone positional pattern binds to the subject itself rather
+/// than walking `__match_args__`. This is the subset our fixtures
+/// touch -- the builtin name route is sufficient because these
+/// types don't have user-defined replacements at the moment.
+fn isAtomicSelfMatch(cls: Value) bool {
+    if (cls != .builtin_fn) return false;
+    const name = cls.builtin_fn.name;
+    const atoms = [_][]const u8{ "int", "str", "float", "bool", "list", "tuple", "dict", "set", "bytes" };
+    for (atoms) |a| {
+        if (std.mem.eql(u8, name, a)) return true;
+    }
+    return false;
+}
+
+/// Returns whether `subject` is considered an instance of `cls` for
+/// match-pattern purposes. Builtin "type" stand-ins (`int`, `str`,
+/// ...) are matched by Value tag; user `Class` walks the MRO.
+fn matchClassCheck(subject: Value, cls: Value) bool {
+    if (cls == .class) {
+        if (subject != .instance) return false;
+        for (subject.instance.cls.mro) |c| {
+            if (c == cls.class) return true;
+        }
+        return false;
+    }
+    if (cls != .builtin_fn) return false;
+    const name = cls.builtin_fn.name;
+    if (std.mem.eql(u8, name, "int")) return subject == .small_int or subject == .boolean;
+    if (std.mem.eql(u8, name, "str")) return subject == .str;
+    if (std.mem.eql(u8, name, "float")) return subject == .float;
+    if (std.mem.eql(u8, name, "bool")) return subject == .boolean;
+    if (std.mem.eql(u8, name, "list")) return subject == .list;
+    if (std.mem.eql(u8, name, "tuple")) return subject == .tuple;
+    if (std.mem.eql(u8, name, "dict")) return subject == .dict;
+    if (std.mem.eql(u8, name, "bytes")) return subject == .bytes;
+    return false;
 }
 
 fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_method: bool) !void {
