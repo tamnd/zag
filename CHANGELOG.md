@@ -9,6 +9,31 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.64] - 2026-04-25
+
+### Added
+
+- `63_math_heap_bisect_random` fixture, byte-equal against
+  CPython 3.14.
+- `math` module: constants (`pi`, `e`, `tau`, `inf`, `nan`) and
+  the bulk of CPython's surface used in numerical code:
+  `sqrt`, `ceil`, `floor`, `trunc`, `fabs`, `gcd`, `lcm`,
+  `factorial`, `comb`, `perm`, `hypot`, `dist`, `prod`,
+  `isclose`, `log`, `log2`, `log10`, `exp`, `sin`, `cos`,
+  `tan`, `atan2`, `degrees`, `radians`, `copysign`, `fmod`,
+  `isfinite`, `isinf`, `isnan`, `modf`, `frexp`, `ldexp`.
+- `heapq` module: `heappush`, `heappop`, `heapify`,
+  `heappushpop`, `heapreplace`, `nlargest`, `nsmallest`,
+  `merge`. The list invariant is maintained by sorting; fine
+  for the fixture sizes, no real heap structure required.
+- `bisect` module: `bisect_left`, `bisect_right`, `bisect`
+  (alias), `insort_left`, `insort` / `insort_right`.
+- `random` module: `seed`, `random`, `randint`, `choice`,
+  `choices` (with `k=` kwarg), `shuffle`, `sample`. Backed by
+  Zig's `DefaultPrng` -- not Mersenne-Twister, so byte
+  reproducibility against CPython is not claimed; same-seed
+  determinism within zag is.
+
 ## [0.0.63] - 2026-04-25
 
 ### Added
