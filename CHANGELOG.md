@@ -9,6 +9,17 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.77] - 2026-04-26
+
+### Added
+
+- `76_statistics_calendar_pprint_html_stress` fixture, byte-equal.
+- statistics: `mean`/`variance`/`pvariance` return int when result is
+  whole and inputs are all ints (CPython Fraction parity); `fmean`
+  always returns float; iterator inputs accepted via `seqFloats`.
+- statistics.quantiles `method="inclusive"`.
+- pprint.pformat/pprint `sort_dicts=False`.
+
 ## [0.0.76] - 2026-04-26
 
 ### Added
