@@ -30,14 +30,12 @@ zag is the Zig sibling of [goipy](https://github.com/tamnd/goipy), which does th
 
 ## Status
 
-Early. Milestone 1 targets "hello world runs", which means:
+Early. Landed so far:
 
-- Load a `.pyc` produced by `python3.14 -m py_compile`.
-- Decode the 3.14 marshal stream.
-- Dispatch the seven opcodes `RESUME`, `LOAD_NAME`, `PUSH_NULL`, `LOAD_CONST`, `CALL`, `POP_TOP`, `RETURN_VALUE`.
-- Implement one builtin: `print`.
+- **M1** -- load a 3.14 `.pyc`, run a module that calls `print(...)` with string and int args.
+- **M2** -- nested calls (`print(abs(-7))`), float repr matching CPython's trailing-`.0` rule, `abs()` builtin. All the constant-folded arithmetic the CPython compiler emits for integer and float literals.
 
-Later milestones: arithmetic, control flow, functions, collections, classes, exceptions, generators, stdlib.
+Later milestones: real `BINARY_OP` dispatch (for arithmetic with variables), comparisons, control flow, functions, collections, classes, exceptions, generators, stdlib.
 
 ## Requirements
 
