@@ -168,6 +168,37 @@ pub fn copyImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .dict = out };
 }
 
+pub fn popitemImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const d = args[0].dict;
+    if (d.pairs.items.len == 0) {
+        try interp.raisePy("KeyError", "dictionary is empty");
+        return error.PyException;
+    }
+    const last = d.pairs.items[d.pairs.items.len - 1];
+    _ = d.pairs.pop();
+    const t = try Tuple.init(interp.allocator, 2);
+    t.items[0] = last.key;
+    t.items[1] = last.value;
+    return Value{ .tuple = t };
+}
+
+pub fn fromkeysImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 1) {
+        try interp.typeError("dict.fromkeys() missing iterable");
+        return error.TypeError;
+    }
+    const fill: Value = if (args.len >= 2) args[1] else Value.none;
+    const d = try Dict.init(interp.allocator);
+    const lst = try @import("builtins.zig").materialize(interp, args[0]);
+    for (lst.items.items) |k| try d.setKey(interp.allocator, k, fill);
+    return Value{ .dict = d };
+}
+
+pub var popitem_entry = BuiltinFn{ .name = "popitem", .func = popitemImpl };
+pub var fromkeys_entry = BuiltinFn{ .name = "fromkeys", .func = fromkeysImpl };
+
 var items_entry = BuiltinFn{ .name = "items", .func = itemsImpl };
 var keys_entry = BuiltinFn{ .name = "keys", .func = keysImpl };
 var values_entry = BuiltinFn{ .name = "values", .func = valuesImpl };
@@ -188,5 +219,6 @@ pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "setdefault")) return &setdefault_entry;
     if (std.mem.eql(u8, name, "clear")) return &clear_entry;
     if (std.mem.eql(u8, name, "copy")) return &copy_entry;
+    if (std.mem.eql(u8, name, "popitem")) return &popitem_entry;
     return null;
 }

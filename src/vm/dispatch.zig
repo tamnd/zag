@@ -2024,6 +2024,12 @@ fn bitwiseOr(interp: *Interp, a: Value, b: Value) !Value {
         for (b.set.items.items) |x| try out.add(interp.allocator, x);
         return Value{ .set = out };
     }
+    if (a == .dict and b == .dict) {
+        const out = try Dict.init(interp.allocator);
+        for (a.dict.pairs.items) |p| try out.setKey(interp.allocator, p.key, p.value);
+        for (b.dict.pairs.items) |p| try out.setKey(interp.allocator, p.key, p.value);
+        return Value{ .dict = out };
+    }
     try interp.typeError("unsupported operand type(s) for |");
     return error.TypeError;
 }
@@ -3648,6 +3654,14 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
         return;
     }
     // int.from_bytes -- class-level attribute access on the `int` builtin.
+    if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "dict") and std.mem.eql(u8, name, "fromkeys")) {
+        const v = Value{ .builtin_fn = &dictmethods.fromkeys_entry };
+        if (is_method) {
+            frame.push(v);
+            frame.push(Value.null_sentinel);
+        } else frame.push(v);
+        return;
+    }
     if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "int") and std.mem.eql(u8, name, "from_bytes")) {
         const v = Value{ .builtin_fn = &intmethods.from_bytes_entry };
         if (is_method) {
