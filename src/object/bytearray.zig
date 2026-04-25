@@ -5,6 +5,7 @@ const std = @import("std");
 /// `append`, `extend`, and `pop`. Equality with `bytes` is content-only.
 pub const Bytearray = struct {
     data: std.ArrayList(u8),
+    view_count: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator) !*Bytearray {
         const self = try allocator.create(Bytearray);

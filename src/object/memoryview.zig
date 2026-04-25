@@ -11,6 +11,7 @@ pub const Memoryview = struct {
     backing: Backing,
     start: usize,
     len: usize,
+    released: bool = false,
 
     pub const Backing = union(enum) {
         bytes: *Bytes,
@@ -26,13 +27,24 @@ pub const Memoryview = struct {
     pub fn fromBytearray(allocator: std.mem.Allocator, b: *Bytearray) !*Memoryview {
         const self = try allocator.create(Memoryview);
         self.* = .{ .backing = .{ .bytearray = b }, .start = 0, .len = b.data.items.len };
+        b.view_count += 1;
         return self;
     }
 
     pub fn slice(self: *const Memoryview, allocator: std.mem.Allocator, start: usize, len: usize) !*Memoryview {
         const out = try allocator.create(Memoryview);
         out.* = .{ .backing = self.backing, .start = self.start + start, .len = len };
+        if (self.backing == .bytearray) self.backing.bytearray.view_count += 1;
         return out;
+    }
+
+    pub fn release(self: *Memoryview) void {
+        if (self.released) return;
+        self.released = true;
+        if (self.backing == .bytearray) {
+            const ba = self.backing.bytearray;
+            if (ba.view_count > 0) ba.view_count -= 1;
+        }
     }
 
     pub fn data(self: *const Memoryview) []const u8 {
