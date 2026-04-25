@@ -57,31 +57,67 @@ pub fn main(init: std.process.Init) !void {
 }
 
 /// Walk the directory containing `entry_path` and register every other
-/// `.cpython-314.pyc` under its module name (basename minus the
-/// `.cpython-314.pyc` suffix). Errors here are best-effort — failure
-/// just means `import` won't find that file later.
+/// `.cpython-314.pyc` under its module name. Top-level files become
+/// modules named after their stem; subdirectories become packages
+/// (with `__init__.cpython-314.pyc`) and their inner files become
+/// dotted submodules. Best-effort throughout — failure just means
+/// `import` won't find that file later.
 fn registerSiblings(
     interp: *zag.vm.interp.Interp,
     alloc: std.mem.Allocator,
     io: std.Io,
     entry_path: []const u8,
 ) !void {
-    const suffix = ".cpython-314.pyc";
     const dirname = std.fs.path.dirname(entry_path) orelse ".";
     const entry_base = std.fs.path.basename(entry_path);
+    try walkAndRegister(interp, alloc, io, dirname, "", entry_base);
+}
 
-    var dir = try std.Io.Dir.cwd().openDir(io, dirname, .{ .iterate = true });
+/// Recursive helper. `dotted_prefix` is the dotted package path so far
+/// (empty at the top level); `skip_basename` is the entry-script's
+/// filename so we don't register it as a sibling module of itself.
+fn walkAndRegister(
+    interp: *zag.vm.interp.Interp,
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    dir_path: []const u8,
+    dotted_prefix: []const u8,
+    skip_basename: []const u8,
+) !void {
+    const suffix = ".cpython-314.pyc";
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch return;
     defer dir.close(io);
 
     var iter = dir.iterate();
     while (try iter.next(io)) |ent| {
-        if (ent.kind != .file) continue;
-        if (!std.mem.endsWith(u8, ent.name, suffix)) continue;
-        if (std.mem.eql(u8, ent.name, entry_base)) continue;
-        const stem = ent.name[0 .. ent.name.len - suffix.len];
-        const path = try std.fs.path.join(alloc, &.{ dirname, ent.name });
-        const code = zag.marshal.pyc.loadFile(alloc, io, path) catch continue;
-        const owned = try alloc.dupe(u8, stem);
-        try interp.registerModuleCode(owned, code);
+        if (ent.kind == .file) {
+            if (!std.mem.endsWith(u8, ent.name, suffix)) continue;
+            if (std.mem.eql(u8, ent.name, skip_basename)) continue;
+            const stem = ent.name[0 .. ent.name.len - suffix.len];
+            const path = try std.fs.path.join(alloc, &.{ dir_path, ent.name });
+            const code = zag.marshal.pyc.loadFile(alloc, io, path) catch continue;
+            if (std.mem.eql(u8, stem, "__init__")) {
+                if (dotted_prefix.len == 0) continue; // Stray __init__ at top level.
+                const owned = try alloc.dupe(u8, dotted_prefix);
+                try interp.registerModuleCode(owned, code, true);
+            } else {
+                const owned = if (dotted_prefix.len == 0)
+                    try alloc.dupe(u8, stem)
+                else
+                    try std.fmt.allocPrint(alloc, "{s}.{s}", .{ dotted_prefix, stem });
+                try interp.registerModuleCode(owned, code, false);
+            }
+        } else if (ent.kind == .directory) {
+            // Recurse into subdirectories that look like Python
+            // packages (no leading `.`, no `__pycache__`).
+            if (std.mem.eql(u8, ent.name, "__pycache__")) continue;
+            if (ent.name.len == 0 or ent.name[0] == '.') continue;
+            const sub_path = try std.fs.path.join(alloc, &.{ dir_path, ent.name });
+            const sub_dotted = if (dotted_prefix.len == 0)
+                try alloc.dupe(u8, ent.name)
+            else
+                try std.fmt.allocPrint(alloc, "{s}.{s}", .{ dotted_prefix, ent.name });
+            try walkAndRegister(interp, alloc, io, sub_path, sub_dotted, "");
+        }
     }
 }

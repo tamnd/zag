@@ -37,7 +37,7 @@ pub const Interp = struct {
     /// Populated by the embedder (the test harness pre-registers every
     /// helper `.pyc`; the CLI pre-registers siblings of the entry
     /// `.pyc`). Looked up on IMPORT_NAME after builtins.
-    module_codes: std.StringHashMapUnmanaged(*Code) = .empty,
+    module_codes: std.StringHashMapUnmanaged(ModuleCode) = .empty,
     /// Already-executed user modules, keyed by name. First import runs
     /// the body; subsequent imports return the cached `*Module` so
     /// identity holds (e.g. `import x as a; import x as b; a is b`).
@@ -48,6 +48,8 @@ pub const Interp = struct {
     /// expose it directly off `type()` because that's all the
     /// fixtures probe.
     module_type: ?*@import("../object/class.zig").Class = null,
+
+    pub const ModuleCode = struct { code: *Code, is_package: bool };
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -160,34 +162,76 @@ pub const Interp = struct {
     }
 
     /// Register a pre-loaded `.pyc` so that `import name` finds it.
-    /// The body isn't run until something actually imports it; this
-    /// only stashes the code object.
-    pub fn registerModuleCode(self: *Interp, name: []const u8, code: *Code) !void {
-        try self.module_codes.put(self.allocator, name, code);
+    /// The body isn't run until something actually imports it.
+    /// `is_package` is true for `__init__.py` modules, which then host
+    /// submodule attributes.
+    pub fn registerModuleCode(
+        self: *Interp,
+        name: []const u8,
+        code: *Code,
+        is_package: bool,
+    ) !void {
+        try self.module_codes.put(self.allocator, name, .{ .code = code, .is_package = is_package });
     }
 
-    /// Drive a user module to first execution and cache it. Subsequent
-    /// imports of the same name return this cached `*Module`. Returns
-    /// null if the name isn't pre-registered; the caller decides how
-    /// to surface that (today: ImportError).
-    pub fn loadUserModule(self: *Interp, name: []const u8) !?*Module {
+    /// Load a single (non-dotted) module from its registered code,
+    /// caching the result. Returns null if not registered. Internal
+    /// helper for `loadModuleChain` — callers wanting dotted-name
+    /// resolution (the import opcodes) go through that instead.
+    fn loadOneModule(self: *Interp, name: []const u8) !?*Module {
         if (self.user_modules.get(name)) |m| return m;
-        const code = self.module_codes.get(name) orelse return null;
+        const reg = self.module_codes.get(name) orelse return null;
         const mod_globals = try Dict.init(self.allocator);
         const name_val = try Str.init(self.allocator, name);
         try mod_globals.setStr(self.allocator, "__name__", Value{ .str = name_val });
+        // CPython sets __package__ to the parent dotted name (or "" at
+        // top level). Packages set it to their own name. Relative
+        // imports inside the body read this back.
+        const dot = std.mem.lastIndexOfScalar(u8, name, '.');
+        const pkg: []const u8 = if (reg.is_package)
+            name
+        else if (dot) |d| name[0..d] else "";
+        const pkg_val = try Str.init(self.allocator, pkg);
+        try mod_globals.setStr(self.allocator, "__package__", Value{ .str = pkg_val });
         const m = try Module.init(self.allocator, name);
         m.attrs = mod_globals;
+        m.is_package = reg.is_package;
         // Insert before running the body so a circular re-import
         // returns the partially-populated module rather than looping.
         try self.user_modules.put(self.allocator, name, m);
-        const frame = try Frame.init(self.allocator, code, mod_globals, self.builtins, mod_globals);
+        const frame = try Frame.init(self.allocator, reg.code, mod_globals, self.builtins, mod_globals);
         defer frame.deinit(self.allocator);
         _ = dispatch.run(self, frame) catch |err| {
             _ = self.user_modules.remove(name);
             return err;
         };
         return m;
+    }
+
+    pub const Chain = struct { top: *Module, innermost: *Module };
+
+    /// Load every prefix of a dotted name, binding each leaf as an
+    /// attribute on its parent. Returns the outermost (`top`) and
+    /// innermost (`innermost`) modules — IMPORT_NAME picks one based
+    /// on whether the fromlist is empty.
+    pub fn loadModuleChain(self: *Interp, qname: []const u8) !?Chain {
+        var top: ?*Module = null;
+        var innermost: ?*Module = null;
+        var i: usize = 0;
+        while (true) {
+            const next = std.mem.indexOfScalarPos(u8, qname, i, '.');
+            const end = next orelse qname.len;
+            const sub = qname[0..end];
+            const m = (try self.loadOneModule(sub)) orelse return null;
+            if (top == null) top = m;
+            if (innermost) |parent| {
+                try parent.attrs.setStr(self.allocator, sub[i..end], Value{ .module = m });
+            }
+            innermost = m;
+            if (next == null) break;
+            i = next.? + 1;
+        }
+        return Chain{ .top = top.?, .innermost = innermost.? };
     }
 
     /// Hand back the builtin module of the given name (today: just
