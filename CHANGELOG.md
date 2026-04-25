@@ -9,6 +9,30 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-04-25
+
+### Added
+
+- `02_comparisons` fixture, lifted verbatim from goipy's testdata,
+  running byte-equal against CPython 3.14 stdout.
+- Comparison and identity helpers on `Value`: `order` for
+  `<`/`<=`/`>`/`>=`, `equals` for `==`/`!=`, and `identityEq` for
+  `is`/`is not`. Numeric/bool ordering coerces `bool` to `0`/`1`,
+  `str` orders lexicographically by bytes, mismatched non-orderable
+  types compare unequal rather than raising (matching Python's
+  `1 == "a"` -> `False`).
+- New opcodes: `COMPARE_OP`, `IS_OP`, `TO_BOOL`, `COPY`, `SWAP`,
+  `POP_JUMP_IF_FALSE`, `POP_JUMP_IF_TRUE`, `JUMP_FORWARD`. Together
+  these cover both straight-line compares and the chained-compare
+  desugaring (`a < b < c`) the 3.14 compiler emits.
+
+### Changed
+
+- `release` workflow no longer marks `v0.x.x` tags as prereleases.
+  The 0.x line tracks an evolving API, but the binaries themselves
+  are real releases. Existing `v0.0.1` and `v0.0.2` were retagged
+  as full releases via `gh release edit --prerelease=false`.
+
 ## [0.0.2] - 2026-04-25
 
 ### Added
@@ -67,6 +91,7 @@ changes.
 - CI workflow running `zig build`, `zig build test`, and one end-to-
   end `zig build run` of the hello fixture on every push and PR.
 
-[Unreleased]: https://github.com/tamnd/zag/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/tamnd/zag/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/tamnd/zag/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/tamnd/zag/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/tamnd/zag/releases/tag/v0.0.1
