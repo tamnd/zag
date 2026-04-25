@@ -2242,6 +2242,30 @@ fn multiply(interp: *Interp, a: Value, b: Value) !Value {
             return Value{ .tuple = out };
         }
     }
+    if (a == .bytes or b == .bytes) {
+        const src = if (a == .bytes) a.bytes.data else b.bytes.data;
+        const n_opt = if (a == .bytes) SeqOp.intFrom(b) else SeqOp.intFrom(a);
+        if (n_opt) |n| {
+            const rep: usize = if (n < 0) 0 else @intCast(n);
+            const buf = try interp.allocator.alloc(u8, src.len * rep);
+            var i: usize = 0;
+            while (i < rep) : (i += 1) @memcpy(buf[i * src.len .. (i + 1) * src.len], src);
+            const new_b = try @import("../object/bytes.zig").Bytes.fromOwnedSlice(interp.allocator, buf);
+            return Value{ .bytes = new_b };
+        }
+    }
+    if (a == .bytearray or b == .bytearray) {
+        const src = if (a == .bytearray) a.bytearray.data.items else b.bytearray.data.items;
+        const n_opt = if (a == .bytearray) SeqOp.intFrom(b) else SeqOp.intFrom(a);
+        if (n_opt) |n| {
+            const rep: usize = if (n < 0) 0 else @intCast(n);
+            const out = try @import("../object/bytearray.zig").Bytearray.init(interp.allocator);
+            try out.data.ensureTotalCapacity(interp.allocator, src.len * rep);
+            var i: usize = 0;
+            while (i < rep) : (i += 1) try out.data.appendSlice(interp.allocator, src);
+            return Value{ .bytearray = out };
+        }
+    }
     try interp.typeError("unsupported operand type(s) for *");
     return error.TypeError;
 }
