@@ -49,12 +49,41 @@ pub fn main(init: std.process.Init) !void {
     registerSiblings(&interp, run_alloc, io, args[1]) catch {};
 
     _ = interp.run(code) catch |err| {
+        if (err == error.PyException) {
+            if (interp.current_exc) |exc| {
+                if (isSystemExit(&interp, exc)) {
+                    try stdout.flush();
+                    try stderr.flush();
+                    std.process.exit(systemExitCode(exc));
+                }
+            }
+        }
         try stderr.print("zag: run error: {s}\n", .{@errorName(err)});
         try stderr.flush();
         std.process.exit(1);
     };
 
     try stdout.flush();
+}
+
+fn isSystemExit(interp: *zag.vm.interp.Interp, exc: zag.object.value.Value) bool {
+    if (exc != .instance) return false;
+    const cls_v = interp.builtins.getStr("SystemExit") orelse return false;
+    if (cls_v != .class) return false;
+    for (exc.instance.cls.mro) |c| if (c == cls_v.class) return true;
+    return false;
+}
+
+fn systemExitCode(exc: zag.object.value.Value) u8 {
+    const args_v = exc.instance.dict.getStr("args") orelse return 0;
+    if (args_v != .tuple or args_v.tuple.items.len == 0) return 0;
+    const a = args_v.tuple.items[0];
+    return switch (a) {
+        .small_int => |i| @intCast(@as(i64, i) & 0xff),
+        .boolean => |b| if (b) 1 else 0,
+        .none => 0,
+        else => 1,
+    };
 }
 
 /// Walk the directory containing `entry_path` and register every other

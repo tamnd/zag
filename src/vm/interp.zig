@@ -102,6 +102,7 @@ pub const Interp = struct {
     pprint_module: ?*Module = null,
     html_module: ?*Module = null,
     sys_module: ?*Module = null,
+    warnings_module: ?*Module = null,
     os_module: ?*Module = null,
     sys_stream_class: ?*@import("../object/class.zig").Class = null,
     traceback_class: ?*@import("../object/class.zig").Class = null,
@@ -571,6 +572,12 @@ pub const Interp = struct {
             if (self.sys_module) |m| return m;
             const m = sys_mod.build(self) catch return null;
             self.sys_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "warnings")) {
+            if (self.warnings_module) |m| return m;
+            const m = @import("warnings_mod.zig").build(self) catch return null;
+            self.warnings_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "os")) {
