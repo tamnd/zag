@@ -9,6 +9,21 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.87] - 2026-04-26
+
+### Added
+
+- `87_str_methods` fixture, byte-equal.
+- Full coverage of `str` methods: case ops (lower/title/swapcase/
+  casefold/capitalize), predicates (isalpha/isdigit/isalnum/isspace/
+  isupper/islower/istitle/isidentifier/isprintable/isascii/isdecimal/
+  isnumeric), splits (rsplit, splitlines, partition, rpartition; split
+  honors maxsplit; replace honors count), find/rfind/index/rindex,
+  removeprefix/removesuffix, padding (center, ljust, rjust, zfill,
+  expandtabs), translate, encode, format.
+- `startswith`/`endswith` accept a tuple of candidates.
+- `str.maketrans` via attribute access on the `str` builtin.
+
 ## [0.0.86] - 2026-04-26
 
 ### Added
