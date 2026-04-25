@@ -9,6 +9,15 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.95] - 2026-04-26
+
+### Added
+
+- `95_threadsafe_dict` fixture, byte-equal. The Python 3.13+
+  thread-safety dict operations (lock-free reads, locked writes,
+  copy/merge, fromkeys, pop-with-default, copy-before-iterate) all
+  already worked — the fixture locks them down.
+
 ## [0.0.94] - 2026-04-26
 
 ### Added
