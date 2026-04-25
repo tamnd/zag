@@ -24,6 +24,32 @@ pub fn print(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     return Value.none;
 }
 
+pub fn absBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.stderr.print(
+            "TypeError: abs() takes exactly one argument ({d} given)\n",
+            .{args.len},
+        );
+        try interp.stderr.flush();
+        return error.TypeError;
+    }
+    return switch (args[0]) {
+        .small_int => |i| Value{ .small_int = if (i < 0) -i else i },
+        .float => |f| Value{ .float = if (f < 0) -f else f },
+        .boolean => |b| Value{ .small_int = if (b) 1 else 0 },
+        else => |v| blk: {
+            try interp.stderr.print(
+                "TypeError: bad operand type for abs(): '{s}'\n",
+                .{v.typeName()},
+            );
+            try interp.stderr.flush();
+            break :blk error.TypeError;
+        },
+    };
+}
+
 pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("print", print);
+    try interp.registerBuiltin("abs", absBuiltin);
 }
