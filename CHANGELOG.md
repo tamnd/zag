@@ -9,6 +9,27 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.70] - 2026-04-25
+
+### Added
+
+- `69_struct_csv_urlparse_zlib` fixture, byte-equal against
+  CPython 3.14.
+- `struct` module: `calcsize`, `pack`, `unpack`, `unpack_from`
+  with the common format codes (`bBhHiIlLqQfd?sxc`) and the
+  endian prefixes `<`, `>`, `!`, `=`, `@`.
+- `csv` module: `reader`, `writer`, `DictReader`, `DictWriter`,
+  the `excel` and `excel-tab` dialects, and the `QUOTE_*`
+  constants.
+- `urllib.parse` module: `urlparse` / `urlunparse` / `urljoin`
+  / `quote` / `unquote` / `quote_plus` / `unquote_plus` /
+  `urlencode` / `parse_qs` / `parse_qsl`. The `ParseResult`
+  exposes named attributes plus tuple indexing.
+- `zlib` module: `compress` / `decompress` (round-trip
+  consistent with itself, not bit-compatible with real zlib),
+  `crc32` / `adler32` (real CPython values), and the standard
+  level constants.
+
 ## [0.0.69] - 2026-04-25
 
 ### Added
