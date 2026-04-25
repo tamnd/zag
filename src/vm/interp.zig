@@ -68,6 +68,9 @@ pub const Interp = struct {
     re_module: ?*Module = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
+    io_stringio_class: ?*@import("../object/class.zig").Class = null,
+    io_bytesio_class: ?*@import("../object/class.zig").Class = null,
+    hashlib_hash_class: ?*@import("../object/class.zig").Class = null,
     primitive_classes: std.StringHashMapUnmanaged(*@import("../object/class.zig").Class) = .empty,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every

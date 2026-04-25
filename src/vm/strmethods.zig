@@ -159,6 +159,22 @@ fn endsWithImpl(_: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .boolean = std.mem.endsWith(u8, self, suffix) };
 }
 
+fn countImpl(_: *anyopaque, args: []const Value) anyerror!Value {
+    const self = args[0].str.bytes;
+    const sub = args[1].str.bytes;
+    if (sub.len == 0) return Value{ .small_int = @intCast(self.len + 1) };
+    var n: i64 = 0;
+    var i: usize = 0;
+    while (i + sub.len <= self.len) {
+        if (std.mem.eql(u8, self[i .. i + sub.len], sub)) {
+            n += 1;
+            i += sub.len;
+        } else i += 1;
+    }
+    return Value{ .small_int = n };
+}
+
+var count_entry: BuiltinFn = .{ .name = "count", .func = countImpl };
 var upper_entry: BuiltinFn = .{ .name = "upper", .func = upperImpl };
 var replace_entry: BuiltinFn = .{ .name = "replace", .func = replaceImpl };
 var split_entry: BuiltinFn = .{ .name = "split", .func = splitImpl };
@@ -173,5 +189,6 @@ pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "join")) return &join_entry;
     if (std.mem.eql(u8, name, "startswith")) return &startswith_entry;
     if (std.mem.eql(u8, name, "endswith")) return &endswith_entry;
+    if (std.mem.eql(u8, name, "count")) return &count_entry;
     return null;
 }
