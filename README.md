@@ -28,14 +28,9 @@ Trade you lose: peak speed and the C extension ecosystem. Trade you keep: one bi
 
 zag is the Zig sibling of [goipy](https://github.com/tamnd/goipy), which does the same thing in Go. The two projects share test fixtures and disagree only on host language.
 
-## Status
-
-Early. Landed so far:
-
-- **M1** -- load a 3.14 `.pyc`, run a module that calls `print(...)` with string and int args.
-- **M2** -- nested calls (`print(abs(-7))`), float repr matching CPython's trailing-`.0` rule, `abs()` builtin. All the constant-folded arithmetic the CPython compiler emits for integer and float literals.
-
-Later milestones: real `BINARY_OP` dispatch (for arithmetic with variables), comparisons, control flow, functions, collections, classes, exceptions, generators, stdlib.
+Per-release notes live in [CHANGELOG.md](CHANGELOG.md). Prebuilt
+binaries for Linux (x86_64/aarch64 musl), macOS (x86_64/aarch64), and
+Windows (x86_64) are attached to each GitHub release.
 
 ## Requirements
 
