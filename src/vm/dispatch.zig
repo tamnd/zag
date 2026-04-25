@@ -27,6 +27,7 @@ const Frame = @import("frame.zig").Frame;
 const Interp = @import("interp.zig").Interp;
 const strmethods = @import("strmethods.zig");
 const listmethods = @import("listmethods.zig");
+const setmethods = @import("setmethods.zig");
 const dictmethods = @import("dictmethods.zig");
 const exc = @import("exc.zig");
 const builtins_mod = @import("builtins.zig");
@@ -2118,6 +2119,20 @@ fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
         2 => a.equals(b),
         3 => !a.equals(b),
         else => blk: {
+            // Set / frozenset ordering is the partial subset order,
+            // not lexicographic. `a < b` is "proper subset"; `a <= b`
+            // is "subset". Frozen flag is irrelevant here.
+            if (a == .set and b == .set) {
+                const sub = setIsSubset(a.set, b.set);
+                const sup = setIsSubset(b.set, a.set);
+                break :blk switch (kind) {
+                    0 => sub and !sup,
+                    1 => sub,
+                    4 => sup and !sub,
+                    5 => sup,
+                    else => unreachable,
+                };
+            }
             const o = a.order(b) orelse {
                 try interp.typeError("'<' not supported between these types");
                 return error.TypeError;
@@ -2131,6 +2146,16 @@ fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
             };
         },
     };
+}
+
+fn setIsSubset(a: anytype, b: anytype) bool {
+    outer: for (a.items.items) |x| {
+        for (b.items.items) |y| {
+            if (x.equals(y)) continue :outer;
+        }
+        return false;
+    }
+    return true;
 }
 
 /// CPython treats a small set of types specially in `case Cls(x)`:
@@ -2287,6 +2312,7 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             .str => strmethods.lookup(name),
             .list => listmethods.lookup(name),
             .dict => dictmethods.lookup(name),
+            .set => setmethods.lookup(name),
             else => null,
         };
         if (method) |m| {

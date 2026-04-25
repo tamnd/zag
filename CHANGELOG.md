@@ -9,6 +9,28 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.47] - 2026-04-25
+
+### Added
+
+- `46_frozenset_stress` fixture, byte-equal against CPython 3.14.
+  Exercises subset / superset comparison operators (`<` `<=` `>`
+  `>=`), the eight set-algebra methods (`issubset`, `issuperset`,
+  `isdisjoint`, `union`, `intersection`, `difference`,
+  `symmetric_difference`, `copy`), order-independent hashing of
+  frozensets, mixed `set | frozenset` (left flavor wins), and
+  nested-frozenset dedup inside a `set`.
+- `setmethods` module backing the eight methods above. Each one
+  accepts arbitrary iterables (`a.union([5, 6], (7,))`) by routing
+  through `materialize`, and the algebra methods preserve the
+  caller's `frozen` flag in the result. `frozenset.copy()` returns
+  `self` (immutability lets identity stand in for the copy);
+  `set.copy()` returns a fresh set.
+- Set / frozenset partial-order comparisons in `compareOp`. `<` is
+  proper subset, `<=` is subset; the frozen flag is irrelevant, so
+  `{1} <= frozenset([1, 2])` and `frozenset([1]) <= {1, 2}` both
+  work.
+
 ## [0.0.46] - 2026-04-25
 
 ### Added
