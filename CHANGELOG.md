@@ -9,6 +9,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.27] - 2026-04-25
+
+### Added
+
+- `26_descriptors_stress` fixture, lifted from goipy's testdata,
+  byte-equal against CPython 3.14. Property / classmethod /
+  staticmethod across a base class and an inheriting subclass
+  chaining through `cls(...)` and `super().property`.
+- `type(obj)` builtin (single-arg form).
+
+### Fixed
+
+- `LOAD_SUPER_ATTR` now binds descriptors against the super-side
+  receiver, so `super().some_property` actually invokes the
+  getter instead of pushing the descriptor object.
+
 ## [0.0.26] - 2026-04-25
 
 ### Added
