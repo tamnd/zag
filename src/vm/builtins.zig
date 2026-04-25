@@ -73,6 +73,11 @@ pub fn absBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         .float => |f| Value{ .float = if (f < 0) -f else f },
         .complex_num => |c| Value{ .float = @sqrt(c.re * c.re + c.im * c.im) },
         .boolean => |b| Value{ .small_int = if (b) 1 else 0 },
+        .instance => blk: {
+            if (try @import("dunder.zig").call(interp, args[0], "__abs__", &.{})) |r| break :blk r;
+            try interp.typeError("bad operand type for abs()");
+            break :blk error.TypeError;
+        },
         else => |v| blk: {
             try interp.stderr.print(
                 "TypeError: bad operand type for abs(): '{s}'\n",
@@ -637,6 +642,12 @@ pub fn intBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
             };
             break :blk Value{ .small_int = v };
         },
+        .instance => blk: {
+            if (try @import("dunder.zig").call(interp, args[0], "__int__", &.{})) |r| break :blk r;
+            if (try @import("dunder.zig").call(interp, args[0], "__index__", &.{})) |r| break :blk r;
+            try interp.typeError("int() argument must be str, bytes, or number");
+            break :blk error.TypeError;
+        },
         else => {
             try interp.typeError("int() argument must be str, bytes, or number");
             return error.TypeError;
@@ -658,6 +669,11 @@ pub fn floatBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
                 break :blk error.PyException;
             };
             break :blk Value{ .float = v };
+        },
+        .instance => blk: {
+            if (try @import("dunder.zig").call(interp, args[0], "__float__", &.{})) |r| break :blk r;
+            try interp.typeError("float() argument must be str or number");
+            break :blk error.TypeError;
         },
         else => {
             try interp.typeError("float() argument must be str or number");
@@ -902,6 +918,16 @@ pub fn roundBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
             if (ndigits == null) return Value{ .small_int = @intFromFloat(r) };
             return Value{ .float = r };
         },
+        .instance => {
+            const dunder = @import("dunder.zig");
+            if (args.len == 2) {
+                if (try dunder.call(interp, args[0], "__round__", &.{args[1]})) |r| return r;
+            } else {
+                if (try dunder.call(interp, args[0], "__round__", &.{})) |r| return r;
+            }
+            try interp.typeError("round() argument must be a number");
+            return error.TypeError;
+        },
         else => {
             try interp.typeError("round() argument must be a number");
             return error.TypeError;
@@ -1131,6 +1157,34 @@ fn modInverse(a: i128, m: i128) ?i128 {
     return inv;
 }
 
+pub fn divmodBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2) {
+        try interp.typeError("divmod() takes exactly 2 arguments");
+        return error.TypeError;
+    }
+    if (args[0] == .instance or args[1] == .instance) {
+        const dunder = @import("dunder.zig");
+        if (try dunder.binop(interp, args[0], args[1], "__divmod__", "__rdivmod__")) |r| return r;
+    }
+    if (args[0] == .small_int and args[1] == .small_int) {
+        const a = args[0].small_int;
+        const b = args[1].small_int;
+        if (b == 0) {
+            try interp.raisePy("ZeroDivisionError", "integer division or modulo by zero");
+            return error.PyException;
+        }
+        const q = @divFloor(a, b);
+        const r = @mod(a, b);
+        const t = try @import("../object/tuple.zig").Tuple.init(interp.allocator, 2);
+        t.items[0] = Value{ .small_int = q };
+        t.items[1] = Value{ .small_int = r };
+        return Value{ .tuple = t };
+    }
+    try interp.typeError("divmod() unsupported operand types");
+    return error.TypeError;
+}
+
 pub fn formatBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len < 1 or args.len > 2) {
@@ -1144,6 +1198,13 @@ pub fn formatBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Va
             return error.TypeError;
         },
     } else "";
+    if (args[0] == .instance) {
+        const spec_v = if (args.len == 2) args[1] else blk: {
+            const empty = try Str.init(interp.allocator, "");
+            break :blk Value{ .str = empty };
+        };
+        if (try @import("dunder.zig").call(interp, args[0], "__format__", &.{spec_v})) |r| return r;
+    }
     const buf = try format_mod.format(interp.allocator, args[0], spec_str);
     const s = try Str.fromOwnedSlice(interp.allocator, buf);
     return Value{ .str = s };
@@ -1500,6 +1561,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("iter", dispatch.iterBuiltin);
     try interp.registerBuiltin("pow", powBuiltin);
     try interp.registerBuiltin("format", formatBuiltin);
+    try interp.registerBuiltin("divmod", divmodBuiltin);
     try interp.registerBuiltin("ascii", asciiBuiltin);
     try interp.registerBuiltin("slice", sliceBuiltin);
     try interp.registerBuiltin("hasattr", hasattrBuiltin);

@@ -484,6 +484,31 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .UNARY_INVERT => {
+            const v = frame.pop();
+            const r: Value = switch (v) {
+                .small_int => |i| Value{ .small_int = ~i },
+                .boolean => |b| Value{ .small_int = ~@as(i64, @intFromBool(b)) },
+                .instance => blk: {
+                    if (try @import("dunder.zig").call(interp, v, "__invert__", &.{})) |x| break :blk x;
+                    try interp.typeError("bad operand type for unary ~");
+                    return error.TypeError;
+                },
+                else => {
+                    try interp.typeError("bad operand type for unary ~");
+                    return error.TypeError;
+                },
+            };
+            frame.push(r);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .UNARY_NOT => {
+            const v = frame.pop();
+            frame.push(Value{ .boolean = !v.isTruthy() });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .TO_BOOL => {
             const v = frame.pop();
             frame.push(Value{ .boolean = v.isTruthy() });
@@ -1298,6 +1323,24 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const which = oparg(frame, ext_arg);
             switch (which) {
                 3 => {}, // INTRINSIC_STOPITERATION_ERROR — pass-through.
+                5 => {
+                    // INTRINSIC_UNARY_POSITIVE.
+                    const v = frame.pop();
+                    const r: Value = switch (v) {
+                        .small_int, .float, .complex_num => v,
+                        .boolean => |b| Value{ .small_int = @intFromBool(b) },
+                        .instance => blk: {
+                            if (try @import("dunder.zig").call(interp, v, "__pos__", &.{})) |x| break :blk x;
+                            try interp.typeError("bad operand type for unary +");
+                            return error.TypeError;
+                        },
+                        else => {
+                            try interp.typeError("bad operand type for unary +");
+                            return error.TypeError;
+                        },
+                    };
+                    frame.push(r);
+                },
                 6 => {
                     // INTRINSIC_LIST_TO_TUPLE: TOS list -> tuple in place.
                     const list_val = frame.pop();
@@ -1485,6 +1528,12 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 try interp.typeError("FORMAT_WITH_SPEC: spec must be str");
                 return error.TypeError;
             }
+            if (v == .instance) {
+                if (try @import("dunder.zig").call(interp, v, "__format__", &.{spec_v})) |r| {
+                    frame.push(r);
+                    continue :sw advance(frame, &ext_arg, 0);
+                }
+            }
             const out = format_mod.format(interp.allocator, v, spec_v.str.bytes) catch |e| {
                 if (e == error.TypeError) {
                     try interp.typeError("unsupported format spec");
@@ -1584,16 +1633,38 @@ fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
     // User instances override arithmetic via dunders. Fall through to
     // the built-in dispatch only if neither operand defines the op.
     if (a == .instance or b == .instance) {
-        const pair: ?struct { op: []const u8, rop: []const u8 } = switch (arg) {
-            0, 13 => .{ .op = "__add__", .rop = "__radd__" },
+        // In-place ops (13-25) try `__i*__` first, then fall through
+        // to the forward `__*__` if missing. Subscript (26) is a
+        // single-sided lookup; everything else uses the standard
+        // forward/reflected pair.
+        const Pair = struct { op: []const u8, rop: []const u8, iop: []const u8 = "" };
+        const pair: ?Pair = switch (arg) {
+            0 => .{ .op = "__add__", .rop = "__radd__" },
             1 => .{ .op = "__and__", .rop = "__rand__" },
+            2 => .{ .op = "__floordiv__", .rop = "__rfloordiv__" },
+            3 => .{ .op = "__lshift__", .rop = "__rlshift__" },
+            4 => .{ .op = "__matmul__", .rop = "__rmatmul__" },
             5 => .{ .op = "__mul__", .rop = "__rmul__" },
             6 => .{ .op = "__mod__", .rop = "__rmod__" },
             7 => .{ .op = "__or__", .rop = "__ror__" },
             8 => .{ .op = "__pow__", .rop = "__rpow__" },
+            9 => .{ .op = "__rshift__", .rop = "__rrshift__" },
             10 => .{ .op = "__sub__", .rop = "__rsub__" },
             11 => .{ .op = "__truediv__", .rop = "__rtruediv__" },
             12 => .{ .op = "__xor__", .rop = "__rxor__" },
+            13 => .{ .op = "__add__", .rop = "__radd__", .iop = "__iadd__" },
+            14 => .{ .op = "__and__", .rop = "__rand__", .iop = "__iand__" },
+            15 => .{ .op = "__floordiv__", .rop = "__rfloordiv__", .iop = "__ifloordiv__" },
+            16 => .{ .op = "__lshift__", .rop = "__rlshift__", .iop = "__ilshift__" },
+            17 => .{ .op = "__matmul__", .rop = "__rmatmul__", .iop = "__imatmul__" },
+            18 => .{ .op = "__mul__", .rop = "__rmul__", .iop = "__imul__" },
+            19 => .{ .op = "__mod__", .rop = "__rmod__", .iop = "__imod__" },
+            20 => .{ .op = "__or__", .rop = "__ror__", .iop = "__ior__" },
+            21 => .{ .op = "__pow__", .rop = "__rpow__", .iop = "__ipow__" },
+            22 => .{ .op = "__rshift__", .rop = "__rrshift__", .iop = "__irshift__" },
+            23 => .{ .op = "__sub__", .rop = "__rsub__", .iop = "__isub__" },
+            24 => .{ .op = "__truediv__", .rop = "__rtruediv__", .iop = "__itruediv__" },
+            25 => .{ .op = "__xor__", .rop = "__rxor__", .iop = "__ixor__" },
             26 => .{ .op = "__getitem__", .rop = "" },
             else => null,
         };
@@ -1602,19 +1673,29 @@ fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
                 if (a == .instance) {
                     if (try @import("dunder.zig").call(interp, a, p.op, &.{b})) |r| return r;
                 }
-            } else if (try @import("dunder.zig").binop(interp, a, b, p.op, p.rop)) |r| return r;
+            } else {
+                if (p.iop.len > 0 and a == .instance) {
+                    if (try @import("dunder.zig").call(interp, a, p.iop, &.{b})) |r| {
+                        if (r != .not_implemented) return r;
+                    }
+                }
+                if (try @import("dunder.zig").binop(interp, a, b, p.op, p.rop)) |r| return r;
+            }
         }
     }
     return switch (arg) {
         0 => add(interp, a, b),
-        1 => bitwiseAnd(interp, a, b),
-        5 => multiply(interp, a, b),
-        6 => remainder(interp, a, b),
-        7 => bitwiseOr(interp, a, b),
-        8 => powerOp(interp, a, b),
-        10 => subtract(interp, a, b),
-        11 => trueDivide(interp, a, b),
-        12 => bitwiseXor(interp, a, b),
+        1, 14 => bitwiseAnd(interp, a, b),
+        2, 15 => floorDivide(interp, a, b),
+        3, 16 => leftShift(interp, a, b),
+        5, 18 => multiply(interp, a, b),
+        6, 19 => remainder(interp, a, b),
+        7, 20 => bitwiseOr(interp, a, b),
+        8, 21 => powerOp(interp, a, b),
+        9, 22 => rightShift(interp, a, b),
+        10, 23 => subtract(interp, a, b),
+        11, 24 => trueDivide(interp, a, b),
+        12, 25 => bitwiseXor(interp, a, b),
         13 => inplaceAdd(interp, a, b),
         26 => subscript(interp, a, b),
         else => blk: {
@@ -1731,6 +1812,9 @@ fn newSetLike(interp: *Interp, frozen: bool) !*Set {
 }
 
 fn bitwiseOr(interp: *Interp, a: Value, b: Value) !Value {
+    if (asIntLike(a)) |ai| if (asIntLike(b)) |bi| {
+        return Value{ .small_int = ai | bi };
+    };
     if (a == .set and b == .set) {
         const out = try newSetLike(interp, a.set.frozen);
         for (a.set.items.items) |x| try out.add(interp.allocator, x);
@@ -1742,6 +1826,9 @@ fn bitwiseOr(interp: *Interp, a: Value, b: Value) !Value {
 }
 
 fn bitwiseAnd(interp: *Interp, a: Value, b: Value) !Value {
+    if (asIntLike(a)) |ai| if (asIntLike(b)) |bi| {
+        return Value{ .small_int = ai & bi };
+    };
     if (a == .set and b == .set) {
         const out = try newSetLike(interp, a.set.frozen);
         for (a.set.items.items) |x| {
@@ -1756,7 +1843,65 @@ fn bitwiseAnd(interp: *Interp, a: Value, b: Value) !Value {
     return error.TypeError;
 }
 
+fn asIntLike(v: Value) ?i64 {
+    return switch (v) {
+        .small_int => |i| i,
+        .boolean => |b| @intFromBool(b),
+        else => null,
+    };
+}
+
+fn floorDivide(interp: *Interp, a: Value, b: Value) !Value {
+    if (asIntLike(a)) |ai| if (asIntLike(b)) |bi| {
+        if (bi == 0) {
+            try interp.raisePy("ZeroDivisionError", "integer division or modulo by zero");
+            return error.PyException;
+        }
+        return Value{ .small_int = @divFloor(ai, bi) };
+    };
+    if ((a == .float or b == .float) and asFloat(a) != null and asFloat(b) != null) {
+        const af = asFloat(a).?;
+        const bf = asFloat(b).?;
+        if (bf == 0.0) {
+            try interp.raisePy("ZeroDivisionError", "float floor division by zero");
+            return error.PyException;
+        }
+        return Value{ .float = @floor(af / bf) };
+    }
+    try interp.typeError("unsupported operand type(s) for //");
+    return error.TypeError;
+}
+
+fn leftShift(interp: *Interp, a: Value, b: Value) !Value {
+    if (asIntLike(a)) |ai| if (asIntLike(b)) |bi| {
+        if (bi < 0) {
+            try interp.raisePy("ValueError", "negative shift count");
+            return error.PyException;
+        }
+        const sh: u6 = @intCast(@min(bi, 63));
+        return Value{ .small_int = ai << sh };
+    };
+    try interp.typeError("unsupported operand type(s) for <<");
+    return error.TypeError;
+}
+
+fn rightShift(interp: *Interp, a: Value, b: Value) !Value {
+    if (asIntLike(a)) |ai| if (asIntLike(b)) |bi| {
+        if (bi < 0) {
+            try interp.raisePy("ValueError", "negative shift count");
+            return error.PyException;
+        }
+        const sh: u6 = @intCast(@min(bi, 63));
+        return Value{ .small_int = ai >> sh };
+    };
+    try interp.typeError("unsupported operand type(s) for >>");
+    return error.TypeError;
+}
+
 fn bitwiseXor(interp: *Interp, a: Value, b: Value) !Value {
+    if (asIntLike(a)) |ai| if (asIntLike(b)) |bi| {
+        return Value{ .small_int = ai ^ bi };
+    };
     if (a == .set and b == .set) {
         const out = try newSetLike(interp, a.set.frozen);
         for (a.set.items.items) |x| {
