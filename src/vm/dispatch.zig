@@ -754,6 +754,44 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .LOAD_SUPER_ATTR => {
+            // Stack: [..., global_super, class, self] -> [..., attr, self_or_null]
+            // arg encodes name_idx<<2 | zero_arg<<1 | method_form.
+            const arg = oparg(frame, ext_arg);
+            const name_idx = arg >> 2;
+            const is_method = (arg & 1) != 0;
+            const name = frame.code.names[name_idx];
+            const self_val = frame.pop();
+            const cls_val = frame.pop();
+            _ = frame.pop(); // global_super, unused
+            if (cls_val != .class) {
+                try interp.typeError("super: __class__ is not a class");
+                return error.TypeError;
+            }
+            const mro = cls_val.class.mro;
+            var found: ?Value = null;
+            var i: usize = 1;
+            while (i < mro.len) : (i += 1) {
+                if (mro[i].dict.getStr(name)) |v| {
+                    found = v;
+                    break;
+                }
+            }
+            if (found) |v| {
+                if (is_method and (v == .function or v == .builtin_fn)) {
+                    frame.push(v);
+                    frame.push(self_val);
+                } else if (is_method) {
+                    frame.push(v);
+                    frame.push(Value.null_sentinel);
+                } else frame.push(v);
+            } else {
+                try interp.attributeError("super", name);
+                return error.AttributeError;
+            }
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.LOAD_SUPER_ATTR)]);
+        },
+
         .WITH_EXCEPT_START => {
             // Stack: [..., exit_func, exit_self, lasti, prev_exc, exc]
             // Calls exit_func(exit_self, type(exc), exc, None) and
@@ -1380,6 +1418,12 @@ pub fn buildClass(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
     _ = try callPyFunction(interp, body_fn, &.{}, &.{}, &.{}, ns);
 
     const cls = try Class.init(interp.allocator, name, bases_buf[0..n_bases], ns);
+    // The class body's `STORE_NAME __classcell__` left the (still-empty)
+    // cell in the namespace -- methods close over it for `super()` /
+    // `__class__`. Populate it now so LOAD_DEREF returns the real class.
+    if (ns.getStr("__classcell__")) |cell_val| {
+        if (cell_val == .cell) cell_val.cell.value = Value{ .class = cls };
+    }
     return Value{ .class = cls };
 }
 

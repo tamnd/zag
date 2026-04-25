@@ -55,6 +55,17 @@ pub fn absBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
     };
 }
 
+/// Stub for the `super` global. Zero-arg `super()` is intercepted by
+/// `LOAD_SUPER_ATTR` -- the bytecode pushes this value and pops it
+/// without ever calling it. Calling `super(...)` directly is out of
+/// scope for now.
+pub fn superBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    _ = args;
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    try interp.typeError("super() proxy objects not implemented");
+    return error.TypeError;
+}
+
 pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len != 1) {
@@ -467,6 +478,7 @@ pub fn install(interp: *Interp) !void {
     const dispatch = @import("dispatch.zig");
     try interp.registerBuiltin("__build_class__", dispatch.buildClass);
     try interp.registerBuiltin("isinstance", dispatch.isInstanceBuiltin);
+    try interp.registerBuiltin("super", superBuiltin);
     try installExceptions(interp);
 }
 

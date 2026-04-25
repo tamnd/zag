@@ -9,6 +9,26 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.13] - 2026-04-25
+
+### Added
+
+- `12_super` fixture, lifted from goipy's testdata, running byte-equal
+  against CPython 3.14. Three classes (A, B(A), C(B)) with overrides
+  that chain through `super().greet()` and `super().kind()`.
+- `LOAD_SUPER_ATTR`. Pops `(global_super, class, self)`, walks
+  `class.mro[1..]` for the named attribute, and pushes
+  `(method, self)` in method form (same convention as `LOAD_ATTR`).
+  Only the zero-arg `super()` shape is in scope; the bytecode itself
+  builds the three-arg stack.
+- `__classcell__` cell-fill in `__build_class__`. After the body runs,
+  the still-empty cell sitting in the namespace dict gets pointed at
+  the freshly built class, so each method's `LOAD_DEREF __class__`
+  closure returns the right class for `super()`.
+- `super` registered as a builtin so `LOAD_GLOBAL super` resolves.
+  Calling it directly raises TypeError -- proxy objects with their
+  own `__getattr__` semantics are out of scope.
+
 ## [0.0.12] - 2026-04-25
 
 ### Added
