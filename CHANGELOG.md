@@ -9,6 +9,44 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.58] - 2026-04-25
+
+### Added
+
+- `57_descriptors` fixture, byte-equal against CPython 3.14.
+  Covers data and non-data descriptors with `__get__` /
+  `__set__` / `__delete__`, `__set_name__` driven from class
+  body finalization, the data-vs-non-data precedence rules
+  against the instance dict, `Cls[item]` routed through
+  `__class_getitem__`, and `__init_subclass__` notified on
+  every subclass.
+- `DELETE_ATTR` opcode. For instances, calls `__delete__`
+  on a class-level descriptor when present, otherwise removes
+  the entry from the instance dict.
+- `dict.pop(key)` and `dict.pop(key, default)`.
+
+### Changed
+
+- `LOAD_ATTR` / `STORE_ATTR` honor the descriptor protocol
+  for user-defined classes: a class-level attribute that
+  defines `__set__` (data descriptor) wins over the instance
+  dict on read, and triggers `__set__` instead of writing to
+  the instance dict on write. A descriptor with only `__get__`
+  (non-data) is consulted only after the instance dict.
+- `obj.__dict__` returns the actual instance dict so callers
+  can do `obj.__dict__[k] = v`, `obj.__dict__.get(...)`, and
+  `obj.__dict__.pop(...)`.
+- `__build_class__` walks the new namespace and calls
+  `__set_name__(cls, name)` on every attribute that defines
+  it, then walks the parent MRO and dispatches the new class
+  through the first `__init_subclass__` hook it finds.
+- `Cls[item]` now dispatches through `__class_getitem__` when
+  the class defines it, matching CPython's PEP 560 generic
+  syntax.
+- `builtin_fn.__name__` returns the registered name, so
+  `int.__name__` and friends produce `"int"` instead of
+  raising `AttributeError`.
+
 ## [0.0.57] - 2026-04-25
 
 ### Added

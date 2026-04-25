@@ -73,15 +73,47 @@ pub fn getImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     return if (args.len == 3) args[2] else Value.none;
 }
 
+/// `dict.pop(key)` removes and returns the value, raising `KeyError`
+/// if missing. `dict.pop(key, default)` returns the default instead
+/// of raising.
+pub fn popImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 2 or args.len > 3 or args[0] != .dict) {
+        try interp.typeError("dict.pop() takes 1 or 2 arguments");
+        return error.TypeError;
+    }
+    const d = args[0].dict;
+    for (d.pairs.items, 0..) |p, i| {
+        if (p.key.equals(args[1])) {
+            const v = p.value;
+            _ = d.pairs.orderedRemove(i);
+            if (p.key == .str) {
+                for (d.keys.items, 0..) |k, j| {
+                    if (std.mem.eql(u8, k, p.key.str.bytes)) {
+                        _ = d.keys.orderedRemove(j);
+                        break;
+                    }
+                }
+            }
+            return v;
+        }
+    }
+    if (args.len == 3) return args[2];
+    try interp.raisePy("KeyError", "key not found");
+    return error.PyException;
+}
+
 var items_entry = BuiltinFn{ .name = "items", .func = itemsImpl };
 var keys_entry = BuiltinFn{ .name = "keys", .func = keysImpl };
 var values_entry = BuiltinFn{ .name = "values", .func = valuesImpl };
 var get_entry = BuiltinFn{ .name = "get", .func = getImpl };
+var pop_entry = BuiltinFn{ .name = "pop", .func = popImpl };
 
 pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "items")) return &items_entry;
     if (std.mem.eql(u8, name, "keys")) return &keys_entry;
     if (std.mem.eql(u8, name, "values")) return &values_entry;
     if (std.mem.eql(u8, name, "get")) return &get_entry;
+    if (std.mem.eql(u8, name, "pop")) return &pop_entry;
     return null;
 }
