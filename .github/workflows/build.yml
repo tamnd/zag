@@ -1,0 +1,53 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  ZIG_VERSION: 0.16.0-dev.2984+cb7d2b056
+
+jobs:
+  cross:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-musl
+            bin: zag
+          - target: aarch64-linux-musl
+            bin: zag
+          - target: x86_64-macos
+            bin: zag
+          - target: aarch64-macos
+            bin: zag
+          - target: x86_64-windows-gnu
+            bin: zag.exe
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: zig build -Dtarget=${{ matrix.target }}
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast
+
+      - name: Verify binary exists
+        run: ls -la zig-out/bin/${{ matrix.bin }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zag-${{ matrix.target }}
+          path: zig-out/bin/${{ matrix.bin }}
+          if-no-files-found: error
+          retention-days: 14
