@@ -104,6 +104,7 @@ pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
     return switch (args[0]) {
         .str => |s| Value{ .small_int = @intCast(s.len()) },
         .bytes => |b| Value{ .small_int = @intCast(b.data.len) },
+        .bytearray => |b| Value{ .small_int = @intCast(b.data.items.len) },
         .tuple => |t| Value{ .small_int = @intCast(t.items.len) },
         .list => |l| Value{ .small_int = @intCast(l.items.items.len) },
         .dict => |d| Value{ .small_int = @intCast(d.count()) },
@@ -172,6 +173,7 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
             try out.append(a, Value{ .str = piece });
         },
         .bytes => |b| for (b.data) |x| try out.append(a, Value{ .small_int = @intCast(x) }),
+        .bytearray => |b| for (b.data.items) |x| try out.append(a, Value{ .small_int = @intCast(x) }),
         .dict => |d| for (d.keys.items) |k| {
             const piece = try Str.init(a, k);
             try out.append(a, Value{ .str = piece });
@@ -616,6 +618,18 @@ pub fn typeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
             interp.complex_type = c;
             break :blk Value{ .class = c };
         },
+        .bytearray => blk: {
+            if (interp.bytearray_type) |c| break :blk Value{ .class = c };
+            const c = try Class.init(interp.allocator, "bytearray", &.{}, try Dict.init(interp.allocator));
+            interp.bytearray_type = c;
+            break :blk Value{ .class = c };
+        },
+        .bytes => blk: {
+            if (interp.bytes_type) |c| break :blk Value{ .class = c };
+            const c = try Class.init(interp.allocator, "bytes", &.{}, try Dict.init(interp.allocator));
+            interp.bytes_type = c;
+            break :blk Value{ .class = c };
+        },
         .set => |s| blk: {
             if (s.frozen) {
                 if (interp.frozenset_type) |c| break :blk Value{ .class = c };
@@ -656,6 +670,54 @@ pub fn bytesBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
     }
     const out = try Bytes.fromOwnedSlice(interp.allocator, buf);
     return Value{ .bytes = out };
+}
+
+pub fn bytearrayBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const Bytearray = @import("../object/bytearray.zig").Bytearray;
+    if (args.len == 0) {
+        const out = try Bytearray.init(interp.allocator);
+        return Value{ .bytearray = out };
+    }
+    switch (args[0]) {
+        // bytearray(int) -> n zero bytes.
+        .small_int => |n| {
+            if (n < 0) {
+                try interp.raisePy("ValueError", "negative count");
+                return error.PyException;
+            }
+            const out = try Bytearray.zeroes(interp.allocator, @intCast(n));
+            return Value{ .bytearray = out };
+        },
+        .bytes => |b| {
+            const out = try Bytearray.fromSlice(interp.allocator, b.data);
+            return Value{ .bytearray = out };
+        },
+        .bytearray => |b| {
+            const out = try Bytearray.fromSlice(interp.allocator, b.data.items);
+            return Value{ .bytearray = out };
+        },
+        else => {
+            const list = try materialize(interp, args[0]);
+            const out = try Bytearray.init(interp.allocator);
+            for (list.items.items) |v| {
+                const i: i64 = switch (v) {
+                    .small_int => |x| x,
+                    .boolean => |x| @intFromBool(x),
+                    else => {
+                        try interp.typeError("bytearray() argument must be iterable of ints");
+                        return error.TypeError;
+                    },
+                };
+                if (i < 0 or i > 255) {
+                    try interp.raisePy("ValueError", "byte must be in range(0, 256)");
+                    return error.PyException;
+                }
+                try out.data.append(interp.allocator, @intCast(i));
+            }
+            return Value{ .bytearray = out };
+        },
+    }
 }
 
 pub fn boolBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
@@ -821,6 +883,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("round", roundBuiltin);
     try interp.registerBuiltin("str", strBuiltin);
     try interp.registerBuiltin("bytes", bytesBuiltin);
+    try interp.registerBuiltin("bytearray", bytearrayBuiltin);
     try interp.registerBuiltin("type", typeBuiltin);
     const dispatch = @import("dispatch.zig");
     try interp.registerBuiltin("__build_class__", dispatch.buildClass);

@@ -28,6 +28,7 @@ const Interp = @import("interp.zig").Interp;
 const strmethods = @import("strmethods.zig");
 const listmethods = @import("listmethods.zig");
 const setmethods = @import("setmethods.zig");
+const bytearraymethods = @import("bytearraymethods.zig");
 const dictmethods = @import("dictmethods.zig");
 const exc = @import("exc.zig");
 const builtins_mod = @import("builtins.zig");
@@ -1589,6 +1590,35 @@ fn add(interp: *Interp, a: Value, b: Value) !Value {
         const s = try Str.fromOwnedSlice(interp.allocator, buf);
         return Value{ .str = s };
     }
+    // bytes / bytearray concat: the result type follows the left
+    // operand. Cross-type works only between these two — bytes + str
+    // is still a TypeError.
+    {
+        const a_buf: ?[]const u8 = switch (a) {
+            .bytes => |x| x.data,
+            .bytearray => |x| x.data.items,
+            else => null,
+        };
+        const b_buf: ?[]const u8 = switch (b) {
+            .bytes => |x| x.data,
+            .bytearray => |x| x.data.items,
+            else => null,
+        };
+        if (a_buf != null and b_buf != null) {
+            if (a == .bytes) {
+                const buf = try interp.allocator.alloc(u8, a_buf.?.len + b_buf.?.len);
+                @memcpy(buf[0..a_buf.?.len], a_buf.?);
+                @memcpy(buf[a_buf.?.len..], b_buf.?);
+                const out = try @import("../object/bytes.zig").Bytes.fromOwnedSlice(interp.allocator, buf);
+                return Value{ .bytes = out };
+            }
+            const Bytearray = @import("../object/bytearray.zig").Bytearray;
+            const out = try Bytearray.init(interp.allocator);
+            try out.data.appendSlice(interp.allocator, a_buf.?);
+            try out.data.appendSlice(interp.allocator, b_buf.?);
+            return Value{ .bytearray = out };
+        }
+    }
     try interp.typeError("unsupported operand type(s) for +");
     return error.TypeError;
 }
@@ -1900,6 +1930,37 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
                 },
             }
         },
+        .bytearray => |b| {
+            switch (key) {
+                .small_int => |i| {
+                    const n: i64 = @intCast(b.data.items.len);
+                    var idx = i;
+                    if (idx < 0) idx += n;
+                    if (idx < 0 or idx >= n) {
+                        try interp.raisePy("IndexError", "bytearray index out of range");
+                        return error.PyException;
+                    }
+                    return Value{ .small_int = @intCast(b.data.items[@intCast(idx)]) };
+                },
+                .slice => |sl| {
+                    const Bytearray = @import("../object/bytearray.zig").Bytearray;
+                    const n: i64 = @intCast(b.data.items.len);
+                    const r = try resolveSlice(interp, sl, n);
+                    const out = try Bytearray.init(interp.allocator);
+                    var idx = r.start;
+                    var k: usize = 0;
+                    while (k < r.count) : (k += 1) {
+                        try out.data.append(interp.allocator, b.data.items[@intCast(idx)]);
+                        idx += r.step;
+                    }
+                    return Value{ .bytearray = out };
+                },
+                else => {
+                    try interp.typeError("bytearray indices must be integers or slices");
+                    return error.TypeError;
+                },
+            }
+        },
         .dict => |d| {
             if (d.getKey(key)) |v| return v;
             try interp.raisePy("KeyError", "key not found");
@@ -2029,6 +2090,31 @@ fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !voi
         .dict => |d| {
             try d.setKey(interp.allocator, key, value);
         },
+        .bytearray => |b| switch (key) {
+            .small_int => |i| {
+                if (value != .small_int and value != .boolean) {
+                    try interp.typeError("an integer is required");
+                    return error.TypeError;
+                }
+                const v: i64 = if (value == .boolean) @intFromBool(value.boolean) else value.small_int;
+                if (v < 0 or v > 255) {
+                    try interp.raisePy("ValueError", "byte must be in range(0, 256)");
+                    return error.PyException;
+                }
+                const n: i64 = @intCast(b.data.items.len);
+                var idx = i;
+                if (idx < 0) idx += n;
+                if (idx < 0 or idx >= n) {
+                    try interp.indexError("bytearray assignment index out of range");
+                    return error.IndexError;
+                }
+                b.data.items[@intCast(idx)] = @intCast(v);
+            },
+            else => {
+                try interp.typeError("bytearray indices must be integers");
+                return error.TypeError;
+            },
+        },
         else => {
             try interp.typeError("object does not support item assignment");
             return error.TypeError;
@@ -2067,7 +2153,7 @@ pub fn makeIter(interp: *Interp, v: Value) !*Iter {
         .list => |l| try Iter.init(interp.allocator, .{ .list = l }),
         .tuple => |t| try Iter.init(interp.allocator, .{ .tuple = t }),
         .iter => |it| it,
-        .str, .bytes, .dict, .generator, .enum_iter, .set => blk: {
+        .str, .bytes, .bytearray, .dict, .generator, .enum_iter, .set => blk: {
             const lst = try @import("builtins.zig").materialize(interp, v);
             break :blk try Iter.init(interp.allocator, .{ .list = lst });
         },
@@ -2103,11 +2189,26 @@ fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
             for (s.items.items) |it| if (it.equals(item)) return true;
             return false;
         },
+        .bytes => |b| return bytesContains(b.data, item),
+        .bytearray => |b| return bytesContains(b.data.items, item),
         else => {
             try interp.typeError("argument of type is not iterable");
             return error.TypeError;
         },
     }
+}
+
+/// `int in bytes/bytearray` matches a single byte; `bytes/bytearray
+/// in bytes/bytearray` matches a contiguous subsequence. Anything
+/// else returns False (CPython raises TypeError; the fixture only
+/// uses the supported operand types).
+fn bytesContains(haystack: []const u8, item: Value) bool {
+    return switch (item) {
+        .small_int => |i| if (i < 0 or i > 255) false else std.mem.indexOfScalar(u8, haystack, @intCast(i)) != null,
+        .bytes => |b| std.mem.indexOf(u8, haystack, b.data) != null,
+        .bytearray => |b| std.mem.indexOf(u8, haystack, b.data.items) != null,
+        else => false,
+    };
 }
 
 /// CPython 3.14 COMPARE_OP kinds: 0 `<`, 1 `<=`, 2 `==`, 3 `!=`,
@@ -2194,6 +2295,7 @@ fn matchClassCheck(subject: Value, cls: Value) bool {
     if (std.mem.eql(u8, name, "tuple")) return subject == .tuple;
     if (std.mem.eql(u8, name, "dict")) return subject == .dict;
     if (std.mem.eql(u8, name, "bytes")) return subject == .bytes;
+    if (std.mem.eql(u8, name, "bytearray")) return subject == .bytearray;
     if (std.mem.eql(u8, name, "set")) return subject == .set and !subject.set.frozen;
     if (std.mem.eql(u8, name, "frozenset")) return subject == .set and subject.set.frozen;
     return false;
@@ -2313,6 +2415,7 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             .list => listmethods.lookup(name),
             .dict => dictmethods.lookup(name),
             .set => setmethods.lookup(name),
+            .bytearray => bytearraymethods.lookup(name),
             else => null,
         };
         if (method) |m| {
