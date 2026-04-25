@@ -259,12 +259,10 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
 
 pub fn sortedBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    const items = iterableItems(args[0]) orelse {
+    const out = materialize(interp, args[0]) catch {
         try interp.typeError("sorted() argument must be iterable");
         return error.TypeError;
     };
-    const out = try List.init(interp.allocator);
-    for (items) |it| try out.append(interp.allocator, it);
     const slice = out.items.items;
     std.sort.pdq(Value, slice, {}, lessThanForSort);
     return Value{ .list = out };
@@ -1550,7 +1548,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("memoryview", memoryviewBuiltin);
     try interp.registerBuiltin("type", typeBuiltin);
     const dispatch = @import("dispatch.zig");
-    try interp.registerBuiltin("__build_class__", dispatch.buildClass);
+    try interp.registerBuiltinKw("__build_class__", dispatch.buildClass, dispatch.buildClassKw);
     try interp.registerBuiltin("isinstance", dispatch.isInstanceBuiltin);
     try interp.registerBuiltin("issubclass", dispatch.isSubclassBuiltin);
     try interp.registerBuiltin("super", superBuiltin);

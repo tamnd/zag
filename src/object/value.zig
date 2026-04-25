@@ -28,6 +28,7 @@ const Set = @import("set.zig").Set;
 const EnumIter = @import("enum_iter.zig").EnumIter;
 const Module = @import("module.zig").Module;
 const BigInt = @import("bigint.zig").BigInt;
+const BoundMethod = @import("bound_method.zig").BoundMethod;
 
 pub const Tag = enum(u8) {
     none,
@@ -45,6 +46,7 @@ pub const Tag = enum(u8) {
     dict,
     code,
     builtin_fn,
+    bound_method,
     function,
     cell,
     class,
@@ -106,6 +108,7 @@ pub const Value = union(Tag) {
     dict: *Dict,
     code: *Code,
     builtin_fn: *BuiltinFn,
+    bound_method: *BoundMethod,
     function: *Function,
     cell: *Cell,
     class: *Class,
@@ -138,7 +141,7 @@ pub const Value = union(Tag) {
             .dict => |d| d.count() != 0,
             .set => |s| s.items.items.len != 0,
             .ellipsis, .not_implemented => true,
-            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter, .module => true,
+            .code, .builtin_fn, .bound_method, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter, .module => true,
         };
     }
 
@@ -223,6 +226,10 @@ pub const Value = union(Tag) {
             },
             .code => |c| try w.print("<code object {s}>", .{c.name}),
             .builtin_fn => |f| try w.print("<built-in function {s}>", .{f.name}),
+            .bound_method => |bm| switch (bm.func) {
+                .builtin_fn => |f| try w.print("<built-in method {s}>", .{f.name}),
+                else => try w.writeAll("<bound method>"),
+            },
             .function => |f| try w.print("<function {s}>", .{f.code.qualname}),
             .cell => try w.writeAll("<cell>"),
             .class => |c| try w.print("<class '{s}'>", .{c.name}),
@@ -502,6 +509,7 @@ pub const Value = union(Tag) {
             .dict => |p| p == b.dict,
             .code => |p| p == b.code,
             .builtin_fn => |p| p == b.builtin_fn,
+            .bound_method => |p| p == b.bound_method,
             .function => |p| p == b.function,
             .cell => |p| p == b.cell,
             .class => |p| p == b.class,
@@ -534,6 +542,7 @@ pub const Value = union(Tag) {
             .dict => "dict",
             .code => "code",
             .builtin_fn => "builtin_function_or_method",
+            .bound_method => "method",
             .function => "function",
             .cell => "cell",
             .class => "type",
