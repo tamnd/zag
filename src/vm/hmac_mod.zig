@@ -9,6 +9,7 @@ const value_mod = @import("../object/value.zig");
 const Value = value_mod.Value;
 const BuiltinFn = value_mod.BuiltinFn;
 const BuiltinFnPtr = value_mod.BuiltinFnPtr;
+const BuiltinKwFnPtr = value_mod.BuiltinKwFnPtr;
 const Module = @import("../object/module.zig").Module;
 const Bytes = @import("../object/bytes.zig").Bytes;
 const Str = @import("../object/string.zig").Str;
@@ -38,7 +39,7 @@ const State = union(Algo) {
 pub fn build(interp: *Interp) !*Module {
     const m = try Module.init(interp.allocator, "hmac");
     try ensureClass(interp);
-    try reg(interp, m, "new", newFn);
+    try regKw(interp, m, "new", newFn, newKw);
     try reg(interp, m, "digest", digestFn);
     try reg(interp, m, "compare_digest", compareDigestFn);
     return m;
@@ -47,6 +48,12 @@ pub fn build(interp: *Interp) !*Module {
 fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {
     const f = try interp.allocator.create(BuiltinFn);
     f.* = .{ .name = name, .func = func };
+    try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
+}
+
+fn regKw(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr, kw: BuiltinKwFnPtr) !void {
+    const f = try interp.allocator.create(BuiltinFn);
+    f.* = .{ .name = name, .func = func, .kw_func = kw };
     try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
 }
 
@@ -215,16 +222,30 @@ fn hmacStatePtr(inst: *Instance) *HmacState {
 }
 
 fn newFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    return newKw(p, args, &.{}, &.{});
+}
+
+fn newKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
     try ensureClass(interp);
     if (args.len < 1) return error.TypeError;
     const key = try argBytes(args[0]);
-    const msg: ?[]const u8 = if (args.len >= 2) try argBytes(args[1]) else null;
-    const algo: Algo = if (args.len >= 3) (algoFromValue(args[2]) orelse {
+    var msg: ?[]const u8 = if (args.len >= 2) try argBytes(args[1]) else null;
+    var algo_val: ?Value = if (args.len >= 3) args[2] else null;
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        const n = kn.str.bytes;
+        if (std.mem.eql(u8, n, "digestmod")) algo_val = kv
+        else if (std.mem.eql(u8, n, "msg")) msg = try argBytes(kv);
+    }
+    const algo: Algo = if (algo_val) |v| (algoFromValue(v) orelse {
         try interp.raisePy("ValueError", "unknown digest");
         return error.PyException;
-    }) else .sha256;
+    }) else {
+        try interp.raisePy("TypeError", "Missing required argument 'digestmod'");
+        return error.PyException;
+    };
 
     const st = try newHmacState(a, algo, key);
     if (msg) |m| updateState(&st.inner, m);

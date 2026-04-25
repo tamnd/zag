@@ -14,6 +14,7 @@ const List = @import("../object/list.zig").List;
 const Dict = @import("../object/dict.zig").Dict;
 const Code = @import("../object/code.zig").Code;
 const Slice = @import("../object/slice.zig").Slice;
+const BigInt = @import("../object/bigint.zig").BigInt;
 
 const FLAG_REF: u8 = 0x80;
 
@@ -291,21 +292,60 @@ pub const Reader = struct {
         const n_raw = try self.readI32();
         const negative = n_raw < 0;
         const size: usize = @intCast(if (negative) -n_raw else n_raw);
-        var acc: i128 = 0;
-        var shift: u7 = 0;
-        var i: usize = 0;
-        while (i < size) : (i += 1) {
-            try self.need(2);
-            const d: u16 = @as(u16, self.buf[self.pos]) |
-                (@as(u16, self.buf[self.pos + 1]) << 8);
-            self.pos += 2;
-            acc |= @as(i128, d) << shift;
-            shift += 15;
-            if (shift >= 120) break; // overflow protection; M1 ignores big ints
+        // Read digits into a buffer first; choose representation after.
+        try self.need(size * 2);
+        // Fast path: fits in i128 (up to ~8 digits = 120 bits).
+        if (size <= 8) {
+            var acc: i128 = 0;
+            var shift: u7 = 0;
+            var i: usize = 0;
+            while (i < size) : (i += 1) {
+                const d: u16 = @as(u16, self.buf[self.pos]) |
+                    (@as(u16, self.buf[self.pos + 1]) << 8);
+                self.pos += 2;
+                acc |= @as(i128, d) << shift;
+                shift += 15;
+            }
+            if (negative) acc = -acc;
+            if (acc >= std.math.minInt(i64) and acc <= std.math.maxInt(i64)) {
+                return self.setRef(try self.reserveRef(have_flag), Value{ .small_int = @intCast(acc) });
+            }
+            // Doesn't fit i64 -> build big_int from i128 via 64-bit halves.
+            const neg = acc < 0;
+            const mag: u128 = @intCast(if (neg) -acc else acc);
+            const hi: u64 = @truncate(mag >> 64);
+            const lo: u64 = @truncate(mag);
+            var managed = try std.math.big.int.Managed.initSet(self.allocator, hi);
+            errdefer managed.deinit();
+            try managed.shiftLeft(&managed, 64);
+            var lo_m = try std.math.big.int.Managed.initSet(self.allocator, lo);
+            defer lo_m.deinit();
+            try managed.add(&managed, &lo_m);
+            if (neg) managed.negate();
+            const big = try BigInt.fromManaged(self.allocator, managed);
+            return self.setRef(try self.reserveRef(have_flag), Value{ .big_int = big });
         }
-        if (negative) acc = -acc;
-        const clamped: i64 = @intCast(std.math.clamp(acc, std.math.minInt(i64), std.math.maxInt(i64)));
-        return self.setRef(try self.reserveRef(have_flag), Value{ .small_int = clamped });
+        // Slow path: assemble a big_int by shifting/adding 15-bit digits.
+        var managed = try std.math.big.int.Managed.init(self.allocator);
+        errdefer managed.deinit();
+        var digit_m = try std.math.big.int.Managed.init(self.allocator);
+        defer digit_m.deinit();
+        // Read digits little-endian, build value most-significant first.
+        const start = self.pos;
+        var i: usize = size;
+        while (i > 0) {
+            i -= 1;
+            const off = start + i * 2;
+            const d: u16 = @as(u16, self.buf[off]) |
+                (@as(u16, self.buf[off + 1]) << 8);
+            try managed.shiftLeft(&managed, 15);
+            try digit_m.set(d);
+            try managed.add(&managed, &digit_m);
+        }
+        self.pos = start + size * 2;
+        if (negative) managed.negate();
+        const big = try BigInt.fromManaged(self.allocator, managed);
+        return self.setRef(try self.reserveRef(have_flag), Value{ .big_int = big });
     }
 
     fn readCode(self: *Reader, have_flag: bool) Error!Value {

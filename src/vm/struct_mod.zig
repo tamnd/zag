@@ -11,6 +11,7 @@ const BuiltinFnPtr = value_mod.BuiltinFnPtr;
 const Module = @import("../object/module.zig").Module;
 const Bytes = @import("../object/bytes.zig").Bytes;
 const Tuple = @import("../object/tuple.zig").Tuple;
+const BigInt = @import("../object/bigint.zig").BigInt;
 const Interp = @import("interp.zig").Interp;
 
 pub fn build(interp: *Interp) !*Module {
@@ -136,10 +137,44 @@ fn signExtend(v: u128, n: usize) i128 {
     return @intCast(v);
 }
 
-fn intFromValue(v: Value) !i64 {
+fn intValueFromI128(a: std.mem.Allocator, v: i128) !Value {
+    if (v >= std.math.minInt(i64) and v <= std.math.maxInt(i64)) {
+        return Value{ .small_int = @intCast(v) };
+    }
+    const neg = v < 0;
+    const mag: u128 = @intCast(if (neg) -v else v);
+    const hi: u64 = @truncate(mag >> 64);
+    const lo: u64 = @truncate(mag);
+    var managed = try std.math.big.int.Managed.initSet(a, hi);
+    errdefer managed.deinit();
+    try managed.shiftLeft(&managed, 64);
+    var lo_m = try std.math.big.int.Managed.initSet(a, lo);
+    defer lo_m.deinit();
+    try managed.add(&managed, &lo_m);
+    if (neg) managed.negate();
+    const big = try BigInt.fromManaged(a, managed);
+    return Value{ .big_int = big };
+}
+
+fn intValueFromU128(a: std.mem.Allocator, v: u128) !Value {
+    if (v <= std.math.maxInt(i64)) return Value{ .small_int = @intCast(v) };
+    const hi: u64 = @truncate(v >> 64);
+    const lo: u64 = @truncate(v);
+    var managed = try std.math.big.int.Managed.initSet(a, hi);
+    errdefer managed.deinit();
+    try managed.shiftLeft(&managed, 64);
+    var lo_m = try std.math.big.int.Managed.initSet(a, lo);
+    defer lo_m.deinit();
+    try managed.add(&managed, &lo_m);
+    const big = try BigInt.fromManaged(a, managed);
+    return Value{ .big_int = big };
+}
+
+fn intFromValue(v: Value) !i128 {
     return switch (v) {
         .small_int => |i| i,
         .boolean => |b| @intFromBool(b),
+        .big_int => |bi| bi.inner.toInt(i128) catch error.TypeError,
         else => error.TypeError,
     };
 }
@@ -270,11 +305,11 @@ fn unpackInto(a: std.mem.Allocator, fmt: []const u8, buf: []const u8, offset: us
                 'b', 'h', 'i', 'l', 'q' => {
                     const u = readUInt(buf[off..], sz, ep.endian);
                     const s = signExtend(u, sz);
-                    try out.append(a, Value{ .small_int = @intCast(s) });
+                    try out.append(a, try intValueFromI128(a, s));
                 },
                 'B', 'H', 'I', 'L', 'Q' => {
                     const u = readUInt(buf[off..], sz, ep.endian);
-                    try out.append(a, Value{ .small_int = @intCast(u) });
+                    try out.append(a, try intValueFromU128(a, u));
                 },
                 '?' => {
                     try out.append(a, Value{ .boolean = buf[off] != 0 });

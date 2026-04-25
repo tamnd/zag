@@ -51,7 +51,7 @@ fn argBytes(v: Value) ![]const u8 {
 fn defaultN(args: []const Value, fallback: usize) usize {
     if (args.len < 1) return fallback;
     return switch (args[0]) {
-        .small_int => |i| if (i > 0) @intCast(i) else fallback,
+        .small_int => |i| if (i >= 0) @intCast(i) else fallback,
         .none => fallback,
         else => fallback,
     };
@@ -155,7 +155,18 @@ fn randbitsFn(p: *anyopaque, args: []const Value) anyerror!Value {
 
 fn choiceFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
     if (args.len < 1) return error.TypeError;
+    if (args[0] == .str) {
+        const bytes = args[0].str.bytes;
+        if (bytes.len == 0) {
+            try interp.raisePy("IndexError", "choice from empty sequence");
+            return error.PyException;
+        }
+        const idx = rng().uintLessThan(u64, bytes.len);
+        const s = try Str.init(a, bytes[idx .. idx + 1]);
+        return Value{ .str = s };
+    }
     const items: []const Value = switch (args[0]) {
         .list => |l| l.items.items,
         .tuple => |t| t.items,
