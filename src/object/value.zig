@@ -15,6 +15,7 @@ const List = @import("list.zig").List;
 const Dict = @import("dict.zig").Dict;
 const Code = @import("code.zig").Code;
 const Slice = @import("slice.zig").Slice;
+const Iter = @import("iter.zig").Iter;
 
 pub const Tag = enum(u8) {
     none,
@@ -29,6 +30,7 @@ pub const Tag = enum(u8) {
     code,
     builtin_fn,
     slice,
+    iter,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
     /// uses `NULL` as a C-level sentinel before a CALL and `None` as a
     /// real Python value.
@@ -58,6 +60,7 @@ pub const Value = union(Tag) {
     code: *Code,
     builtin_fn: *BuiltinFn,
     slice: *Slice,
+    iter: *Iter,
     null_sentinel,
 
     pub fn isTruthy(self: Value) bool {
@@ -71,7 +74,7 @@ pub const Value = union(Tag) {
             .tuple => |t| t.items.len != 0,
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
-            .code, .builtin_fn, .slice => true,
+            .code, .builtin_fn, .slice, .iter => true,
         };
     }
 
@@ -110,6 +113,7 @@ pub const Value = union(Tag) {
             .dict => try w.writeAll("{...}"),
             .code => |c| try w.print("<code object {s}>", .{c.name}),
             .builtin_fn => |f| try w.print("<built-in function {s}>", .{f.name}),
+            .iter => try w.writeAll("<iterator>"),
             .slice => |sl| {
                 try w.writeAll("slice(");
                 try sl.start.writeRepr(w);
@@ -201,6 +205,7 @@ pub const Value = union(Tag) {
             .code => |p| p == b.code,
             .builtin_fn => |p| p == b.builtin_fn,
             .slice => |p| p == b.slice,
+            .iter => |p| p == b.iter,
         };
     }
 
@@ -219,6 +224,7 @@ pub const Value = union(Tag) {
             .code => "code",
             .builtin_fn => "builtin_function_or_method",
             .slice => "slice",
+            .iter => "iterator",
         };
     }
 };
