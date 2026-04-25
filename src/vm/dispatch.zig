@@ -1133,7 +1133,7 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
     return error.AttributeError;
 }
 
-fn invoke(interp: *Interp, callable: Value, args: []const Value) !Value {
+pub fn invoke(interp: *Interp, callable: Value, args: []const Value) !Value {
     return invokeKw(interp, callable, args, &.{}, &.{});
 }
 

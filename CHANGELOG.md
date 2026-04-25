@@ -9,6 +9,39 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-04-25
+
+### Added
+
+- `10_builtins` fixture, lifted verbatim from goipy's testdata,
+  running byte-equal against CPython 3.14 stdout. Covers a grab-bag
+  of common builtins plus a `lambda` (which already worked through
+  `MAKE_FUNCTION`).
+- `list`, `max`, `min`, `reversed`, `enumerate`, `zip`, `map`,
+  `filter`, `any`, `all`, `ord`, `chr`, `hex`, `oct`, `bin`, `int`,
+  `float`, `str` builtins. The compound ones (`map` / `filter` /
+  `zip` / `enumerate` / `reversed`) materialize eagerly into a
+  `List` rather than wrapping in lazy iterator types -- the fixture
+  always wraps each call in `list(...)`, so a layer of laziness
+  would just churn objects.
+- Shared `materialize(interp, v)` helper that drains any iterable
+  (list, tuple, str, dict-as-keys, iter) into a fresh List. The new
+  builtins build on it, and `sum` is now backed by it instead of
+  the old list/tuple-only `iterableItems`.
+- `dispatch.invoke` is now `pub` so `map` / `filter` can call user
+  functions (including lambdas) without going through a fake CALL
+  opcode.
+- `int(s)` and `float(s)` raise `ValueError` on parse failure --
+  they round-trip through the m10 PyException machinery.
+
+### Out of scope
+
+- Lazy iterator wrappers for `map` / `zip` / `filter` /
+  `enumerate` / `reversed` (CPython prints these as `<map object>`
+  etc., which we'd never match anyway).
+- Multi-byte unicode in `ord` / `chr`, negative inputs to `hex` /
+  `oct` / `bin`, `int(s, base)`, `key=` / `default=` keyword args.
+
 ## [0.0.10] - 2026-04-25
 
 ### Added
