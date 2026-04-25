@@ -24,6 +24,10 @@ const math_mod = @import("math_mod.zig");
 const heapq_mod = @import("heapq_mod.zig");
 const bisect_mod = @import("bisect_mod.zig");
 const random_mod = @import("random_mod.zig");
+const json_mod = @import("json_mod.zig");
+const string_mod = @import("string_mod.zig");
+const copy_mod = @import("copy_mod.zig");
+const re_mod = @import("re_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -50,6 +54,12 @@ pub const Interp = struct {
     heapq_module: ?*Module = null,
     bisect_module: ?*Module = null,
     random_module: ?*Module = null,
+    json_module: ?*Module = null,
+    string_module: ?*Module = null,
+    copy_module: ?*Module = null,
+    re_module: ?*Module = null,
+    re_pattern_class: ?*@import("../object/class.zig").Class = null,
+    re_match_class: ?*@import("../object/class.zig").Class = null,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every
     /// helper `.pyc`; the CLI pre-registers siblings of the entry
@@ -328,6 +338,30 @@ pub const Interp = struct {
             if (self.random_module) |m| return m;
             const m = random_mod.build(self) catch return null;
             self.random_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "json")) {
+            if (self.json_module) |m| return m;
+            const m = json_mod.build(self) catch return null;
+            self.json_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "string")) {
+            if (self.string_module) |m| return m;
+            const m = string_mod.build(self) catch return null;
+            self.string_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "copy")) {
+            if (self.copy_module) |m| return m;
+            const m = copy_mod.build(self) catch return null;
+            self.copy_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "re")) {
+            if (self.re_module) |m| return m;
+            const m = re_mod.build(self) catch return null;
+            self.re_module = m;
             return m;
         }
         return null;

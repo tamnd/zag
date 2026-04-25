@@ -546,6 +546,18 @@ pub const Value = union(Tag) {
             for (ax, bx) |x, y| if (!x.equals(y)) return false;
             return true;
         }
+        if (a == .dict and b == .dict) {
+            const ax = a.dict.pairs.items;
+            const bx = b.dict.pairs.items;
+            if (ax.len != bx.len) return false;
+            outer_dict: for (ax) |pa| {
+                for (bx) |pb| {
+                    if (pa.key.equals(pb.key) and pa.value.equals(pb.value)) continue :outer_dict;
+                }
+                return false;
+            }
+            return true;
+        }
         if (a == .list and b == .list) {
             const ax = a.list.items.items;
             const bx = b.list.items.items;
