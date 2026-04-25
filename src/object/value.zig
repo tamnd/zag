@@ -21,6 +21,7 @@ const Cell = @import("cell.zig").Cell;
 const Class = @import("class.zig").Class;
 const Instance = @import("instance.zig").Instance;
 const Descriptor = @import("descriptor.zig").Descriptor;
+const Generator = @import("generator.zig").Generator;
 
 pub const Tag = enum(u8) {
     none,
@@ -41,6 +42,7 @@ pub const Tag = enum(u8) {
     slice,
     iter,
     descriptor,
+    generator,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
     /// uses `NULL` as a C-level sentinel before a CALL and `None` as a
     /// real Python value.
@@ -76,6 +78,7 @@ pub const Value = union(Tag) {
     slice: *Slice,
     iter: *Iter,
     descriptor: *Descriptor,
+    generator: *Generator,
     null_sentinel,
 
     pub fn isTruthy(self: Value) bool {
@@ -89,7 +92,7 @@ pub const Value = union(Tag) {
             .tuple => |t| t.items.len != 0,
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
-            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor => true,
+            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator => true,
         };
     }
 
@@ -145,6 +148,7 @@ pub const Value = union(Tag) {
             .class => |c| try w.print("<class '{s}'>", .{c.name}),
             .instance => |obj| try w.print("<{s} object>", .{obj.cls.name}),
             .iter => try w.writeAll("<iterator>"),
+            .generator => try w.writeAll("<generator>"),
             .descriptor => |d| switch (d.kind) {
                 .property => try w.writeAll("<property object>"),
                 .classmethod => try w.writeAll("<classmethod object>"),
@@ -258,6 +262,7 @@ pub const Value = union(Tag) {
             .slice => |p| p == b.slice,
             .iter => |p| p == b.iter,
             .descriptor => |p| p == b.descriptor,
+            .generator => |p| p == b.generator,
         };
     }
 
@@ -286,6 +291,7 @@ pub const Value = union(Tag) {
                 .classmethod => "classmethod",
                 .staticmethod => "staticmethod",
             },
+            .generator => "generator",
         };
     }
 };

@@ -152,6 +152,12 @@ fn materialize(interp: *Interp, v: Value) !*List {
         .list => |l| for (l.items.items) |x| try out.append(a, x),
         .tuple => |t| for (t.items) |x| try out.append(a, x),
         .iter => |it| while (it.next()) |x| try out.append(a, x),
+        .generator => |g| {
+            const dispatch = @import("dispatch.zig");
+            while (try dispatch.genResume(interp, g, Value.none)) |x| {
+                try out.append(a, x);
+            }
+        },
         .str => |s| for (s.bytes) |b| {
             const piece = try Str.init(a, &[_]u8{b});
             try out.append(a, Value{ .str = piece });
@@ -505,6 +511,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("property", propertyBuiltin);
     try interp.registerBuiltin("classmethod", classmethodBuiltin);
     try interp.registerBuiltin("staticmethod", staticmethodBuiltin);
+    try interp.registerBuiltin("next", dispatch.nextBuiltin);
     try installExceptions(interp);
 }
 
