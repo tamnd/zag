@@ -10,6 +10,7 @@ const std = @import("std");
 
 const Str = @import("string.zig").Str;
 const Bytes = @import("bytes.zig").Bytes;
+const Bytearray = @import("bytearray.zig").Bytearray;
 const Tuple = @import("tuple.zig").Tuple;
 const List = @import("list.zig").List;
 const Dict = @import("dict.zig").Dict;
@@ -34,6 +35,7 @@ pub const Tag = enum(u8) {
     complex_num,
     str,
     bytes,
+    bytearray,
     tuple,
     list,
     dict,
@@ -87,6 +89,7 @@ pub const Value = union(Tag) {
     complex_num: Complex,
     str: *Str,
     bytes: *Bytes,
+    bytearray: *Bytearray,
     tuple: *Tuple,
     list: *List,
     dict: *Dict,
@@ -114,6 +117,7 @@ pub const Value = union(Tag) {
             .complex_num => |c| c.re != 0.0 or c.im != 0.0,
             .str => |s| s.bytes.len != 0,
             .bytes => |b| b.data.len != 0,
+            .bytearray => |b| b.data.items.len != 0,
             .tuple => |t| t.items.len != 0,
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
@@ -137,7 +141,16 @@ pub const Value = union(Tag) {
                 try w.writeAll(s.bytes);
                 try w.writeByte('\'');
             },
-            .bytes => |b| try w.print("b'{s}'", .{b.data}),
+            .bytes => |b| {
+                try w.writeAll("b'");
+                try writeBytesContent(w, b.data);
+                try w.writeByte('\'');
+            },
+            .bytearray => |b| {
+                try w.writeAll("bytearray(b'");
+                try writeBytesContent(w, b.data.items);
+                try w.writeAll("')");
+            },
             .tuple => |t| {
                 try w.writeByte('(');
                 for (t.items, 0..) |it, i| {
@@ -236,6 +249,24 @@ pub const Value = union(Tag) {
                 try self.writeRepr(w);
             },
             else => try self.writeRepr(w),
+        }
+    }
+
+    /// Bytes-content escaping used by both `bytes` and `bytearray`
+    /// repr. CPython prefers single quotes and escapes backslash, the
+    /// chosen quote, `\n` `\r` `\t`, and any byte outside the printable
+    /// ASCII range as `\xHH`.
+    fn writeBytesContent(w: *std.Io.Writer, data: []const u8) !void {
+        for (data) |c| {
+            switch (c) {
+                '\\' => try w.writeAll("\\\\"),
+                '\'' => try w.writeAll("\\'"),
+                '\n' => try w.writeAll("\\n"),
+                '\r' => try w.writeAll("\\r"),
+                '\t' => try w.writeAll("\\t"),
+                0x20...0x26, 0x28...0x5b, 0x5d...0x7e => try w.writeByte(c),
+                else => try w.print("\\x{x:0>2}", .{c}),
+            }
         }
     }
 
@@ -345,6 +376,21 @@ pub const Value = union(Tag) {
         if (a == .none and b == .none) return true;
         if (a == .complex_num or b == .complex_num) return complexEquals(a, b);
         if (a == .set and b == .set) return setEquals(a.set, b.set);
+        // bytes/bytearray compare by content across the two types,
+        // matching CPython: `b"x" == bytearray(b"x")` is True.
+        const a_bytes: ?[]const u8 = switch (a) {
+            .bytes => |x| x.data,
+            .bytearray => |x| x.data.items,
+            else => null,
+        };
+        const b_bytes: ?[]const u8 = switch (b) {
+            .bytes => |x| x.data,
+            .bytearray => |x| x.data.items,
+            else => null,
+        };
+        if (a_bytes != null and b_bytes != null) {
+            return std.mem.eql(u8, a_bytes.?, b_bytes.?);
+        }
         if (order(a, b)) |o| return o == .eq;
         return false;
     }
@@ -393,6 +439,7 @@ pub const Value = union(Tag) {
             .complex_num => |x| x.re == b.complex_num.re and x.im == b.complex_num.im,
             .str => |p| p == b.str,
             .bytes => |p| p == b.bytes,
+            .bytearray => |p| p == b.bytearray,
             .tuple => |p| p == b.tuple,
             .list => |p| p == b.list,
             .dict => |p| p == b.dict,
@@ -422,6 +469,7 @@ pub const Value = union(Tag) {
             .complex_num => "complex",
             .str => "str",
             .bytes => "bytes",
+            .bytearray => "bytearray",
             .tuple => "tuple",
             .list => "list",
             .dict => "dict",

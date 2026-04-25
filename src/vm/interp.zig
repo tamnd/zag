@@ -59,6 +59,8 @@ pub const Interp = struct {
     /// only the synthetic classes that `type()` returns.
     set_type: ?*@import("../object/class.zig").Class = null,
     frozenset_type: ?*@import("../object/class.zig").Class = null,
+    bytearray_type: ?*@import("../object/class.zig").Class = null,
+    bytes_type: ?*@import("../object/class.zig").Class = null,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 
