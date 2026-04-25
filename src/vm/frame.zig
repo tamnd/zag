@@ -2,6 +2,7 @@ const std = @import("std");
 const Value = @import("../object/value.zig").Value;
 const Code = @import("../object/code.zig").Code;
 const Dict = @import("../object/dict.zig").Dict;
+const Tuple = @import("../object/tuple.zig").Tuple;
 
 pub const Frame = struct {
     code: *Code,
@@ -15,6 +16,11 @@ pub const Frame = struct {
     ip: u32 = 0,
 
     back: ?*Frame = null,
+
+    /// Set by `callPyFunction` to the calling Function's closure
+    /// tuple (a tuple of `*Cell` Values). `COPY_FREE_VARS` reads
+    /// from this. Module frames have it null.
+    closure: ?*Tuple = null,
 
     pub fn init(
         allocator: std.mem.Allocator,

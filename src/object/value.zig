@@ -16,6 +16,8 @@ const Dict = @import("dict.zig").Dict;
 const Code = @import("code.zig").Code;
 const Slice = @import("slice.zig").Slice;
 const Iter = @import("iter.zig").Iter;
+const Function = @import("function.zig").Function;
+const Cell = @import("cell.zig").Cell;
 
 pub const Tag = enum(u8) {
     none,
@@ -29,6 +31,8 @@ pub const Tag = enum(u8) {
     dict,
     code,
     builtin_fn,
+    function,
+    cell,
     slice,
     iter,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
@@ -59,6 +63,8 @@ pub const Value = union(Tag) {
     dict: *Dict,
     code: *Code,
     builtin_fn: *BuiltinFn,
+    function: *Function,
+    cell: *Cell,
     slice: *Slice,
     iter: *Iter,
     null_sentinel,
@@ -74,7 +80,7 @@ pub const Value = union(Tag) {
             .tuple => |t| t.items.len != 0,
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
-            .code, .builtin_fn, .slice, .iter => true,
+            .code, .builtin_fn, .function, .cell, .slice, .iter => true,
         };
     }
 
@@ -113,6 +119,8 @@ pub const Value = union(Tag) {
             .dict => try w.writeAll("{...}"),
             .code => |c| try w.print("<code object {s}>", .{c.name}),
             .builtin_fn => |f| try w.print("<built-in function {s}>", .{f.name}),
+            .function => |f| try w.print("<function {s}>", .{f.code.qualname}),
+            .cell => try w.writeAll("<cell>"),
             .iter => try w.writeAll("<iterator>"),
             .slice => |sl| {
                 try w.writeAll("slice(");
@@ -174,6 +182,17 @@ pub const Value = union(Tag) {
                 .gt => .gt,
             };
         }
+        if (a == .tuple and b == .tuple) {
+            const ax = a.tuple.items;
+            const bx = b.tuple.items;
+            const n = @min(ax.len, bx.len);
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                const sub = order(ax[i], bx[i]) orelse return null;
+                if (sub != .eq) return sub;
+            }
+            return if (ax.len < bx.len) .lt else if (ax.len == bx.len) .eq else .gt;
+        }
         return null;
     }
 
@@ -204,6 +223,8 @@ pub const Value = union(Tag) {
             .dict => |p| p == b.dict,
             .code => |p| p == b.code,
             .builtin_fn => |p| p == b.builtin_fn,
+            .function => |p| p == b.function,
+            .cell => |p| p == b.cell,
             .slice => |p| p == b.slice,
             .iter => |p| p == b.iter,
         };
@@ -223,6 +244,8 @@ pub const Value = union(Tag) {
             .dict => "dict",
             .code => "code",
             .builtin_fn => "builtin_function_or_method",
+            .function => "function",
+            .cell => "cell",
             .slice => "slice",
             .iter => "iterator",
         };
