@@ -242,10 +242,61 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 .tuple => |t| for (t.items) |it| try list_val.list.append(interp.allocator, it),
                 .list => |l| for (l.items.items) |it| try list_val.list.append(interp.allocator, it),
                 else => {
-                    try interp.typeError("LIST_EXTEND requires an iterable");
-                    return error.TypeError;
+                    const drained = try @import("builtins.zig").materialize(interp, iterable);
+                    for (drained.items.items) |it| try list_val.list.append(interp.allocator, it);
                 },
             }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .DICT_MERGE, .DICT_UPDATE => {
+            const arg = oparg(frame, ext_arg);
+            const src = frame.pop();
+            if (src != .dict) {
+                try interp.typeError("argument must be a mapping");
+                return error.TypeError;
+            }
+            const dst_val = frame.stack[frame.sp - arg];
+            if (dst_val != .dict) {
+                try interp.typeError("DICT_MERGE target is not a dict");
+                return error.TypeError;
+            }
+            for (src.dict.pairs.items) |p| {
+                try dst_val.dict.setKey(interp.allocator, p.key, p.value);
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .CALL_FUNCTION_EX => {
+            // 3.14 layout: [callable, NULL, args, kwargs_or_NULL].
+            const top = frame.pop();
+            const args_val = frame.pop();
+            _ = frame.pop(); // NULL slot
+            const callable = frame.pop();
+            const args_list = switch (args_val) {
+                .tuple => |t| t.items,
+                .list => |l| l.items.items,
+                else => (try @import("builtins.zig").materialize(interp, args_val)).items.items,
+            };
+            var result: Value = undefined;
+            if (top == .dict) {
+                const d = top.dict;
+                const n = d.pairs.items.len;
+                const names = try interp.allocator.alloc(Value, n);
+                const vals = try interp.allocator.alloc(Value, n);
+                for (d.pairs.items, 0..) |p, idx| {
+                    if (p.key != .str) {
+                        try interp.typeError("keywords must be strings");
+                        return error.TypeError;
+                    }
+                    names[idx] = p.key;
+                    vals[idx] = p.value;
+                }
+                result = try invokeKw(interp, callable, args_list, names, vals);
+            } else {
+                result = try invoke(interp, callable, args_list);
+            }
+            frame.push(result);
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -715,10 +766,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const items: []const Value = switch (seq) {
                 .tuple => |t| t.items,
                 .list => |l| l.items.items,
-                else => {
-                    try interp.typeError("cannot unpack non-sequence");
-                    return error.TypeError;
-                },
+                else => (try @import("builtins.zig").materialize(interp, seq)).items.items,
             };
             if (items.len != n) {
                 try interp.typeError("unpacked length mismatch");
@@ -744,10 +792,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const items: []const Value = switch (seq) {
                 .tuple => |t| t.items,
                 .list => |l| l.items.items,
-                else => {
-                    try interp.typeError("cannot unpack non-sequence");
-                    return error.TypeError;
-                },
+                else => (try @import("builtins.zig").materialize(interp, seq)).items.items,
             };
             if (items.len < n_before + n_after) {
                 try interp.typeError("not enough values to unpack");
