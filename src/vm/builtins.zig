@@ -105,6 +105,7 @@ pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         .str => |s| Value{ .small_int = @intCast(s.len()) },
         .bytes => |b| Value{ .small_int = @intCast(b.data.len) },
         .bytearray => |b| Value{ .small_int = @intCast(b.data.items.len) },
+        .memoryview => |m| Value{ .small_int = @intCast(m.len) },
         .tuple => |t| Value{ .small_int = @intCast(t.items.len) },
         .list => |l| Value{ .small_int = @intCast(l.items.items.len) },
         .dict => |d| Value{ .small_int = @intCast(d.count()) },
@@ -174,6 +175,7 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
         },
         .bytes => |b| for (b.data) |x| try out.append(a, Value{ .small_int = @intCast(x) }),
         .bytearray => |b| for (b.data.items) |x| try out.append(a, Value{ .small_int = @intCast(x) }),
+        .memoryview => |m| for (m.data()) |x| try out.append(a, Value{ .small_int = @intCast(x) }),
         .dict => |d| for (d.keys.items) |k| {
             const piece = try Str.init(a, k);
             try out.append(a, Value{ .str = piece });
@@ -634,6 +636,12 @@ pub fn typeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
             interp.bytes_type = c;
             break :blk Value{ .class = c };
         },
+        .memoryview => blk: {
+            if (interp.memoryview_type) |c| break :blk Value{ .class = c };
+            const c = try Class.init(interp.allocator, "memoryview", &.{}, try Dict.init(interp.allocator));
+            interp.memoryview_type = c;
+            break :blk Value{ .class = c };
+        },
         .set => |s| blk: {
             if (s.frozen) {
                 if (interp.frozenset_type) |c| break :blk Value{ .class = c };
@@ -662,6 +670,21 @@ pub fn bytesBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
     if (args.len == 0) {
         const out = try Bytes.init(interp.allocator, "");
         return Value{ .bytes = out };
+    }
+    switch (args[0]) {
+        .bytes => |b| {
+            const out = try Bytes.init(interp.allocator, b.data);
+            return Value{ .bytes = out };
+        },
+        .bytearray => |b| {
+            const out = try Bytes.init(interp.allocator, b.data.items);
+            return Value{ .bytes = out };
+        },
+        .memoryview => |m| {
+            const out = try Bytes.init(interp.allocator, m.data());
+            return Value{ .bytes = out };
+        },
+        else => {},
     }
     const list = try materialize(interp, args[0]);
     var buf = try interp.allocator.alloc(u8, list.items.items.len);
@@ -722,6 +745,24 @@ pub fn bytearrayBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror
             return Value{ .bytearray = out };
         },
     }
+}
+
+pub fn memoryviewBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const Memoryview = @import("../object/memoryview.zig").Memoryview;
+    if (args.len != 1) {
+        try interp.typeError("memoryview() takes exactly one argument");
+        return error.TypeError;
+    }
+    return switch (args[0]) {
+        .bytes => |b| Value{ .memoryview = try Memoryview.fromBytes(interp.allocator, b) },
+        .bytearray => |b| Value{ .memoryview = try Memoryview.fromBytearray(interp.allocator, b) },
+        .memoryview => |m| Value{ .memoryview = try m.slice(interp.allocator, 0, m.len) },
+        else => {
+            try interp.typeError("memoryview: a bytes-like object is required");
+            return error.TypeError;
+        },
+    };
 }
 
 pub fn boolBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
@@ -888,6 +929,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("str", strBuiltin);
     try interp.registerBuiltin("bytes", bytesBuiltin);
     try interp.registerBuiltin("bytearray", bytearrayBuiltin);
+    try interp.registerBuiltin("memoryview", memoryviewBuiltin);
     try interp.registerBuiltin("type", typeBuiltin);
     const dispatch = @import("dispatch.zig");
     try interp.registerBuiltin("__build_class__", dispatch.buildClass);
