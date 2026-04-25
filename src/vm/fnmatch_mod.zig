@@ -16,6 +16,7 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "fnmatch", fnmatchFn);
     try reg(interp, m, "fnmatchcase", fnmatchcaseFn);
     try reg(interp, m, "filter", filterFn);
+    try reg(interp, m, "translate", translateFn);
     return m;
 }
 
@@ -105,6 +106,46 @@ fn fnmatchcaseFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn fnmatchFn(p: *anyopaque, args: []const Value) anyerror!Value {
     // POSIX behaviour: case-sensitive on Linux/macOS. We ape that.
     return fnmatchcaseFn(p, args);
+}
+
+fn translateFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .str) return error.TypeError;
+    const pat = args[0].str.bytes;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(a);
+    try out.appendSlice(a, "(?s:");
+    var i: usize = 0;
+    while (i < pat.len) : (i += 1) {
+        const c = pat[i];
+        switch (c) {
+            '*' => try out.appendSlice(a, ".*"),
+            '?' => try out.append(a, '.'),
+            '[' => {
+                try out.append(a, '[');
+                var j = i + 1;
+                if (j < pat.len and pat[j] == '!') {
+                    try out.append(a, '^');
+                    j += 1;
+                }
+                while (j < pat.len and pat[j] != ']') : (j += 1) try out.append(a, pat[j]);
+                try out.append(a, ']');
+                i = j;
+            },
+            else => {
+                if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_') {
+                    try out.append(a, c);
+                } else {
+                    try out.append(a, '\\');
+                    try out.append(a, c);
+                }
+            },
+        }
+    }
+    try out.appendSlice(a, ")\\Z");
+    const s = try Str.init(a, out.items);
+    return Value{ .str = s };
 }
 
 fn filterFn(p: *anyopaque, args: []const Value) anyerror!Value {
