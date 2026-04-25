@@ -159,6 +159,12 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
                 try out.append(a, x);
             }
         },
+        .enum_iter => {
+            const dispatch = @import("dispatch.zig");
+            while (try dispatch.iterStep(interp, v)) |x| {
+                try out.append(a, x);
+            }
+        },
         .str => |s| for (s.bytes) |b| {
             const piece = try Str.init(a, &[_]u8{b});
             try out.append(a, Value{ .str = piece });
@@ -240,6 +246,52 @@ pub fn listBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
     return Value{ .list = out };
 }
 
+pub fn tupleBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len == 0) {
+        const t = try Tuple.init(interp.allocator, 0);
+        return Value{ .tuple = t };
+    }
+    const lst = try materialize(interp, args[0]);
+    const t = try Tuple.init(interp.allocator, lst.items.items.len);
+    for (lst.items.items, 0..) |it, i| t.items[i] = it;
+    return Value{ .tuple = t };
+}
+
+pub fn setBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const Set = @import("../object/set.zig").Set;
+    const s = try Set.init(interp.allocator);
+    if (args.len == 0) return Value{ .set = s };
+    const lst = try materialize(interp, args[0]);
+    for (lst.items.items) |it| try s.add(interp.allocator, it);
+    return Value{ .set = s };
+}
+
+pub fn dictBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const d = try Dict.init(interp.allocator);
+    if (args.len == 0) return Value{ .dict = d };
+    // Iterable of (k, v) pairs.
+    const lst = try materialize(interp, args[0]);
+    for (lst.items.items) |pair| {
+        const items: []const Value = switch (pair) {
+            .tuple => |t| t.items,
+            .list => |l| l.items.items,
+            else => {
+                try interp.typeError("dict() argument must be iterable of pairs");
+                return error.TypeError;
+            },
+        };
+        if (items.len != 2) {
+            try interp.typeError("dict() pair must have length 2");
+            return error.TypeError;
+        }
+        try d.setKey(interp.allocator, items[0], items[1]);
+    }
+    return Value{ .dict = d };
+}
+
 pub fn maxBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     return try minMax(interp, args, true);
@@ -289,16 +341,51 @@ pub fn reversedBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!
 }
 
 pub fn enumerateBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return enumerateBuiltinKw(interp_opaque, args, &.{}, &.{});
+}
+
+pub fn enumerateBuiltinKw(
+    interp_opaque: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    const src = try materialize(interp, args[0]);
-    const out = try List.init(interp.allocator);
-    for (src.items.items, 0..) |v, i| {
-        const t = try Tuple.init(interp.allocator, 2);
-        t.items[0] = Value{ .small_int = @intCast(i) };
-        t.items[1] = v;
-        try out.append(interp.allocator, Value{ .tuple = t });
+    if (args.len != 1) {
+        try interp.typeError("enumerate() expected one positional argument");
+        return error.TypeError;
     }
-    return Value{ .list = out };
+    var start: i64 = 0;
+    for (kw_names, kw_values) |n, v| {
+        if (n != .str) {
+            try interp.typeError("enumerate() keyword name must be str");
+            return error.TypeError;
+        }
+        if (std.mem.eql(u8, n.str.bytes, "start")) {
+            start = switch (v) {
+                .small_int => |i| i,
+                .boolean => |b| @intFromBool(b),
+                else => {
+                    try interp.typeError("enumerate() start must be int");
+                    return error.TypeError;
+                },
+            };
+        } else {
+            try interp.typeError("enumerate() got an unexpected keyword argument");
+            return error.TypeError;
+        }
+    }
+    const EnumIter = @import("../object/enum_iter.zig").EnumIter;
+    // Normalize the source: pass-through generators/enum_iters (lazy
+    // already), wrap everything else in an Iter so iterStep stays a
+    // single .iter / .generator / .enum_iter switch.
+    const dispatch = @import("dispatch.zig");
+    const src: Value = switch (args[0]) {
+        .generator, .enum_iter, .iter => args[0],
+        else => Value{ .iter = try dispatch.makeIter(interp, args[0]) },
+    };
+    const e = try EnumIter.init(interp.allocator, src, start);
+    return Value{ .enum_iter = e };
 }
 
 pub fn zipBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
@@ -531,10 +618,13 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("sorted", sortedBuiltin);
     try interp.registerBuiltin("range", rangeBuiltin);
     try interp.registerBuiltin("list", listBuiltin);
+    try interp.registerBuiltin("tuple", tupleBuiltin);
+    try interp.registerBuiltin("set", setBuiltin);
+    try interp.registerBuiltin("dict", dictBuiltin);
     try interp.registerBuiltin("max", maxBuiltin);
     try interp.registerBuiltin("min", minBuiltin);
     try interp.registerBuiltin("reversed", reversedBuiltin);
-    try interp.registerBuiltin("enumerate", enumerateBuiltin);
+    try interp.registerBuiltinKw("enumerate", enumerateBuiltin, enumerateBuiltinKw);
     try interp.registerBuiltin("zip", zipBuiltin);
     try interp.registerBuiltin("map", mapBuiltin);
     try interp.registerBuiltin("filter", filterBuiltin);
@@ -583,6 +673,8 @@ fn installExceptions(interp: *Interp) !void {
     const type_err = try Class.init(a, "TypeError", &.{exception}, try Dict.init(a));
     const name_err = try Class.init(a, "NameError", &.{exception}, try Dict.init(a));
     const stop_iter = try Class.init(a, "StopIteration", &.{exception}, try Dict.init(a));
+    const assertion_err = try Class.init(a, "AssertionError", &.{exception}, try Dict.init(a));
+    const not_impl_err = try Class.init(a, "NotImplementedError", &.{runtime_err}, try Dict.init(a));
 
     const pairs = [_]struct { name: []const u8, cls: *Class }{
         .{ .name = "BaseException", .cls = base_exc },
@@ -598,6 +690,8 @@ fn installExceptions(interp: *Interp) !void {
         .{ .name = "TypeError", .cls = type_err },
         .{ .name = "NameError", .cls = name_err },
         .{ .name = "StopIteration", .cls = stop_iter },
+        .{ .name = "AssertionError", .cls = assertion_err },
+        .{ .name = "NotImplementedError", .cls = not_impl_err },
     };
     for (pairs) |p| {
         try interp.builtins.setStr(a, p.name, Value{ .class = p.cls });

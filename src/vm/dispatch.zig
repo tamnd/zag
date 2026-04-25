@@ -90,6 +90,29 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .LOAD_COMMON_CONSTANT => {
+            const arg = oparg(frame, ext_arg);
+            const name: []const u8 = switch (arg) {
+                0 => "AssertionError",
+                1 => "NotImplementedError",
+                2 => "tuple",
+                3 => "list",
+                4 => "set",
+                5 => "dict",
+                6 => "frozenset",
+                else => {
+                    try interp.unsupportedOpcode(81, frame.ip);
+                    return error.UnknownOpcode;
+                },
+            };
+            const v = interp.builtins.getStr(name) orelse {
+                try interp.typeError("LOAD_COMMON_CONSTANT: missing builtin");
+                return error.TypeError;
+            };
+            frame.push(v);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .EXTENDED_ARG => {
             const arg = oparg(frame, ext_arg);
             ext_arg = arg << 8;
@@ -417,11 +440,12 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
 
         .GET_ITER => {
             const v = frame.pop();
-            if (v == .generator) {
-                frame.push(v);
-            } else {
-                const it = try makeIter(interp, v);
-                frame.push(Value{ .iter = it });
+            switch (v) {
+                .generator, .enum_iter => frame.push(v),
+                else => {
+                    const it = try makeIter(interp, v);
+                    frame.push(Value{ .iter = it });
+                },
             }
             continue :sw advance(frame, &ext_arg, 0);
         },
@@ -431,14 +455,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const cw = op.cache_width[@intFromEnum(Opcode.FOR_ITER)];
             // TOS is the iterator. Peek, don't pop.
             const it = frame.stack[frame.sp - 1];
-            const next_v: ?Value = switch (it) {
-                .iter => |i| i.next(),
-                .generator => |g| try genResume(interp, g, Value.none),
-                else => {
-                    try interp.typeError("FOR_ITER on non-iterator");
-                    return error.TypeError;
-                },
-            };
+            const next_v: ?Value = try iterStep(interp, it);
             if (next_v) |v| {
                 frame.push(v);
                 frame.ip += 2 + 2 * @as(u32, cw);
@@ -580,11 +597,11 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
         .LOAD_DEREF => {
             const arg = oparg(frame, ext_arg);
             const slot = frame.fast[arg];
-            if (slot != .cell) {
-                try interp.typeError("LOAD_DEREF on non-cell slot");
-                return error.TypeError;
+            if (slot == .cell) {
+                frame.push(slot.cell.value);
+            } else {
+                frame.push(slot);
             }
-            frame.push(slot.cell.value);
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -592,10 +609,13 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const arg = oparg(frame, ext_arg);
             const slot = frame.fast[arg];
             if (slot != .cell) {
-                try interp.typeError("STORE_DEREF on non-cell slot");
-                return error.TypeError;
+                // Auto-promote: param slots that are also closure
+                // cells get this when MAKE_CELL was elided.
+                const cell = try Cell.init(interp.allocator, frame.pop());
+                frame.fast[arg] = Value{ .cell = cell };
+            } else {
+                slot.cell.value = frame.pop();
             }
-            slot.cell.value = frame.pop();
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -1767,12 +1787,38 @@ fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !voi
     }
 }
 
-fn makeIter(interp: *Interp, v: Value) !*Iter {
+/// One step of any iterator-shaped value. Returns null when the
+/// iterator is exhausted, raises TypeError when the value isn't an
+/// iterator. Generators advance via `genResume`; enumerate adapters
+/// step their inner source then pair the result with a counter.
+pub fn iterStep(interp: *Interp, it: Value) DispatchError!?Value {
+    switch (it) {
+        .iter => |i| return i.next(),
+        .generator => |g| return try genResume(interp, g, Value.none),
+        .enum_iter => |e| {
+            const inner = try iterStep(interp, e.source);
+            if (inner) |v| {
+                const t = try Tuple.init(interp.allocator, 2);
+                t.items[0] = Value{ .small_int = e.count };
+                t.items[1] = v;
+                e.count += 1;
+                return Value{ .tuple = t };
+            }
+            return null;
+        },
+        else => {
+            try interp.typeError("FOR_ITER on non-iterator");
+            return error.TypeError;
+        },
+    }
+}
+
+pub fn makeIter(interp: *Interp, v: Value) !*Iter {
     return switch (v) {
         .list => |l| try Iter.init(interp.allocator, .{ .list = l }),
         .tuple => |t| try Iter.init(interp.allocator, .{ .tuple = t }),
         .iter => |it| it,
-        .str, .bytes, .dict, .generator => blk: {
+        .str, .bytes, .dict, .generator, .enum_iter => blk: {
             const lst = try @import("builtins.zig").materialize(interp, v);
             break :blk try Iter.init(interp.allocator, .{ .list = lst });
         },
@@ -2026,6 +2072,9 @@ fn invokeKw(
     switch (callable) {
         .builtin_fn => |f| {
             if (kw_names.len != 0) {
+                if (f.kw_func) |kf| {
+                    return try kf(@ptrCast(interp), positional, kw_names, kw_values);
+                }
                 try interp.typeError("builtin does not take keyword arguments");
                 return error.TypeError;
             }
@@ -2078,7 +2127,7 @@ fn sendStep(interp: *Interp, receiver: Value, sent_value: Value) SendError!Value
         .generator => |g| {
             const r = try genResume(interp, g, sent_value);
             if (r) |v| return v;
-            interp.gen_yielded = Value.none;
+            interp.gen_yielded = g.return_value;
             return error.StopIter;
         },
         .iter => |it| {
@@ -2261,11 +2310,24 @@ fn callPyFunction(
     }
 
     if (code.flags & CO_GENERATOR != 0) {
-        // CPython prologue is RETURN_GENERATOR (offset 0), POP_TOP
-        // (offset 2), RESUME (offset 4). Skip RETURN_GENERATOR; the
-        // first send pushes its value, POP_TOP pops it, RESUME falls
-        // through into the body.
-        new_frame.ip = 2;
+        // CPython prologue is [COPY_FREE_VARS?] RETURN_GENERATOR
+        // POP_TOP RESUME. Apply COPY_FREE_VARS now (the body's
+        // LOAD_DEREF needs the free cells in fast slots) and skip
+        // past RETURN_GENERATOR; the first send pushes a value
+        // that POP_TOP discards before RESUME falls into the body.
+        var ip: u32 = 0;
+        if (code.bytecode[0] == @intFromEnum(Opcode.COPY_FREE_VARS)) {
+            const n: usize = code.bytecode[1];
+            const closure = new_frame.closure orelse return error.TypeError;
+            const start = new_frame.fast.len - n;
+            var ci: usize = 0;
+            while (ci < n) : (ci += 1) {
+                new_frame.fast[start + ci] = closure.items[ci];
+            }
+            ip = 2;
+        }
+        // Skip RETURN_GENERATOR.
+        new_frame.ip = ip + 2;
         const g = try Generator.init(interp.allocator, new_frame);
         return Value{ .generator = g };
     }
