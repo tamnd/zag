@@ -9,6 +9,36 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-04-25
+
+### Added
+
+- `11_with` fixture, lifted verbatim from goipy's testdata, running
+  byte-equal against CPython 3.14 stdout. Covers `with M() as x:`,
+  `with M():` raising into the manager, and `M(suppress=True)`
+  swallowing an exception via a truthy `__exit__` return.
+- `LOAD_SPECIAL` for the two dunder slots the `with` prologue uses
+  (`__enter__` / `__exit__`). It's a method-form lookup that pushes
+  `(method, self)` -- same convention as `LOAD_ATTR` with the
+  method bit, so the existing `CALL` bound-method path threads
+  `self` without new plumbing.
+- `WITH_EXCEPT_START`. Reads `exit_func` from `sp-5`, `exit_self`
+  from `sp-4`, the live exception from `sp-1`, and calls
+  `exit_func(exit_self, type(exc), exc, None)` -- pushing the
+  result without popping. Truthy result + `POP_JUMP_IF_TRUE`
+  swallows the exception; falsy + `RERAISE` re-raises.
+- `__name__` on a class. `LOAD_ATTR __name__` returns a fresh `Str`
+  of `class.name`; that's what `exc_type.__name__` reads for the
+  fixture's `print("exit", self.name, exc_type.__name__ ...)` line.
+
+### Out of scope
+
+- `async with` and async context managers
+- `contextlib.contextmanager`-style generator-based managers
+- `traceback` argument to `__exit__` (we always pass `None`)
+- Multiple managers in one `with` (the compiler lowers them to
+  nested withs, which already works)
+
 ## [0.0.11] - 2026-04-25
 
 ### Added

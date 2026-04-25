@@ -735,6 +735,44 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .LOAD_SPECIAL => {
+            // Method-form lookup for one of the dunder slots used by
+            // the `with` prologue. arg=0 -> __enter__, arg=1 -> __exit__.
+            // Stack effect: pops owner, pushes (method, self_or_null)
+            // -- same convention as LOAD_ATTR with method bit set.
+            const arg = oparg(frame, ext_arg);
+            const name: []const u8 = switch (arg) {
+                0 => "__enter__",
+                1 => "__exit__",
+                else => {
+                    try interp.typeError("LOAD_SPECIAL: unknown index");
+                    return error.TypeError;
+                },
+            };
+            const owner = frame.pop();
+            try loadAttr(interp, frame, owner, name, true);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .WITH_EXCEPT_START => {
+            // Stack: [..., exit_func, exit_self, lasti, prev_exc, exc]
+            // Calls exit_func(exit_self, type(exc), exc, None) and
+            // pushes the result without popping. CPython's docs put
+            // the function "4 below the current top" -- that's sp-5
+            // (exit_func), with exit_self at sp-4 and exc at sp-1.
+            const exit_func = frame.stack[frame.sp - 5];
+            const exit_self = frame.stack[frame.sp - 4];
+            const exc_val = frame.stack[frame.sp - 1];
+            const exc_type: Value = if (exc_val == .instance)
+                Value{ .class = exc_val.instance.cls }
+            else
+                Value.none;
+            const argv = [_]Value{ exit_self, exc_type, exc_val, Value.none };
+            const result = try invoke(interp, exit_func, &argv);
+            frame.push(result);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         else => {
             try interp.unsupportedOpcode(first_op, frame.ip);
             return error.UnknownOpcode;
@@ -1105,6 +1143,15 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
         return error.AttributeError;
     }
     if (obj == .class) {
+        if (std.mem.eql(u8, name, "__name__")) {
+            const s = try Str.init(interp.allocator, obj.class.name);
+            const v = Value{ .str = s };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
         if (obj.class.lookup(name)) |v| {
             if (is_method) {
                 frame.push(v);
