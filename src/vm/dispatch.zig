@@ -123,6 +123,78 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.CALL)]);
         },
 
+        .COMPARE_OP => {
+            const arg = oparg(frame, ext_arg);
+            // 3.14 encoding: oparg >> 5 selects the comparison kind.
+            const kind: u3 = @intCast((arg >> 5) & 0x7);
+            const b = frame.pop();
+            const a = frame.pop();
+            const result = compareOp(interp, a, b, kind) catch |e| return e;
+            frame.push(Value{ .boolean = result });
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.COMPARE_OP)]);
+        },
+
+        .IS_OP => {
+            const arg = oparg(frame, ext_arg);
+            const b = frame.pop();
+            const a = frame.pop();
+            const same = a.identityEq(b);
+            const invert = (arg & 1) != 0;
+            frame.push(Value{ .boolean = same != invert });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .TO_BOOL => {
+            const v = frame.pop();
+            frame.push(Value{ .boolean = v.isTruthy() });
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.TO_BOOL)]);
+        },
+
+        .COPY => {
+            const arg = oparg(frame, ext_arg);
+            // COPY arg pushes stack[sp-arg]; arg=1 duplicates TOS.
+            frame.push(frame.stack[frame.sp - arg]);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .SWAP => {
+            const arg = oparg(frame, ext_arg);
+            // SWAP arg swaps TOS with stack[sp-arg]; arg=2 swaps top two.
+            const top_idx = frame.sp - 1;
+            const other = frame.sp - arg;
+            const tmp = frame.stack[top_idx];
+            frame.stack[top_idx] = frame.stack[other];
+            frame.stack[other] = tmp;
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .POP_JUMP_IF_FALSE => {
+            const arg = oparg(frame, ext_arg);
+            const v = frame.pop();
+            const cw = op.cache_width[@intFromEnum(Opcode.POP_JUMP_IF_FALSE)];
+            frame.ip += 2 + 2 * @as(u32, cw);
+            if (!v.isTruthy()) frame.ip += 2 * arg;
+            ext_arg = 0;
+            continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
+        },
+
+        .POP_JUMP_IF_TRUE => {
+            const arg = oparg(frame, ext_arg);
+            const v = frame.pop();
+            const cw = op.cache_width[@intFromEnum(Opcode.POP_JUMP_IF_TRUE)];
+            frame.ip += 2 + 2 * @as(u32, cw);
+            if (v.isTruthy()) frame.ip += 2 * arg;
+            ext_arg = 0;
+            continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
+        },
+
+        .JUMP_FORWARD => {
+            const arg = oparg(frame, ext_arg);
+            frame.ip += 2 + 2 * arg;
+            ext_arg = 0;
+            continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
+        },
+
         .RETURN_VALUE => {
             return frame.pop();
         },
@@ -145,6 +217,30 @@ inline fn advance(frame: *Frame, ext_arg: *u32, cw: u8) Opcode {
     frame.ip += 2 + 2 * @as(u32, cw);
     ext_arg.* = 0;
     return @as(Opcode, @enumFromInt(frame.code.bytecode[frame.ip]));
+}
+
+/// CPython 3.14 COMPARE_OP kinds: 0 `<`, 1 `<=`, 2 `==`, 3 `!=`,
+/// 4 `>`, 5 `>=`. `==` / `!=` accept any pair of types (mismatched
+/// types compare unequal); ordering on unsupported types raises
+/// TypeError.
+fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
+    return switch (kind) {
+        2 => a.equals(b),
+        3 => !a.equals(b),
+        else => blk: {
+            const o = a.order(b) orelse {
+                try interp.typeError("'<' not supported between these types");
+                return error.TypeError;
+            };
+            break :blk switch (kind) {
+                0 => o == .lt,
+                1 => o != .gt,
+                4 => o == .gt,
+                5 => o != .lt,
+                else => unreachable,
+            };
+        },
+    };
 }
 
 fn invoke(interp: *Interp, callable: Value, args: []const Value) !Value {

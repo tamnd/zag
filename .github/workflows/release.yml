@@ -88,4 +88,4 @@ jobs:
           files: dist/*
           generate_release_notes: true
           draft: false
-          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
+          prerelease: false
