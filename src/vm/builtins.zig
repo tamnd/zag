@@ -145,7 +145,7 @@ pub fn sumBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
 /// that don't want to special-case every container shape. Iterators
 /// get drained -- caller owns the result. Strings yield single-byte
 /// `Str` values, matching CPython's `list("abc") == ['a','b','c']`.
-fn materialize(interp: *Interp, v: Value) !*List {
+pub fn materialize(interp: *Interp, v: Value) !*List {
     const a = interp.allocator;
     const out = try List.init(a);
     switch (v) {
