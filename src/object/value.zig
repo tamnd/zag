@@ -546,6 +546,20 @@ pub const Value = union(Tag) {
             for (ax, bx) |x, y| if (!x.equals(y)) return false;
             return true;
         }
+        if (a == .list and b == .list) {
+            const ax = a.list.items.items;
+            const bx = b.list.items.items;
+            if (ax.len != bx.len) return false;
+            for (ax, bx) |x, y| if (!x.equals(y)) return false;
+            return true;
+        }
+        if (a == .tuple and b == .tuple) {
+            const ax = a.tuple.items;
+            const bx = b.tuple.items;
+            if (ax.len != bx.len) return false;
+            for (ax, bx) |x, y| if (!x.equals(y)) return false;
+            return true;
+        }
         // bytes/bytearray compare by content across the two types,
         // matching CPython: `b"x" == bytearray(b"x")` is True.
         const a_bytes: ?[]const u8 = switch (a) {

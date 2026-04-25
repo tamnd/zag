@@ -57,7 +57,27 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "modf", modfFn);
     try reg(interp, m, "frexp", frexpFn);
     try reg(interp, m, "ldexp", ldexpFn);
+    try reg(interp, m, "fsum", fsumFn);
     return m;
+}
+
+fn fsumFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const lst = try builtins_mod.materialize(interp, args[0]);
+    // Kahan-Neumaier compensated summation.
+    var s: f64 = 0;
+    var c: f64 = 0;
+    for (lst.items.items) |x| {
+        const v = try asFloat(interp, x);
+        const t = s + v;
+        if (@abs(s) >= @abs(v)) {
+            c += (s - t) + v;
+        } else {
+            c += (v - t) + s;
+        }
+        s = t;
+    }
+    return floatResult(s + c);
 }
 
 fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {

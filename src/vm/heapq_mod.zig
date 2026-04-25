@@ -13,6 +13,7 @@ const Module = @import("../object/module.zig").Module;
 const List = @import("../object/list.zig").List;
 const Interp = @import("interp.zig").Interp;
 const builtins_mod = @import("builtins.zig");
+const dispatch = @import("dispatch.zig");
 
 pub fn build(interp: *Interp) !*Module {
     const m = try Module.init(interp.allocator, "heapq");
@@ -21,15 +22,21 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "heapify", heapifyFn);
     try reg(interp, m, "heappushpop", heappushpopFn);
     try reg(interp, m, "heapreplace", heapreplaceFn);
-    try reg(interp, m, "nlargest", nlargestFn);
-    try reg(interp, m, "nsmallest", nsmallestFn);
-    try reg(interp, m, "merge", mergeFn);
+    try regKw(interp, m, "nlargest", nlargestFn, nlargestKw);
+    try regKw(interp, m, "nsmallest", nsmallestFn, nsmallestKw);
+    try regKw(interp, m, "merge", mergeFn, mergeKw);
     return m;
 }
 
 fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {
     const f = try interp.allocator.create(BuiltinFn);
     f.* = .{ .name = name, .func = func };
+    try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
+}
+
+fn regKw(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr, kw_func: value_mod.BuiltinKwFnPtr) !void {
+    const f = try interp.allocator.create(BuiltinFn);
+    f.* = .{ .name = name, .func = func, .kw_func = kw_func };
     try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
 }
 
@@ -113,49 +120,94 @@ fn heapreplaceFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return out;
 }
 
-fn nlargestFn(p: *anyopaque, args: []const Value) anyerror!Value {
-    const interp: *Interp = @ptrCast(@alignCast(p));
-    const n: usize = @intCast(switch (args[0]) {
+fn extractKey(kw_names: []const Value, kw_values: []const Value) ?Value {
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "key") and kv != .none) return kv;
+    }
+    return null;
+}
+
+fn extractReverse(kw_names: []const Value, kw_values: []const Value) bool {
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "reverse")) return kv.isTruthy();
+    }
+    return false;
+}
+
+fn nFromArg(arg: Value) usize {
+    return @intCast(switch (arg) {
         .small_int => |i| if (i < 0) 0 else i,
         .boolean => |b| @as(i64, @intFromBool(b)),
-        else => return error.TypeError,
+        else => 0,
     });
-    const src = try builtins_mod.materialize(interp, args[1]);
-    const buf = try interp.allocator.alloc(Value, src.items.items.len);
-    @memcpy(buf, src.items.items);
-    std.sort.block(Value, buf, {}, greaterThan);
+}
+
+fn topN(interp: *Interp, n: usize, src: *List, key: ?Value, want_largest: bool) !*List {
+    const len = src.items.items.len;
+    const idx = try interp.allocator.alloc(usize, len);
+    defer interp.allocator.free(idx);
+    const keys = try interp.allocator.alloc(Value, len);
+    defer interp.allocator.free(keys);
+    for (src.items.items, 0..) |x, i| {
+        idx[i] = i;
+        keys[i] = if (key) |k| try dispatch.invoke(interp, k, &.{x}) else x;
+    }
+    const Ctx = struct { keys: []const Value, largest: bool };
+    const ctx = Ctx{ .keys = keys, .largest = want_largest };
+    std.sort.block(usize, idx, ctx, struct {
+        fn lt(c: Ctx, a: usize, b: usize) bool {
+            const ord = Value.order(c.keys[a], c.keys[b]) orelse .eq;
+            return if (c.largest) ord == .gt else ord == .lt;
+        }
+    }.lt);
     const out = try List.init(interp.allocator);
     var i: usize = 0;
-    while (i < n and i < buf.len) : (i += 1) try out.append(interp.allocator, buf[i]);
-    interp.allocator.free(buf);
+    while (i < n and i < len) : (i += 1) try out.append(interp.allocator, src.items.items[idx[i]]);
+    return out;
+}
+
+fn nlargestFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    return nlargestKw(p, args, &.{}, &.{});
+}
+
+fn nlargestKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const n = nFromArg(args[0]);
+    const src = try builtins_mod.materialize(interp, args[1]);
+    const out = try topN(interp, n, src, extractKey(kw_names, kw_values), true);
     return Value{ .list = out };
 }
 
 fn nsmallestFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    return nsmallestKw(p, args, &.{}, &.{});
+}
+
+fn nsmallestKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
-    const n: usize = @intCast(switch (args[0]) {
-        .small_int => |i| if (i < 0) 0 else i,
-        .boolean => |b| @as(i64, @intFromBool(b)),
-        else => return error.TypeError,
-    });
+    const n = nFromArg(args[0]);
     const src = try builtins_mod.materialize(interp, args[1]);
-    const buf = try interp.allocator.alloc(Value, src.items.items.len);
-    @memcpy(buf, src.items.items);
-    std.sort.block(Value, buf, {}, lessThan);
-    const out = try List.init(interp.allocator);
-    var i: usize = 0;
-    while (i < n and i < buf.len) : (i += 1) try out.append(interp.allocator, buf[i]);
-    interp.allocator.free(buf);
+    const out = try topN(interp, n, src, extractKey(kw_names, kw_values), false);
     return Value{ .list = out };
 }
 
 fn mergeFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    return mergeKw(p, args, &.{}, &.{});
+}
+
+fn mergeKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
+    const reverse = extractReverse(kw_names, kw_values);
     const out = try List.init(interp.allocator);
     for (args) |a| {
         const lst = try builtins_mod.materialize(interp, a);
         for (lst.items.items) |x| try out.append(interp.allocator, x);
     }
-    std.sort.block(Value, out.items.items, {}, lessThan);
+    if (reverse) {
+        std.sort.block(Value, out.items.items, {}, greaterThan);
+    } else {
+        std.sort.block(Value, out.items.items, {}, lessThan);
+    }
     return Value{ .list = out };
 }
