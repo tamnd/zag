@@ -17,6 +17,8 @@ const Code = @import("../object/code.zig").Code;
 const FastKind = @import("../object/code.zig").FastKind;
 const Function = @import("../object/function.zig").Function;
 const Cell = @import("../object/cell.zig").Cell;
+const Class = @import("../object/class.zig").Class;
+const Instance = @import("../object/instance.zig").Instance;
 const Dict = @import("../object/dict.zig").Dict;
 const Frame = @import("frame.zig").Frame;
 const Interp = @import("interp.zig").Interp;
@@ -144,24 +146,7 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
             const is_method = (arg & 1) != 0;
             const name = frame.code.names[name_idx];
             const obj = frame.pop();
-            if (is_method) {
-                const method: ?*value_mod.BuiltinFn = switch (obj) {
-                    .str => strmethods.lookup(name),
-                    .list => listmethods.lookup(name),
-                    .dict => dictmethods.lookup(name),
-                    else => null,
-                };
-                if (method) |m| {
-                    frame.push(Value{ .builtin_fn = m });
-                    frame.push(obj);
-                } else {
-                    try interp.attributeError(obj.typeName(), name);
-                    return error.AttributeError;
-                }
-            } else {
-                try interp.attributeError(obj.typeName(), name);
-                return error.AttributeError;
-            }
+            try loadAttr(interp, frame, obj, name, is_method);
             continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.LOAD_ATTR)]);
         },
 
@@ -607,6 +592,35 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .LOAD_BUILD_CLASS => {
+            const v = interp.builtins.getStr("__build_class__") orelse {
+                try interp.nameError("__build_class__");
+                return error.NameError;
+            };
+            frame.push(v);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .LOAD_LOCALS => {
+            frame.push(Value{ .dict = frame.locals });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .STORE_ATTR => {
+            const arg = oparg(frame, ext_arg);
+            const name = frame.code.names[arg];
+            const obj = frame.pop();
+            const value = frame.pop();
+            switch (obj) {
+                .instance => |i| try i.dict.setStr(interp.allocator, name, value),
+                else => {
+                    try interp.attributeError(obj.typeName(), name);
+                    return error.AttributeError;
+                },
+            }
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.STORE_ATTR)]);
+        },
+
         .RETURN_VALUE => {
             return frame.pop();
         },
@@ -912,6 +926,59 @@ fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
     };
 }
 
+fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_method: bool) !void {
+    // 1. Instance attribute (data) -- always wins.
+    if (obj == .instance) {
+        if (obj.instance.dict.getStr(name)) |v| {
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        // 2. Walk class MRO.
+        if (obj.instance.cls.lookup(name)) |v| {
+            if (is_method and (v == .function or v == .builtin_fn)) {
+                frame.push(v);
+                frame.push(obj);
+            } else if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        try interp.attributeError(obj.typeName(), name);
+        return error.AttributeError;
+    }
+    if (obj == .class) {
+        if (obj.class.lookup(name)) |v| {
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        try interp.attributeError(obj.typeName(), name);
+        return error.AttributeError;
+    }
+    // Built-in methods on str/list/dict.
+    if (is_method) {
+        const method: ?*value_mod.BuiltinFn = switch (obj) {
+            .str => strmethods.lookup(name),
+            .list => listmethods.lookup(name),
+            .dict => dictmethods.lookup(name),
+            else => null,
+        };
+        if (method) |m| {
+            frame.push(Value{ .builtin_fn = m });
+            frame.push(obj);
+            return;
+        }
+    }
+    try interp.attributeError(obj.typeName(), name);
+    return error.AttributeError;
+}
+
 fn invoke(interp: *Interp, callable: Value, args: []const Value) !Value {
     return invokeKw(interp, callable, args, &.{}, &.{});
 }
@@ -931,7 +998,8 @@ fn invokeKw(
             }
             return try f.func(@ptrCast(interp), positional);
         },
-        .function => |fn_val| return callPyFunction(interp, fn_val, positional, kw_names, kw_values),
+        .function => |fn_val| return callPyFunction(interp, fn_val, positional, kw_names, kw_values, null),
+        .class => |cls| return instantiate(interp, cls, positional, kw_names, kw_values),
         else => {
             try interp.typeError("object is not callable");
             return error.TypeError;
@@ -948,6 +1016,7 @@ fn callPyFunction(
     positional: []const Value,
     kw_names: []const Value,
     kw_values: []const Value,
+    locals_override: ?*Dict,
 ) !Value {
     const code = fn_val.code;
     const argcount: u32 = @intCast(code.argcount);
@@ -955,7 +1024,8 @@ fn callPyFunction(
     const has_varargs = (code.flags & CO_VARARGS) != 0;
     const has_varkw = (code.flags & CO_VARKEYWORDS) != 0;
 
-    const new_frame = try Frame.init(interp.allocator, code, fn_val.globals, interp.builtins, fn_val.globals);
+    const locals_dict = locals_override orelse fn_val.globals;
+    const new_frame = try Frame.init(interp.allocator, code, fn_val.globals, interp.builtins, locals_dict);
     new_frame.closure = fn_val.closure;
 
     // 1. Bind positional args.
@@ -1038,4 +1108,83 @@ fn callPyFunction(
     const result = try run(interp, new_frame);
     new_frame.deinit(interp.allocator);
     return result;
+}
+
+fn instantiate(
+    interp: *Interp,
+    cls: *Class,
+    positional: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) !Value {
+    const inst = try Instance.init(interp.allocator, cls);
+    const inst_val = Value{ .instance = inst };
+    if (cls.lookup("__init__")) |init_v| {
+        if (init_v != .function) {
+            try interp.typeError("__init__ is not a Python function");
+            return error.TypeError;
+        }
+        // Bind self as args[0].
+        var stack_buf: [64]Value = undefined;
+        const total = positional.len + 1;
+        if (total > stack_buf.len) {
+            try interp.typeError("too many positional args for __init__");
+            return error.TypeError;
+        }
+        stack_buf[0] = inst_val;
+        @memcpy(stack_buf[1..total], positional);
+        _ = try callPyFunction(interp, init_v.function, stack_buf[0..total], kw_names, kw_values, null);
+    }
+    return inst_val;
+}
+
+/// `__build_class__(body_fn, name, *bases)` runs the class body
+/// function with a fresh dict as its locals namespace, then turns
+/// that dict into a Class. The class body itself returns None;
+/// the namespace is harvested from the frame after the run.
+pub fn buildClass(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 2 or args[0] != .function or args[1] != .str) {
+        try interp.typeError("__build_class__ expects (body_fn, name, *bases)");
+        return error.TypeError;
+    }
+    const body_fn = args[0].function;
+    const name = args[1].str.bytes;
+
+    var bases_buf: [8]*Class = undefined;
+    if (args.len - 2 > bases_buf.len) {
+        try interp.typeError("too many bases");
+        return error.TypeError;
+    }
+    var n_bases: usize = 0;
+    for (args[2..]) |b| {
+        if (b != .class) {
+            try interp.typeError("base must be a class");
+            return error.TypeError;
+        }
+        bases_buf[n_bases] = b.class;
+        n_bases += 1;
+    }
+
+    const ns = try Dict.init(interp.allocator);
+    _ = try callPyFunction(interp, body_fn, &.{}, &.{}, &.{}, ns);
+
+    const cls = try Class.init(interp.allocator, name, bases_buf[0..n_bases], ns);
+    return Value{ .class = cls };
+}
+
+/// `isinstance(obj, cls)` -- walks `obj.cls.mro` looking for `cls`.
+/// Only Instance / Class is in scope; anything else returns False.
+pub fn isInstanceBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[1] != .class) {
+        try interp.typeError("isinstance expects (obj, class)");
+        return error.TypeError;
+    }
+    if (args[0] != .instance) return Value{ .boolean = false };
+    const target = args[1].class;
+    for (args[0].instance.cls.mro) |c| {
+        if (c == target) return Value{ .boolean = true };
+    }
+    return Value{ .boolean = false };
 }
