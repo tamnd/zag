@@ -34,9 +34,14 @@ pub fn build(b: *std.Build) void {
     const exe_tests = b.addTest(.{ .root_module = exe.root_module });
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
-    // .pyc fixtures are not checked in; generate them before the test
-    // module compiles so @embedFile can pick them up.
+    // .pyc fixtures and the fixtures.zig manifest are not checked in;
+    // gen.sh produces both before the test module compiles.
     const gen_fixtures = b.addSystemCommand(&.{ "bash", "tests/fixtures/gen.sh" });
+
+    const fixtures_mod = b.createModule(.{
+        .root_source_file = b.path("tests/fixtures/fixtures.zig"),
+        .target = target,
+    });
 
     const integration = b.addTest(.{
         .root_module = b.createModule(.{
@@ -45,6 +50,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "zag", .module = mod },
+                .{ .name = "fixtures", .module = fixtures_mod },
             },
         }),
     });
