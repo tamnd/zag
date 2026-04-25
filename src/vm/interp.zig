@@ -36,6 +36,10 @@ const struct_mod = @import("struct_mod.zig");
 const csv_mod = @import("csv_mod.zig");
 const urlparse_mod = @import("urlparse_mod.zig");
 const zlib_mod = @import("zlib_mod.zig");
+const binascii_mod = @import("binascii_mod.zig");
+const hmac_mod = @import("hmac_mod.zig");
+const secrets_mod = @import("secrets_mod.zig");
+const uuid_mod = @import("uuid_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -75,6 +79,10 @@ pub const Interp = struct {
     urlparse_module: ?*Module = null,
     urllib_module: ?*Module = null,
     zlib_module: ?*Module = null,
+    binascii_module: ?*Module = null,
+    hmac_module: ?*Module = null,
+    secrets_module: ?*Module = null,
+    uuid_module: ?*Module = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
     io_stringio_class: ?*@import("../object/class.zig").Class = null,
@@ -83,6 +91,8 @@ pub const Interp = struct {
     csv_writer_class: ?*@import("../object/class.zig").Class = null,
     csv_dict_writer_class: ?*@import("../object/class.zig").Class = null,
     urlparse_result_class: ?*@import("../object/class.zig").Class = null,
+    hmac_class: ?*@import("../object/class.zig").Class = null,
+    uuid_class: ?*@import("../object/class.zig").Class = null,
     primitive_classes: std.StringHashMapUnmanaged(*@import("../object/class.zig").Class) = .empty,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every
@@ -449,6 +459,30 @@ pub const Interp = struct {
             if (self.zlib_module) |m| return m;
             const m = zlib_mod.build(self) catch return null;
             self.zlib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "binascii")) {
+            if (self.binascii_module) |m| return m;
+            const m = binascii_mod.build(self) catch return null;
+            self.binascii_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "hmac")) {
+            if (self.hmac_module) |m| return m;
+            const m = hmac_mod.build(self) catch return null;
+            self.hmac_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "secrets")) {
+            if (self.secrets_module) |m| return m;
+            const m = secrets_mod.build(self) catch return null;
+            self.secrets_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "uuid")) {
+            if (self.uuid_module) |m| return m;
+            const m = uuid_mod.build(self) catch return null;
+            self.uuid_module = m;
             return m;
         }
         return null;

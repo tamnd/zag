@@ -9,6 +9,24 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.72] - 2026-04-26
+
+### Added
+
+- `71_binascii_uuid_hmac_secrets` fixture, byte-equal against
+  CPython 3.14.
+- `binascii` module: `hexlify`/`unhexlify`/`b2a_hex`/`a2b_hex`,
+  `b2a_base64(..., newline=False)` / `a2b_base64`, and `crc32`.
+- `hmac` module: `hmac.new(key, msg, digestmod)` (string name or
+  hashlib constructor), `hmac.digest`, `hmac.compare_digest`,
+  with `name`, `digest_size`, and `block_size` attrs on the
+  HMAC object.
+- `secrets` module: `token_bytes` / `token_hex` / `token_urlsafe`,
+  `randbelow` / `randbits`, `choice`, and `compare_digest`.
+- `uuid` module: `UUID(hex)` / `UUID(bytes=...)`, `uuid4`, `uuid5`,
+  `NAMESPACE_DNS` / `NAMESPACE_URL`, with `bytes` / `hex` / `int` /
+  `version` attrs and a canonical `__str__`.
+
 ## [0.0.71] - 2026-04-25
 
 ### Added
