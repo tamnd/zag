@@ -2,6 +2,7 @@
 //! reach the marshal / object / vm namespaces through here.
 
 pub const op = @import("op/opcode.zig");
+pub const re = @import("lib/re/re.zig");
 pub const object = struct {
     pub const value = @import("object/value.zig");
     pub const code = @import("object/code.zig");
