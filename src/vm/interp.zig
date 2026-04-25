@@ -40,6 +40,10 @@ const binascii_mod = @import("binascii_mod.zig");
 const hmac_mod = @import("hmac_mod.zig");
 const secrets_mod = @import("secrets_mod.zig");
 const uuid_mod = @import("uuid_mod.zig");
+const difflib_mod = @import("difflib_mod.zig");
+const shlex_mod = @import("shlex_mod.zig");
+const gzip_mod = @import("gzip_mod.zig");
+const fnmatch_mod = @import("fnmatch_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -83,6 +87,11 @@ pub const Interp = struct {
     hmac_module: ?*Module = null,
     secrets_module: ?*Module = null,
     uuid_module: ?*Module = null,
+    difflib_module: ?*Module = null,
+    shlex_module: ?*Module = null,
+    gzip_module: ?*Module = null,
+    fnmatch_module: ?*Module = null,
+    difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
     io_stringio_class: ?*@import("../object/class.zig").Class = null,
@@ -483,6 +492,30 @@ pub const Interp = struct {
             if (self.uuid_module) |m| return m;
             const m = uuid_mod.build(self) catch return null;
             self.uuid_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "difflib")) {
+            if (self.difflib_module) |m| return m;
+            const m = difflib_mod.build(self) catch return null;
+            self.difflib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "shlex")) {
+            if (self.shlex_module) |m| return m;
+            const m = shlex_mod.build(self) catch return null;
+            self.shlex_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "gzip")) {
+            if (self.gzip_module) |m| return m;
+            const m = gzip_mod.build(self) catch return null;
+            self.gzip_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "fnmatch")) {
+            if (self.fnmatch_module) |m| return m;
+            const m = fnmatch_mod.build(self) catch return null;
+            self.fnmatch_module = m;
             return m;
         }
         return null;

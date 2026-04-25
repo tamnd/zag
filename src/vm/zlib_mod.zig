@@ -68,6 +68,14 @@ fn findMatch(data: []const u8, pos: usize) struct { dist: usize, len: usize } {
     return .{ .dist = best_dist, .len = best_len };
 }
 
+pub fn lzCompressPub(a: std.mem.Allocator, data: []const u8) ![]u8 {
+    return lzCompress(a, data);
+}
+
+pub fn lzDecompressPub(a: std.mem.Allocator, data: []const u8) ![]u8 {
+    return lzDecompress(a, data);
+}
+
 fn lzCompress(a: std.mem.Allocator, data: []const u8) ![]u8 {
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(a);
