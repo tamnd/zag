@@ -798,6 +798,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 2 => fn_val.function.kw_defaults = attr_val.dict,
                 4 => {}, // annotations: ignored
                 8 => fn_val.function.closure = attr_val.tuple,
+                16 => {}, // annotate function (CPython 3.14 PEP 649): ignored
                 else => {
                     try interp.stderr.print(
                         "zag: SET_FUNCTION_ATTRIBUTE arg {d} not supported\n",
@@ -2117,6 +2118,29 @@ fn multiply(interp: *Interp, a: Value, b: Value) !Value {
                 for (lst.items.items) |x| try out.append(interp.allocator, x);
             }
             return Value{ .list = out };
+        }
+    }
+    if (a == .str or b == .str) {
+        const SeqOp2 = struct {
+            fn intFrom(v: Value) ?i64 {
+                return switch (v) {
+                    .small_int => |i| i,
+                    .boolean => |x| @intFromBool(x),
+                    else => null,
+                };
+            }
+        };
+        const s = if (a == .str) a.str else b.str;
+        const n_opt = if (a == .str) SeqOp2.intFrom(b) else SeqOp2.intFrom(a);
+        if (n_opt) |n| {
+            const rep: usize = if (n < 0) 0 else @intCast(n);
+            var buf = try interp.allocator.alloc(u8, s.bytes.len * rep);
+            var i: usize = 0;
+            while (i < rep) : (i += 1) {
+                @memcpy(buf[i * s.bytes.len .. (i + 1) * s.bytes.len], s.bytes);
+            }
+            const new_s = try Str.fromOwnedSlice(interp.allocator, buf);
+            return Value{ .str = new_s };
         }
     }
     if (a == .tuple or b == .tuple) {
