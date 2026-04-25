@@ -11,6 +11,7 @@ const Tuple = @import("../object/tuple.zig").Tuple;
 const Class = @import("../object/class.zig").Class;
 const Dict = @import("../object/dict.zig").Dict;
 const Str = @import("../object/string.zig").Str;
+const Descriptor = @import("../object/descriptor.zig").Descriptor;
 
 pub const BuiltinError = error{
     BadArgument,
@@ -64,6 +65,28 @@ pub fn superBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     try interp.typeError("super() proxy objects not implemented");
     return error.TypeError;
+}
+
+fn makeDescriptor(interp_opaque: *anyopaque, kind: Descriptor.Kind, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.typeError("descriptor builtin expects exactly one argument");
+        return error.TypeError;
+    }
+    const d = try Descriptor.init(interp.allocator, kind, args[0]);
+    return Value{ .descriptor = d };
+}
+
+pub fn propertyBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return makeDescriptor(interp_opaque, .property, args);
+}
+
+pub fn classmethodBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return makeDescriptor(interp_opaque, .classmethod, args);
+}
+
+pub fn staticmethodBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return makeDescriptor(interp_opaque, .staticmethod, args);
 }
 
 pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
@@ -479,6 +502,9 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("__build_class__", dispatch.buildClass);
     try interp.registerBuiltin("isinstance", dispatch.isInstanceBuiltin);
     try interp.registerBuiltin("super", superBuiltin);
+    try interp.registerBuiltin("property", propertyBuiltin);
+    try interp.registerBuiltin("classmethod", classmethodBuiltin);
+    try interp.registerBuiltin("staticmethod", staticmethodBuiltin);
     try installExceptions(interp);
 }
 

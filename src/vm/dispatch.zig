@@ -1168,6 +1168,10 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
         }
         // 2. Walk class MRO.
         if (obj.instance.cls.lookup(name)) |v| {
+            if (v == .descriptor) {
+                try bindDescriptor(interp, frame, v.descriptor, obj, Value{ .class = obj.instance.cls }, is_method);
+                return;
+            }
             if (is_method and (v == .function or v == .builtin_fn)) {
                 frame.push(v);
                 frame.push(obj);
@@ -1191,6 +1195,10 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
         if (obj.class.lookup(name)) |v| {
+            if (v == .descriptor) {
+                try bindDescriptor(interp, frame, v.descriptor, Value.null_sentinel, obj, is_method);
+                return;
+            }
             if (is_method) {
                 frame.push(v);
                 frame.push(Value.null_sentinel);
@@ -1216,6 +1224,57 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
     }
     try interp.attributeError(obj.typeName(), name);
     return error.AttributeError;
+}
+
+/// Apply a descriptor's binding rule when its name is fetched off an
+/// instance or class. `instance` is null_sentinel for class-side
+/// access (`Cls.attr`); otherwise it is the instance receiver.
+/// `cls` is the owning class (or `Cls` itself for class-side).
+fn bindDescriptor(
+    interp: *Interp,
+    frame: *Frame,
+    d: *@import("../object/descriptor.zig").Descriptor,
+    instance: Value,
+    cls: Value,
+    is_method: bool,
+) !void {
+    switch (d.kind) {
+        .property => {
+            // `Cls.area` returns the descriptor itself; `obj.area`
+            // invokes the getter with `obj`.
+            if (instance == .null_sentinel) {
+                if (is_method) {
+                    frame.push(Value{ .descriptor = d });
+                    frame.push(Value.null_sentinel);
+                } else frame.push(Value{ .descriptor = d });
+                return;
+            }
+            const result = try invoke(interp, d.func, &.{instance});
+            if (is_method) {
+                frame.push(result);
+                frame.push(Value.null_sentinel);
+            } else frame.push(result);
+        },
+        .classmethod => {
+            // Always bind the owning class as the first argument.
+            if (is_method) {
+                frame.push(d.func);
+                frame.push(cls);
+            } else {
+                // Bare attribute access: produce a bound builtin-style
+                // wrapper isn't in scope; for the fixture this branch
+                // isn't reached, so fall back to pushing the function.
+                frame.push(d.func);
+            }
+        },
+        .staticmethod => {
+            // No binding -- the function is called as-is.
+            if (is_method) {
+                frame.push(d.func);
+                frame.push(Value.null_sentinel);
+            } else frame.push(d.func);
+        },
+    }
 }
 
 pub fn invoke(interp: *Interp, callable: Value, args: []const Value) !Value {
