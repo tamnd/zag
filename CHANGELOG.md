@@ -9,6 +9,20 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.74] - 2026-04-26
+
+### Added
+
+- `73_difflib_shlex_gzip_fnmatch` fixture, byte-equal against
+  CPython 3.14.
+- `difflib`: `get_close_matches`, `SequenceMatcher.ratio` (and the
+  `quick_*` aliases), `ndiff`, `unified_diff`.
+- `shlex`: `quote`, `join`, `split` (POSIX rules).
+- `gzip`: `compress` / `decompress` (round-trip via the zlib_mod
+  LZ format).
+- `fnmatch`: `fnmatch`, `fnmatchcase`, `filter` with `*`, `?`,
+  `[..]`, `[!..]` classes.
+
 ## [0.0.73] - 2026-04-26
 
 ### Added
