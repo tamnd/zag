@@ -1975,6 +1975,25 @@ fn add(interp: *Interp, a: Value, b: Value) !Value {
             return Value{ .bytearray = out };
         }
     }
+    if (a == .list and b == .list) {
+        const out = try @import("../object/list.zig").List.init(interp.allocator);
+        for (a.list.items.items) |x| try out.append(interp.allocator, x);
+        for (b.list.items.items) |x| try out.append(interp.allocator, x);
+        return Value{ .list = out };
+    }
+    if (a == .tuple and b == .tuple) {
+        const out = try Tuple.init(interp.allocator, a.tuple.items.len + b.tuple.items.len);
+        var i: usize = 0;
+        for (a.tuple.items) |x| {
+            out.items[i] = x;
+            i += 1;
+        }
+        for (b.tuple.items) |x| {
+            out.items[i] = x;
+            i += 1;
+        }
+        return Value{ .tuple = out };
+    }
     try interp.raisePy("TypeError", "unsupported operand type(s) for +");
     return error.PyException;
 }
