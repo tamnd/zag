@@ -39,6 +39,17 @@ fn runFixture(name: []const u8, pyc: []const u8, expected: []const u8) !void {
 
     var interp = try zag.vm.interp.Interp.init(run_alloc, &writer, &stderr_writer);
     try interp.installBuiltins();
+    // Pre-register every helper fixture (the ones whose name starts
+    // with an underscore — convention for "imported by another
+    // fixture") so `import _36_mymod` finds them. Helpers are lazy:
+    // their body only runs if something actually imports them.
+    inline for (fixtures.names) |fname| {
+        if (fname.len > 0 and fname[0] == '_') {
+            const helper_pyc = @embedFile("fixtures/" ++ fname ++ ".cpython-314.pyc");
+            const helper_code = try zag.marshal.pyc.loadBytes(run_alloc, helper_pyc);
+            try interp.registerModuleCode(fname, helper_code);
+        }
+    }
     _ = try interp.run(code);
     try writer.flush();
 

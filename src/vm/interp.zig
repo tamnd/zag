@@ -33,6 +33,15 @@ pub const Interp = struct {
     /// first IMPORT_NAME so a script that doesn't import it pays
     /// nothing.
     asyncio_module: ?*Module = null,
+    /// Pre-registered user-module code objects, keyed by module name.
+    /// Populated by the embedder (the test harness pre-registers every
+    /// helper `.pyc`; the CLI pre-registers siblings of the entry
+    /// `.pyc`). Looked up on IMPORT_NAME after builtins.
+    module_codes: std.StringHashMapUnmanaged(*Code) = .empty,
+    /// Already-executed user modules, keyed by name. First import runs
+    /// the body; subsequent imports return the cached `*Module` so
+    /// identity holds (e.g. `import x as a; import x as b; a is b`).
+    user_modules: std.StringHashMapUnmanaged(*Module) = .empty,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -142,6 +151,37 @@ pub const Interp = struct {
     pub fn importError(self: *Interp, name: []const u8) !void {
         try self.stderr.print("ImportError: no module named '{s}'\n", .{name});
         try self.stderr.flush();
+    }
+
+    /// Register a pre-loaded `.pyc` so that `import name` finds it.
+    /// The body isn't run until something actually imports it; this
+    /// only stashes the code object.
+    pub fn registerModuleCode(self: *Interp, name: []const u8, code: *Code) !void {
+        try self.module_codes.put(self.allocator, name, code);
+    }
+
+    /// Drive a user module to first execution and cache it. Subsequent
+    /// imports of the same name return this cached `*Module`. Returns
+    /// null if the name isn't pre-registered; the caller decides how
+    /// to surface that (today: ImportError).
+    pub fn loadUserModule(self: *Interp, name: []const u8) !?*Module {
+        if (self.user_modules.get(name)) |m| return m;
+        const code = self.module_codes.get(name) orelse return null;
+        const mod_globals = try Dict.init(self.allocator);
+        const name_val = try Str.init(self.allocator, name);
+        try mod_globals.setStr(self.allocator, "__name__", Value{ .str = name_val });
+        const m = try Module.init(self.allocator, name);
+        m.attrs = mod_globals;
+        // Insert before running the body so a circular re-import
+        // returns the partially-populated module rather than looping.
+        try self.user_modules.put(self.allocator, name, m);
+        const frame = try Frame.init(self.allocator, code, mod_globals, self.builtins, mod_globals);
+        defer frame.deinit(self.allocator);
+        _ = dispatch.run(self, frame) catch |err| {
+            _ = self.user_modules.remove(name);
+            return err;
+        };
+        return m;
     }
 
     /// Hand back the builtin module of the given name (today: just

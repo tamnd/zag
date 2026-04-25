@@ -115,17 +115,42 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
 
         .IMPORT_NAME => {
             const arg = oparg(frame, ext_arg);
-            // Stack: [..., level, fromlist]. Pop both — we don't model
-            // relative imports or `from x import a, b` yet, just plain
-            // `import name` for the small set of builtin modules.
+            // Stack: [..., level, fromlist]. Levels (relative imports)
+            // aren't modelled; the fromlist is irrelevant on this side
+            // because IMPORT_FROM does the per-name binding.
             _ = frame.pop();
             _ = frame.pop();
             const name = frame.code.names[arg];
-            const m = interp.getBuiltinModule(name) orelse {
-                try interp.importError(name);
-                return error.PyException;
+            if (interp.getBuiltinModule(name)) |m| {
+                frame.push(Value{ .module = m });
+                continue :sw advance(frame, &ext_arg, 0);
+            }
+            if (try interp.loadUserModule(name)) |m| {
+                frame.push(Value{ .module = m });
+                continue :sw advance(frame, &ext_arg, 0);
+            }
+            try interp.importError(name);
+            return error.PyException;
+        },
+
+        .IMPORT_FROM => {
+            // `from m import x` after IMPORT_NAME leaves the module on
+            // TOS; IMPORT_FROM peeks (does NOT pop), reads the named
+            // attribute, and pushes it for the following STORE_*.
+            const arg = oparg(frame, ext_arg);
+            const name = frame.code.names[arg];
+            const tos = frame.top();
+            const v: Value = switch (tos) {
+                .module => |m| m.attrs.getStr(name) orelse {
+                    try interp.attributeError("module", name);
+                    return error.AttributeError;
+                },
+                else => {
+                    try interp.typeError("IMPORT_FROM expects a module on TOS");
+                    return error.TypeError;
+                },
             };
-            frame.push(Value{ .module = m });
+            frame.push(v);
             continue :sw advance(frame, &ext_arg, 0);
         },
 
