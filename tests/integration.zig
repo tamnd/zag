@@ -37,7 +37,10 @@ fn runFixture(name: []const u8, pyc: []const u8, expected: []const u8) !void {
     var stderr_buf: [4 * 1024]u8 = undefined;
     var stderr_writer = std.Io.Writer.fixed(&stderr_buf);
 
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
     var interp = try zag.vm.interp.Interp.init(run_alloc, &writer, &stderr_writer);
+    interp.io = threaded.io();
     try interp.installBuiltins();
     // Pre-register every helper fixture (top-level scripts whose name
     // starts with an underscore, plus every module inside a helper
