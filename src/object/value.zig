@@ -195,10 +195,28 @@ pub const Value = union(Tag) {
     }
 
     /// Python `str()` for values where it differs from repr — strings
-    /// render without quotes, everything else falls back to repr.
+    /// render without quotes; an instance with a tuple `args` attr
+    /// (the exception shape we use) renders the same way CPython
+    /// formats `str(exc)` — empty for `args = ()`, the bare message
+    /// for `(msg,)`, and a tuple repr for two or more.
     pub fn writeStr(self: Value, w: *std.Io.Writer) !void {
         switch (self) {
             .str => |s| try w.writeAll(s.bytes),
+            .instance => |obj| {
+                if (obj.dict.getStr("args")) |a| switch (a) {
+                    .tuple => |t| {
+                        if (t.items.len == 0) return;
+                        if (t.items.len == 1) {
+                            try t.items[0].writeStr(w);
+                            return;
+                        }
+                        try a.writeRepr(w);
+                        return;
+                    },
+                    else => {},
+                };
+                try self.writeRepr(w);
+            },
             else => try self.writeRepr(w),
         }
     }
