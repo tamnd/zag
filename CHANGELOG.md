@@ -9,6 +9,13 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.94] - 2026-04-26
+
+### Added
+
+- `94_threadsafe_list` fixture, byte-equal.
+- `list + list` and `tuple + tuple` concatenate.
+
 ## [0.0.93] - 2026-04-26
 
 ### Added
