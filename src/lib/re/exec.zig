@@ -132,6 +132,26 @@ fn run(a: std.mem.Allocator, prog: *const Program, input: []const u8, sp0: usize
                     return null;
                 }
             },
+            .wb => {
+                const left = sp > 0 and isWord(input[sp - 1]);
+                const right = sp < input.len and isWord(input[sp]);
+                if (left != right) {
+                    cur_pc = pc + 1;
+                } else if (try popThread(a, &stack, &cur_pc, &cur_sp, &saves)) {} else {
+                    a.free(saves);
+                    return null;
+                }
+            },
+            .nwb => {
+                const left = sp > 0 and isWord(input[sp - 1]);
+                const right = sp < input.len and isWord(input[sp]);
+                if (left == right) {
+                    cur_pc = pc + 1;
+                } else if (try popThread(a, &stack, &cur_pc, &cur_sp, &saves)) {} else {
+                    a.free(saves);
+                    return null;
+                }
+            },
             .backref => {
                 const gid = inst.a;
                 const s_idx = 2 * gid;
@@ -226,4 +246,8 @@ fn popThread(a: std.mem.Allocator, stack: *std.ArrayList(Thread), cur_pc: *u32, 
 
 fn asciiLower(c: u8) u8 {
     return if (c >= 'A' and c <= 'Z') c + 32 else c;
+}
+
+fn isWord(c: u8) bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_';
 }

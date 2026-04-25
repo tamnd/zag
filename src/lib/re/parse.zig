@@ -400,7 +400,9 @@ const Parser = struct {
             'n' => return Node{ .literal = '\n' },
             't' => return Node{ .literal = '\t' },
             'r' => return Node{ .literal = '\r' },
-            'b', 'B', 'A', 'Z' => return error.UnsupportedRegex,
+            'b' => return Node.wb,
+            'B' => return Node.nwb,
+            'A', 'Z' => return error.UnsupportedRegex,
             '1'...'9' => return Node{ .backref = c - '0' },
             else => return Node{ .literal = c },
         }

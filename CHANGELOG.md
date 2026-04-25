@@ -9,6 +9,31 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.67] - 2026-04-25
+
+### Added
+
+- `66_json_re_string_copy_stress` fixture, byte-equal against
+  CPython 3.14.
+- Regex word boundaries `\b` and `\B` via new `wb`/`nwb` opcodes.
+- `Match.expand` method, sharing the replacement template parser
+  with `re.sub`.
+- `copy.copy` and `copy.deepcopy` for `set` (and `frozenset`).
+- `Match.lastindex` and `Match.lastgroup` attributes.
+- `type(x).__name__` works for instances of primitive types like
+  `int` and `float` via a lazy primitive-class cache.
+
+### Changed
+
+- `re.compile` raises a Python `ValueError` for invalid patterns
+  instead of aborting with a runtime error, so user code can
+  catch it.
+- `json.dumps` coerces non-string dict keys (`int`, `float`,
+  `bool`, `None`) to their string form, matching CPython.
+- `repr(str)` escapes control bytes, backslashes, and newlines
+  the same way CPython does, including the `'` vs `"` quote
+  choice.
+
 ## [0.0.66] - 2026-04-25
 
 ### Added

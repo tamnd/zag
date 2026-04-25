@@ -75,6 +75,8 @@ const Ctx = struct {
             .any => try self.emit(.{ .op = .any }),
             .bol => try self.emit(.{ .op = .bol }),
             .eol => try self.emit(.{ .op = .eol }),
+            .wb => try self.emit(.{ .op = .wb }),
+            .nwb => try self.emit(.{ .op = .nwb }),
             .class => |cls| {
                 const id: u32 = @intCast(self.classes.items.len);
                 try self.classes.append(self.a, cls.set);

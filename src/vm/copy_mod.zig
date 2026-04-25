@@ -13,6 +13,7 @@ const Module = @import("../object/module.zig").Module;
 const List = @import("../object/list.zig").List;
 const Tuple = @import("../object/tuple.zig").Tuple;
 const Dict = @import("../object/dict.zig").Dict;
+const Set = @import("../object/set.zig").Set;
 const Interp = @import("interp.zig").Interp;
 
 pub fn build(interp: *Interp) !*Module {
@@ -50,6 +51,11 @@ fn shallow(interp: *Interp, v: Value) !Value {
             for (d.pairs.items) |pair| try out.setKey(interp.allocator, pair.key, pair.value);
             break :blk Value{ .dict = out };
         },
+        .set => |s| blk: {
+            const out = if (s.frozen) try Set.initFrozen(interp.allocator) else try Set.init(interp.allocator);
+            for (s.items.items) |x| try out.add(interp.allocator, x);
+            break :blk Value{ .set = out };
+        },
         .tuple => v,
         else => v,
     };
@@ -73,6 +79,11 @@ fn deep(interp: *Interp, v: Value) anyerror!Value {
             const out = try Tuple.init(interp.allocator, t.items.len);
             for (t.items, 0..) |x, i| out.items[i] = try deep(interp, x);
             break :blk Value{ .tuple = out };
+        },
+        .set => |s| blk: {
+            const out = if (s.frozen) try Set.initFrozen(interp.allocator) else try Set.init(interp.allocator);
+            for (s.items.items) |x| try out.add(interp.allocator, try deep(interp, x));
+            break :blk Value{ .set = out };
         },
         else => v,
     };

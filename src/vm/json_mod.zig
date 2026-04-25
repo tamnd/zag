@@ -144,16 +144,26 @@ fn writeObject(interp: *Interp, buf: *std.ArrayList(u8), d: *Dict, opts: DumpOpt
     defer idx_buf.deinit(interp.allocator);
     for (d.pairs.items, 0..) |_, i| try idx_buf.append(interp.allocator, i);
     if (opts.sort_keys) {
-        const Ctx = struct { pairs: []const Dict.Pair };
-        const ctx = Ctx{ .pairs = d.pairs.items };
+        const Ctx = struct { pairs: []const Dict.Pair, alloc: std.mem.Allocator };
+        const ctx = Ctx{ .pairs = d.pairs.items, .alloc = interp.allocator };
         std.sort.block(usize, idx_buf.items, ctx, struct {
+            fn keyStr(c: Ctx, k: Value, buf2: []u8) []const u8 {
+                _ = c;
+                return switch (k) {
+                    .str => |s| s.bytes,
+                    .small_int => |i| std.fmt.bufPrint(buf2, "{d}", .{i}) catch "",
+                    .float => |f| std.fmt.bufPrint(buf2, "{d}", .{f}) catch "",
+                    .boolean => |b| if (b) "true" else "false",
+                    .none => "null",
+                    else => "",
+                };
+            }
             fn lt(c: Ctx, a: usize, b: usize) bool {
-                const ak = c.pairs[a].key;
-                const bk = c.pairs[b].key;
-                if (ak == .str and bk == .str) {
-                    return std.mem.lessThan(u8, ak.str.bytes, bk.str.bytes);
-                }
-                return false;
+                var ba: [64]u8 = undefined;
+                var bb: [64]u8 = undefined;
+                const ak = keyStr(c, c.pairs[a].key, &ba);
+                const bk = keyStr(c, c.pairs[b].key, &bb);
+                return std.mem.lessThan(u8, ak, bk);
             }
         }.lt);
     }
@@ -165,12 +175,7 @@ fn writeObject(interp: *Interp, buf: *std.ArrayList(u8), d: *Dict, opts: DumpOpt
             if (opts.indent) |_| try buf.append(interp.allocator, '\n');
         }
         if (opts.indent) |istep| try writeIndent(interp, buf, istep * (depth + 1));
-        if (pair.key == .str) {
-            try writeJsonString(interp, buf, pair.key.str.bytes);
-        } else {
-            // Coerce non-str keys via repr; fixture only uses str keys.
-            try buf.appendSlice(interp.allocator, "\"\"");
-        }
+        try writeJsonKey(interp, buf, pair.key);
         try buf.appendSlice(interp.allocator, opts.sep_kv);
         try writeValue(interp, buf, pair.value, opts, depth + 1);
     }
@@ -179,6 +184,29 @@ fn writeObject(interp: *Interp, buf: *std.ArrayList(u8), d: *Dict, opts: DumpOpt
         try writeIndent(interp, buf, istep * depth);
     }
     try buf.append(interp.allocator, '}');
+}
+
+fn writeJsonKey(interp: *Interp, buf: *std.ArrayList(u8), key: Value) !void {
+    switch (key) {
+        .str => |s| try writeJsonString(interp, buf, s.bytes),
+        .small_int => |i| {
+            var tmp: [32]u8 = undefined;
+            const s = try std.fmt.bufPrint(&tmp, "{d}", .{i});
+            try buf.append(interp.allocator, '"');
+            try buf.appendSlice(interp.allocator, s);
+            try buf.append(interp.allocator, '"');
+        },
+        .float => |f| {
+            var tmp: [64]u8 = undefined;
+            const s = try std.fmt.bufPrint(&tmp, "{d}", .{f});
+            try buf.append(interp.allocator, '"');
+            try buf.appendSlice(interp.allocator, s);
+            try buf.append(interp.allocator, '"');
+        },
+        .boolean => |b| try buf.appendSlice(interp.allocator, if (b) "\"true\"" else "\"false\""),
+        .none => try buf.appendSlice(interp.allocator, "\"null\""),
+        else => try buf.appendSlice(interp.allocator, "\"\""),
+    }
 }
 
 fn writeIndent(interp: *Interp, buf: *std.ArrayList(u8), n: usize) !void {
