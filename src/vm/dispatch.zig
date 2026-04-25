@@ -33,6 +33,7 @@ const memoryviewmethods = @import("memoryviewmethods.zig");
 const dictmethods = @import("dictmethods.zig");
 const exc = @import("exc.zig");
 const builtins_mod = @import("builtins.zig");
+const dunder = @import("dunder.zig");
 const format_mod = @import("format.zig");
 
 pub const DispatchError = error{
@@ -1245,7 +1246,15 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const obj = frame.pop();
             const value = frame.pop();
             switch (obj) {
-                .instance => |i| try i.dict.setStr(interp.allocator, name, value),
+                .instance => |i| {
+                    if (i.cls.lookup(name)) |descr| {
+                        if (descr == .instance and dunder.lookup(descr, "__set__") != null) {
+                            _ = try dunder.call(interp, descr, "__set__", &.{ obj, value });
+                            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.STORE_ATTR)]);
+                        }
+                    }
+                    try i.dict.setStr(interp.allocator, name, value);
+                },
                 .class => |c| try c.dict.setStr(interp.allocator, name, value),
                 .module => |m| try m.attrs.setStr(interp.allocator, name, value),
                 else => {
@@ -1254,6 +1263,31 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 },
             }
             continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.STORE_ATTR)]);
+        },
+
+        .DELETE_ATTR => {
+            const arg = oparg(frame, ext_arg);
+            const name = frame.code.names[arg];
+            const obj = frame.pop();
+            switch (obj) {
+                .instance => |i| {
+                    if (i.cls.lookup(name)) |descr| {
+                        if (descr == .instance and dunder.lookup(descr, "__delete__") != null) {
+                            _ = try dunder.call(interp, descr, "__delete__", &.{obj});
+                            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.DELETE_ATTR)]);
+                        }
+                    }
+                    if (!i.dict.delete(name)) {
+                        try interp.attributeError(obj.typeName(), name);
+                        return error.AttributeError;
+                    }
+                },
+                else => {
+                    try interp.attributeError(obj.typeName(), name);
+                    return error.AttributeError;
+                },
+            }
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.DELETE_ATTR)]);
         },
 
         .RETURN_VALUE => {
@@ -2039,6 +2073,11 @@ fn remainder(interp: *Interp, a: Value, b: Value) !Value {
 }
 
 fn subscript(interp: *Interp, container: Value, key: Value) !Value {
+    if (container == .class) {
+        if (container.class.lookup("__class_getitem__")) |hook| {
+            return try invoke(interp, hook, &.{ container, key });
+        }
+    }
     switch (container) {
         .str => |s| {
             const bytes = s.bytes;
@@ -2775,8 +2814,28 @@ fn matchClassCheck(subject: Value, cls: Value) bool {
 }
 
 fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_method: bool) !void {
-    // 1. Instance attribute (data) -- always wins.
     if (obj == .instance) {
+        if (std.mem.eql(u8, name, "__dict__")) {
+            const v = Value{ .dict = obj.instance.dict };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        // Data descriptors on the class beat the instance dict.
+        const class_v = obj.instance.cls.lookup(name);
+        if (class_v) |v| {
+            if (v == .instance and dunder.lookup(v, "__set__") != null) {
+                if (try dunder.call(interp, v, "__get__", &.{ obj, Value{ .class = obj.instance.cls } })) |r| {
+                    if (is_method) {
+                        frame.push(r);
+                        frame.push(Value.null_sentinel);
+                    } else frame.push(r);
+                    return;
+                }
+            }
+        }
         if (obj.instance.dict.getStr(name)) |v| {
             if (is_method) {
                 frame.push(v);
@@ -2784,11 +2843,20 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             } else frame.push(v);
             return;
         }
-        // 2. Walk class MRO.
-        if (obj.instance.cls.lookup(name)) |v| {
+        if (class_v) |v| {
             if (v == .descriptor) {
                 try bindDescriptor(interp, frame, v.descriptor, obj, Value{ .class = obj.instance.cls }, is_method);
                 return;
+            }
+            // Non-data descriptor: only `__get__`.
+            if (v == .instance and dunder.lookup(v, "__get__") != null) {
+                if (try dunder.call(interp, v, "__get__", &.{ obj, Value{ .class = obj.instance.cls } })) |r| {
+                    if (is_method) {
+                        frame.push(r);
+                        frame.push(Value.null_sentinel);
+                    } else frame.push(r);
+                    return;
+                }
             }
             if (is_method and (v == .function or v == .builtin_fn)) {
                 frame.push(v);
@@ -2836,6 +2904,17 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
         }
         try interp.attributeError(obj.typeName(), name);
         return error.AttributeError;
+    }
+    if (obj == .builtin_fn) {
+        if (std.mem.eql(u8, name, "__name__")) {
+            const s = try Str.init(interp.allocator, obj.builtin_fn.name);
+            const v = Value{ .str = s };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
     }
     if (obj == .generator) {
         const m: ?*value_mod.BuiltinFn = if (std.mem.eql(u8, name, "send"))
@@ -3375,6 +3454,24 @@ pub fn buildClass(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
     // `__class__`. Populate it now so LOAD_DEREF returns the real class.
     if (ns.getStr("__classcell__")) |cell_val| {
         if (cell_val == .cell) cell_val.cell.value = Value{ .class = cls };
+    }
+    // PEP 487: notify descriptors of their owner+name, then notify any
+    // parent class's `__init_subclass__` of the new subclass.
+    for (ns.keys.items) |attr_name| {
+        const v = ns.getStr(attr_name) orelse continue;
+        if (v != .instance) continue;
+        if (dunder.lookup(v, "__set_name__") == null) continue;
+        const name_str = try Str.init(interp.allocator, attr_name);
+        _ = try dunder.call(interp, v, "__set_name__", &.{ Value{ .class = cls }, Value{ .str = name_str } });
+    }
+    if (n_bases > 0) {
+        var i: usize = 1;
+        while (i < cls.mro.len) : (i += 1) {
+            if (cls.mro[i].dict.getStr("__init_subclass__")) |hook| {
+                _ = try invoke(interp, hook, &.{Value{ .class = cls }});
+                break;
+            }
+        }
     }
     return Value{ .class = cls };
 }
