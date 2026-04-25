@@ -1896,51 +1896,92 @@ fn helpBuiltin(_: *anyopaque, _: []const Value) anyerror!Value {
 /// these from Python would work without further plumbing.
 fn installExceptions(interp: *Interp) !void {
     const a = interp.allocator;
-    const base_exc = try Class.init(a, "BaseException", &.{}, try Dict.init(a));
-    const exception = try Class.init(a, "Exception", &.{base_exc}, try Dict.init(a));
-    const arith = try Class.init(a, "ArithmeticError", &.{exception}, try Dict.init(a));
-    const lookup = try Class.init(a, "LookupError", &.{exception}, try Dict.init(a));
-    const zero_div = try Class.init(a, "ZeroDivisionError", &.{arith}, try Dict.init(a));
-    const value_err = try Class.init(a, "ValueError", &.{exception}, try Dict.init(a));
-    const index_err = try Class.init(a, "IndexError", &.{lookup}, try Dict.init(a));
-    const key_err = try Class.init(a, "KeyError", &.{lookup}, try Dict.init(a));
-    const runtime_err = try Class.init(a, "RuntimeError", &.{exception}, try Dict.init(a));
-    const attr_err = try Class.init(a, "AttributeError", &.{exception}, try Dict.init(a));
-    const type_err = try Class.init(a, "TypeError", &.{exception}, try Dict.init(a));
-    const name_err = try Class.init(a, "NameError", &.{exception}, try Dict.init(a));
-    const stop_iter = try Class.init(a, "StopIteration", &.{exception}, try Dict.init(a));
-    const stop_async_iter = try Class.init(a, "StopAsyncIteration", &.{exception}, try Dict.init(a));
-    const os_err = try Class.init(a, "OSError", &.{exception}, try Dict.init(a));
-    const file_not_found = try Class.init(a, "FileNotFoundError", &.{os_err}, try Dict.init(a));
-    const assertion_err = try Class.init(a, "AssertionError", &.{exception}, try Dict.init(a));
-    const not_impl_err = try Class.init(a, "NotImplementedError", &.{runtime_err}, try Dict.init(a));
-    const import_err = try Class.init(a, "ImportError", &.{exception}, try Dict.init(a));
-    const mod_not_found = try Class.init(a, "ModuleNotFoundError", &.{import_err}, try Dict.init(a));
-
-    const pairs = [_]struct { name: []const u8, cls: *Class }{
-        .{ .name = "BaseException", .cls = base_exc },
-        .{ .name = "Exception", .cls = exception },
-        .{ .name = "ArithmeticError", .cls = arith },
-        .{ .name = "LookupError", .cls = lookup },
-        .{ .name = "ZeroDivisionError", .cls = zero_div },
-        .{ .name = "ValueError", .cls = value_err },
-        .{ .name = "IndexError", .cls = index_err },
-        .{ .name = "KeyError", .cls = key_err },
-        .{ .name = "RuntimeError", .cls = runtime_err },
-        .{ .name = "AttributeError", .cls = attr_err },
-        .{ .name = "TypeError", .cls = type_err },
-        .{ .name = "NameError", .cls = name_err },
-        .{ .name = "StopIteration", .cls = stop_iter },
-        .{ .name = "StopAsyncIteration", .cls = stop_async_iter },
-        .{ .name = "OSError", .cls = os_err },
-        .{ .name = "FileNotFoundError", .cls = file_not_found },
-        .{ .name = "AssertionError", .cls = assertion_err },
-        .{ .name = "NotImplementedError", .cls = not_impl_err },
-        .{ .name = "ImportError", .cls = import_err },
-        .{ .name = "ModuleNotFoundError", .cls = mod_not_found },
+    const Pair = struct { name: []const u8, base: ?[]const u8 };
+    const specs = [_]Pair{
+        .{ .name = "BaseException", .base = null },
+        .{ .name = "Exception", .base = "BaseException" },
+        .{ .name = "SystemExit", .base = "BaseException" },
+        .{ .name = "KeyboardInterrupt", .base = "BaseException" },
+        .{ .name = "GeneratorExit", .base = "BaseException" },
+        .{ .name = "ArithmeticError", .base = "Exception" },
+        .{ .name = "FloatingPointError", .base = "ArithmeticError" },
+        .{ .name = "OverflowError", .base = "ArithmeticError" },
+        .{ .name = "ZeroDivisionError", .base = "ArithmeticError" },
+        .{ .name = "LookupError", .base = "Exception" },
+        .{ .name = "IndexError", .base = "LookupError" },
+        .{ .name = "KeyError", .base = "LookupError" },
+        .{ .name = "ValueError", .base = "Exception" },
+        .{ .name = "UnicodeError", .base = "ValueError" },
+        .{ .name = "UnicodeDecodeError", .base = "UnicodeError" },
+        .{ .name = "UnicodeEncodeError", .base = "UnicodeError" },
+        .{ .name = "UnicodeTranslateError", .base = "UnicodeError" },
+        .{ .name = "RuntimeError", .base = "Exception" },
+        .{ .name = "NotImplementedError", .base = "RuntimeError" },
+        .{ .name = "RecursionError", .base = "RuntimeError" },
+        .{ .name = "AttributeError", .base = "Exception" },
+        .{ .name = "TypeError", .base = "Exception" },
+        .{ .name = "NameError", .base = "Exception" },
+        .{ .name = "UnboundLocalError", .base = "NameError" },
+        .{ .name = "StopIteration", .base = "Exception" },
+        .{ .name = "StopAsyncIteration", .base = "Exception" },
+        .{ .name = "AssertionError", .base = "Exception" },
+        .{ .name = "ImportError", .base = "Exception" },
+        .{ .name = "ModuleNotFoundError", .base = "ImportError" },
+        .{ .name = "OSError", .base = "Exception" },
+        .{ .name = "FileNotFoundError", .base = "OSError" },
+        .{ .name = "FileExistsError", .base = "OSError" },
+        .{ .name = "PermissionError", .base = "OSError" },
+        .{ .name = "TimeoutError", .base = "OSError" },
+        .{ .name = "IsADirectoryError", .base = "OSError" },
+        .{ .name = "NotADirectoryError", .base = "OSError" },
+        .{ .name = "InterruptedError", .base = "OSError" },
+        .{ .name = "BlockingIOError", .base = "OSError" },
+        .{ .name = "ChildProcessError", .base = "OSError" },
+        .{ .name = "ProcessLookupError", .base = "OSError" },
+        .{ .name = "ConnectionError", .base = "OSError" },
+        .{ .name = "BrokenPipeError", .base = "ConnectionError" },
+        .{ .name = "ConnectionAbortedError", .base = "ConnectionError" },
+        .{ .name = "ConnectionRefusedError", .base = "ConnectionError" },
+        .{ .name = "ConnectionResetError", .base = "ConnectionError" },
+        .{ .name = "SyntaxError", .base = "Exception" },
+        .{ .name = "IndentationError", .base = "SyntaxError" },
+        .{ .name = "TabError", .base = "IndentationError" },
+        .{ .name = "Warning", .base = "Exception" },
+        .{ .name = "DeprecationWarning", .base = "Warning" },
+        .{ .name = "PendingDeprecationWarning", .base = "Warning" },
+        .{ .name = "RuntimeWarning", .base = "Warning" },
+        .{ .name = "SyntaxWarning", .base = "Warning" },
+        .{ .name = "UserWarning", .base = "Warning" },
+        .{ .name = "FutureWarning", .base = "Warning" },
+        .{ .name = "ImportWarning", .base = "Warning" },
+        .{ .name = "UnicodeWarning", .base = "Warning" },
+        .{ .name = "BytesWarning", .base = "Warning" },
+        .{ .name = "ResourceWarning", .base = "Warning" },
+        .{ .name = "EncodingWarning", .base = "Warning" },
+        .{ .name = "BufferError", .base = "Exception" },
+        .{ .name = "MemoryError", .base = "Exception" },
+        .{ .name = "ReferenceError", .base = "Exception" },
+        .{ .name = "SystemError", .base = "Exception" },
+        .{ .name = "EOFError", .base = "Exception" },
+        .{ .name = "BaseExceptionGroup", .base = "BaseException" },
     };
-    for (pairs) |p| {
-        try interp.builtins.setStr(a, p.name, Value{ .class = p.cls });
+    for (specs) |s| {
+        const cls = if (s.base) |bn| blk: {
+            const bv = interp.builtins.getStr(bn) orelse return error.TypeError;
+            break :blk try Class.init(a, s.name, &.{bv.class}, try Dict.init(a));
+        } else try Class.init(a, s.name, &.{}, try Dict.init(a));
+        try interp.builtins.setStr(a, s.name, Value{ .class = cls });
+    }
+    // ExceptionGroup multi-inherits BaseExceptionGroup and Exception.
+    {
+        const beg = interp.builtins.getStr("BaseExceptionGroup") orelse return error.TypeError;
+        const exc = interp.builtins.getStr("Exception") orelse return error.TypeError;
+        const cls = try Class.init(a, "ExceptionGroup", &.{ beg.class, exc.class }, try Dict.init(a));
+        try interp.builtins.setStr(a, "ExceptionGroup", Value{ .class = cls });
+    }
+    // IOError is a CPython alias for OSError.
+    if (interp.builtins.getStr("OSError")) |v| {
+        try interp.builtins.setStr(a, "IOError", v);
     }
 }
 
