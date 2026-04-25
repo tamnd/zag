@@ -32,6 +32,12 @@ const BoundMethod = @import("bound_method.zig").BoundMethod;
 const Partial = @import("partial.zig").Partial;
 const CachedFn = @import("cached_fn.zig").CachedFn;
 const CachedProperty = @import("cached_property.zig").CachedProperty;
+const Deque = @import("deque.zig").Deque;
+const Counter = @import("counter.zig").Counter;
+const DefaultDict = @import("defaultdict.zig").DefaultDict;
+const OrderedDict = @import("ordered_dict.zig").OrderedDict;
+const NamedTuple = @import("named_tuple.zig").NamedTuple;
+const NamedTupleFactory = @import("named_tuple.zig").NamedTupleFactory;
 
 pub const Tag = enum(u8) {
     none,
@@ -64,6 +70,12 @@ pub const Tag = enum(u8) {
     set,
     enum_iter,
     module,
+    deque,
+    counter,
+    defaultdict,
+    ordered_dict,
+    named_tuple,
+    named_tuple_factory,
     /// `...` / `Ellipsis` singleton.
     ellipsis,
     /// `NotImplemented` singleton -- distinct from the
@@ -129,6 +141,12 @@ pub const Value = union(Tag) {
     set: *Set,
     enum_iter: *EnumIter,
     module: *Module,
+    deque: *Deque,
+    counter: *Counter,
+    defaultdict: *DefaultDict,
+    ordered_dict: *OrderedDict,
+    named_tuple: *NamedTuple,
+    named_tuple_factory: *NamedTupleFactory,
     ellipsis,
     not_implemented,
     null_sentinel,
@@ -150,7 +168,12 @@ pub const Value = union(Tag) {
             .dict => |d| d.count() != 0,
             .set => |s| s.items.items.len != 0,
             .ellipsis, .not_implemented => true,
-            .code, .builtin_fn, .bound_method, .partial, .cached_fn, .cached_property, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter, .module => true,
+            .code, .builtin_fn, .bound_method, .partial, .cached_fn, .cached_property, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter, .module, .named_tuple_factory => true,
+            .deque => |d| d.items.items.items.len != 0,
+            .counter => |c| c.data.count() != 0,
+            .defaultdict => |dd| dd.data.count() != 0,
+            .ordered_dict => |od| od.data.count() != 0,
+            .named_tuple => |nt| nt.items.len != 0,
         };
     }
 
@@ -266,6 +289,58 @@ pub const Value = union(Tag) {
             },
             .ellipsis => try w.writeAll("Ellipsis"),
             .not_implemented => try w.writeAll("NotImplemented"),
+            .deque => |dq| {
+                try w.writeAll("deque([");
+                for (dq.items.items.items, 0..) |it, i| {
+                    if (i != 0) try w.writeAll(", ");
+                    try it.writeRepr(w);
+                }
+                try w.writeByte(']');
+                if (dq.maxlen) |ml| try w.print(", maxlen={d}", .{ml});
+                try w.writeByte(')');
+            },
+            .counter => |c| {
+                try w.writeAll("Counter({");
+                for (c.data.pairs.items, 0..) |p, i| {
+                    if (i != 0) try w.writeAll(", ");
+                    try p.key.writeRepr(w);
+                    try w.writeAll(": ");
+                    try p.value.writeRepr(w);
+                }
+                try w.writeAll("})");
+            },
+            .defaultdict => |dd| {
+                try w.writeAll("defaultdict(");
+                try dd.factory.writeRepr(w);
+                try w.writeAll(", {");
+                for (dd.data.pairs.items, 0..) |p, i| {
+                    if (i != 0) try w.writeAll(", ");
+                    try p.key.writeRepr(w);
+                    try w.writeAll(": ");
+                    try p.value.writeRepr(w);
+                }
+                try w.writeAll("})");
+            },
+            .ordered_dict => |od| {
+                try w.writeAll("OrderedDict({");
+                for (od.data.pairs.items, 0..) |p, i| {
+                    if (i != 0) try w.writeAll(", ");
+                    try p.key.writeRepr(w);
+                    try w.writeAll(": ");
+                    try p.value.writeRepr(w);
+                }
+                try w.writeAll("})");
+            },
+            .named_tuple => |nt| {
+                try w.print("{s}(", .{nt.factory.type_name});
+                for (nt.factory.fields, nt.items, 0..) |fname, item, i| {
+                    if (i != 0) try w.writeAll(", ");
+                    try w.print("{s}=", .{fname});
+                    try item.writeRepr(w);
+                }
+                try w.writeByte(')');
+            },
+            .named_tuple_factory => |f| try w.print("<class '{s}'>", .{f.type_name}),
         }
     }
 
@@ -448,6 +523,13 @@ pub const Value = union(Tag) {
         if (a == .none and b == .none) return true;
         if (a == .complex_num or b == .complex_num) return complexEquals(a, b);
         if (a == .set and b == .set) return setEquals(a.set, b.set);
+        if (a == .named_tuple and b == .named_tuple) {
+            const ax = a.named_tuple.items;
+            const bx = b.named_tuple.items;
+            if (ax.len != bx.len) return false;
+            for (ax, bx) |x, y| if (!x.equals(y)) return false;
+            return true;
+        }
         // bytes/bytearray compare by content across the two types,
         // matching CPython: `b"x" == bytearray(b"x")` is True.
         const a_bytes: ?[]const u8 = switch (a) {
@@ -536,6 +618,12 @@ pub const Value = union(Tag) {
             .set => |p| p == b.set,
             .enum_iter => |p| p == b.enum_iter,
             .module => |p| p == b.module,
+            .deque => |p| p == b.deque,
+            .counter => |p| p == b.counter,
+            .defaultdict => |p| p == b.defaultdict,
+            .ordered_dict => |p| p == b.ordered_dict,
+            .named_tuple => |p| p == b.named_tuple,
+            .named_tuple_factory => |p| p == b.named_tuple_factory,
         };
     }
 
@@ -578,6 +666,12 @@ pub const Value = union(Tag) {
             .module => "module",
             .ellipsis => "ellipsis",
             .not_implemented => "NotImplementedType",
+            .deque => "collections.deque",
+            .counter => "Counter",
+            .defaultdict => "collections.defaultdict",
+            .ordered_dict => "collections.OrderedDict",
+            .named_tuple => |nt| nt.factory.type_name,
+            .named_tuple_factory => "type",
         };
     }
 };

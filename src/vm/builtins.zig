@@ -141,6 +141,11 @@ pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         .list => |l| Value{ .small_int = @intCast(l.items.items.len) },
         .dict => |d| Value{ .small_int = @intCast(d.count()) },
         .set => |s| Value{ .small_int = @intCast(s.items.items.len) },
+        .deque => |d| Value{ .small_int = @intCast(d.items.items.items.len) },
+        .counter => |c| Value{ .small_int = @intCast(c.data.count()) },
+        .defaultdict => |d| Value{ .small_int = @intCast(d.data.count()) },
+        .ordered_dict => |od| Value{ .small_int = @intCast(od.data.count()) },
+        .named_tuple => |nt| Value{ .small_int = @intCast(nt.items.len) },
         .instance => blk: {
             if (try @import("dunder.zig").call(interp, args[0], "__len__", &.{})) |r| break :blk r;
             try interp.stderr.print(
@@ -221,6 +226,11 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
             try out.append(a, Value{ .str = piece });
         },
         .set => |s| for (s.items.items) |x| try out.append(a, x),
+        .deque => |d| for (d.items.items.items) |x| try out.append(a, x),
+        .counter => |c| for (c.data.pairs.items) |p| try out.append(a, p.key),
+        .defaultdict => |dd| for (dd.data.pairs.items) |p| try out.append(a, p.key),
+        .ordered_dict => |od| for (od.data.pairs.items) |p| try out.append(a, p.key),
+        .named_tuple => |nt| for (nt.items) |x| try out.append(a, x),
         .instance => {
             const dispatch = @import("dispatch.zig");
             const dunder = @import("dunder.zig");
@@ -387,6 +397,27 @@ pub fn dictBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const d = try Dict.init(interp.allocator);
     if (args.len == 0) return Value{ .dict = d };
+    // Copy from existing dict-shaped containers directly to preserve
+    // insertion order and avoid the iter-of-pairs path.
+    switch (args[0]) {
+        .dict => |src| {
+            for (src.pairs.items) |p| try d.setKey(interp.allocator, p.key, p.value);
+            return Value{ .dict = d };
+        },
+        .defaultdict => |dd| {
+            for (dd.data.pairs.items) |p| try d.setKey(interp.allocator, p.key, p.value);
+            return Value{ .dict = d };
+        },
+        .ordered_dict => |od| {
+            for (od.data.pairs.items) |p| try d.setKey(interp.allocator, p.key, p.value);
+            return Value{ .dict = d };
+        },
+        .counter => |c| {
+            for (c.data.pairs.items) |p| try d.setKey(interp.allocator, p.key, p.value);
+            return Value{ .dict = d };
+        },
+        else => {},
+    }
     // Iterable of (k, v) pairs.
     const lst = try materialize(interp, args[0]);
     for (lst.items.items) |pair| {
