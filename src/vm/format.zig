@@ -248,13 +248,13 @@ fn formatFloat(alloc: std.mem.Allocator, f: f64, spec: Spec) ![]u8 {
         trail = '%';
     }
     if (typ == 'n') typ = 'g';
-    const neg = fff < 0;
+    const neg = std.math.signbit(fff);
     const abs = if (neg) -fff else fff;
     const prec: usize = spec.precision orelse 6;
 
     var buf: [128]u8 = undefined;
     const written: []const u8 = switch (typ) {
-        'f', 'F' => try std.fmt.bufPrint(&buf, "{d:.[1]}", .{ abs, prec }),
+        'f', 'F' => bankersRound(try std.fmt.bufPrint(&buf, "{d:.[1]}", .{ abs, prec }), abs, prec),
         'e' => try formatScientific(&buf, abs, prec, false),
         'E' => try formatScientific(&buf, abs, prec, true),
         'g', 'G' => try formatG(&buf, abs, prec, typ == 'G', spec.alt),
@@ -281,6 +281,22 @@ fn formatFloat(alloc: std.mem.Allocator, f: f64, spec: Spec) ![]u8 {
     }
     const sign = signChar(neg, spec.sign);
     return padFinalP(alloc, sign, "", body, spec, '>');
+}
+
+/// Zig's `{d:.N}` rounds half-away-from-zero; Python rounds half-to-even.
+/// When abs*10^prec is exactly k+0.5 and Zig rounded up to an odd last
+/// digit, subtract one so we land on the even neighbor.
+fn bankersRound(rendered: []u8, abs: f64, prec: usize) []u8 {
+    const scale = std.math.pow(f64, 10.0, @as(f64, @floatFromInt(prec)));
+    const scaled = abs * scale;
+    const floor_val = @floor(scaled);
+    if (scaled - floor_val != 0.5) return rendered;
+    if (rendered.len == 0) return rendered;
+    const last = rendered[rendered.len - 1];
+    if (last >= '1' and last <= '9' and (last - '0') % 2 == 1) {
+        rendered[rendered.len - 1] = last - 1;
+    }
+    return rendered;
 }
 
 fn formatScientific(buf: []u8, abs: f64, prec: usize, upper: bool) ![]const u8 {
