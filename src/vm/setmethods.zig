@@ -197,6 +197,114 @@ fn copyImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .set = out };
 }
 
+fn popImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args[0].set.frozen) {
+        try interp.typeError("'frozenset' object has no attribute 'pop'");
+        return error.TypeError;
+    }
+    const s = args[0].set;
+    if (s.items.items.len == 0) {
+        try interp.raisePy("KeyError", "pop from an empty set");
+        return error.PyException;
+    }
+    return s.items.orderedRemove(0);
+}
+
+fn clearImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args[0].set.frozen) {
+        try interp.typeError("'frozenset' object has no attribute 'clear'");
+        return error.TypeError;
+    }
+    args[0].set.items.clearRetainingCapacity();
+    return Value.none;
+}
+
+fn updateImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const self = args[0].set;
+    if (self.frozen) {
+        try interp.typeError("'frozenset' object has no attribute 'update'");
+        return error.TypeError;
+    }
+    for (args[1..]) |a| {
+        const lst = try materialize(interp, a);
+        for (lst.items.items) |x| try self.add(interp.allocator, x);
+    }
+    return Value.none;
+}
+
+fn intersectionUpdateImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const self = args[0].set;
+    if (self.frozen) {
+        try interp.typeError("'frozenset' object has no attribute 'intersection_update'");
+        return error.TypeError;
+    }
+    var i: usize = 0;
+    while (i < self.items.items.len) {
+        const x = self.items.items[i];
+        var keep = true;
+        for (args[1..]) |a| {
+            const lst = try materialize(interp, a);
+            var found = false;
+            for (lst.items.items) |y| if (x.equals(y)) {
+                found = true;
+                break;
+            };
+            if (!found) {
+                keep = false;
+                break;
+            }
+        }
+        if (keep) i += 1 else _ = self.items.orderedRemove(i);
+    }
+    return Value.none;
+}
+
+fn differenceUpdateImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const self = args[0].set;
+    if (self.frozen) {
+        try interp.typeError("'frozenset' object has no attribute 'difference_update'");
+        return error.TypeError;
+    }
+    for (args[1..]) |a| {
+        const lst = try materialize(interp, a);
+        for (lst.items.items) |x| {
+            var i: usize = 0;
+            while (i < self.items.items.len) {
+                if (self.items.items[i].equals(x)) {
+                    _ = self.items.orderedRemove(i);
+                } else i += 1;
+            }
+        }
+    }
+    return Value.none;
+}
+
+fn symdifferenceUpdateImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const self = args[0].set;
+    if (self.frozen) {
+        try interp.typeError("'frozenset' object has no attribute 'symmetric_difference_update'");
+        return error.TypeError;
+    }
+    const lst = try materialize(interp, args[1]);
+    for (lst.items.items) |x| {
+        var found_at: ?usize = null;
+        for (self.items.items, 0..) |y, i| if (y.equals(x)) {
+            found_at = i;
+            break;
+        };
+        if (found_at) |idx| {
+            _ = self.items.orderedRemove(idx);
+        } else try self.add(interp.allocator, x);
+    }
+    return Value.none;
+}
+
 var issubset_entry: BuiltinFn = .{ .name = "issubset", .func = issubsetImpl };
 var issuperset_entry: BuiltinFn = .{ .name = "issuperset", .func = issupersetImpl };
 var isdisjoint_entry: BuiltinFn = .{ .name = "isdisjoint", .func = isdisjointImpl };
@@ -208,6 +316,12 @@ var copy_entry: BuiltinFn = .{ .name = "copy", .func = copyImpl };
 var add_entry: BuiltinFn = .{ .name = "add", .func = addImpl };
 var discard_entry: BuiltinFn = .{ .name = "discard", .func = discardImpl };
 var remove_entry: BuiltinFn = .{ .name = "remove", .func = removeImpl };
+var pop_entry: BuiltinFn = .{ .name = "pop", .func = popImpl };
+var clear_entry: BuiltinFn = .{ .name = "clear", .func = clearImpl };
+var update_entry: BuiltinFn = .{ .name = "update", .func = updateImpl };
+var intersection_update_entry: BuiltinFn = .{ .name = "intersection_update", .func = intersectionUpdateImpl };
+var difference_update_entry: BuiltinFn = .{ .name = "difference_update", .func = differenceUpdateImpl };
+var symdifference_update_entry: BuiltinFn = .{ .name = "symmetric_difference_update", .func = symdifferenceUpdateImpl };
 
 pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "issubset")) return &issubset_entry;
@@ -221,5 +335,11 @@ pub fn lookup(name: []const u8) ?*BuiltinFn {
     if (std.mem.eql(u8, name, "add")) return &add_entry;
     if (std.mem.eql(u8, name, "discard")) return &discard_entry;
     if (std.mem.eql(u8, name, "remove")) return &remove_entry;
+    if (std.mem.eql(u8, name, "pop")) return &pop_entry;
+    if (std.mem.eql(u8, name, "clear")) return &clear_entry;
+    if (std.mem.eql(u8, name, "update")) return &update_entry;
+    if (std.mem.eql(u8, name, "intersection_update")) return &intersection_update_entry;
+    if (std.mem.eql(u8, name, "difference_update")) return &difference_update_entry;
+    if (std.mem.eql(u8, name, "symmetric_difference_update")) return &symdifference_update_entry;
     return null;
 }
