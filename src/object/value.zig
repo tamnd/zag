@@ -27,11 +27,13 @@ const Generator = @import("generator.zig").Generator;
 const Set = @import("set.zig").Set;
 const EnumIter = @import("enum_iter.zig").EnumIter;
 const Module = @import("module.zig").Module;
+const BigInt = @import("bigint.zig").BigInt;
 
 pub const Tag = enum(u8) {
     none,
     boolean,
     small_int,
+    big_int,
     float,
     complex_num,
     str,
@@ -92,6 +94,7 @@ pub const Value = union(Tag) {
     none,
     boolean: bool,
     small_int: i64,
+    big_int: *BigInt,
     float: f64,
     complex_num: Complex,
     str: *Str,
@@ -123,6 +126,7 @@ pub const Value = union(Tag) {
             .none, .null_sentinel => false,
             .boolean => |b| b,
             .small_int => |i| i != 0,
+            .big_int => |bi| !bi.inner.eqlZero(),
             .float => |f| f != 0.0,
             .complex_num => |c| c.re != 0.0 or c.im != 0.0,
             .str => |s| s.bytes.len != 0,
@@ -146,6 +150,12 @@ pub const Value = union(Tag) {
             .null_sentinel => try w.writeAll("<NULL>"),
             .boolean => |b| try w.writeAll(if (b) "True" else "False"),
             .small_int => |i| try w.print("{d}", .{i}),
+            .big_int => |bi| {
+                const a = bi.inner.allocator;
+                const s = try bi.toString10(a);
+                defer a.free(s);
+                try w.writeAll(s);
+            },
             .float => |f| try writeFloat(w, f),
             .complex_num => |c| try writeComplex(w, c),
             .str => |s| {
@@ -343,6 +353,13 @@ pub const Value = union(Tag) {
             const y: i64 = if (b == .boolean) @intFromBool(b.boolean) else b.small_int;
             return if (x < y) .lt else if (x == y) .eq else .gt;
         }
+        if (a == .big_int and b == .big_int) {
+            return switch (a.big_int.inner.order(b.big_int.inner)) {
+                .lt => .lt,
+                .eq => .eq,
+                .gt => .gt,
+            };
+        }
         const af: ?f64 = switch (a) {
             .small_int => |i| @floatFromInt(i),
             .boolean => |x| if (x) 1.0 else 0.0,
@@ -473,6 +490,7 @@ pub const Value = union(Tag) {
             .none, .null_sentinel, .ellipsis, .not_implemented => true,
             .boolean => |x| x == b.boolean,
             .small_int => |x| x == b.small_int,
+            .big_int => |x| x == b.big_int,
             .float => |x| x == b.float,
             .complex_num => |x| x.re == b.complex_num.re and x.im == b.complex_num.im,
             .str => |p| p == b.str,
@@ -504,6 +522,7 @@ pub const Value = union(Tag) {
             .null_sentinel => "<NULL>",
             .boolean => "bool",
             .small_int => "int",
+            .big_int => "int",
             .float => "float",
             .complex_num => "complex",
             .str => "str",

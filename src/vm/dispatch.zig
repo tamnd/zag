@@ -1571,6 +1571,7 @@ fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
         5 => multiply(interp, a, b),
         6 => remainder(interp, a, b),
         7 => bitwiseOr(interp, a, b),
+        8 => powerOp(interp, a, b),
         10 => subtract(interp, a, b),
         11 => trueDivide(interp, a, b),
         12 => bitwiseXor(interp, a, b),
@@ -1585,6 +1586,10 @@ fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
             break :blk error.TypeError;
         },
     };
+}
+
+fn powerOp(interp: *Interp, a: Value, b: Value) !Value {
+    return @import("builtins.zig").powBuiltin(@ptrCast(interp), &.{ a, b });
 }
 
 fn asFloat(v: Value) ?f64 {
