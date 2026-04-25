@@ -1,0 +1,92 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  ZIG_VERSION: 0.16.0-dev.2984+cb7d2b056
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-musl
+            bin: zag
+            archive: tar.gz
+          - target: aarch64-linux-musl
+            bin: zag
+            archive: tar.gz
+          - target: x86_64-macos
+            bin: zag
+            archive: tar.gz
+          - target: aarch64-macos
+            bin: zag
+            archive: tar.gz
+          - target: x86_64-windows-gnu
+            bin: zag.exe
+            archive: zip
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Build
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast
+
+      - name: Stage archive contents
+        run: |
+          stage=zag-${{ github.ref_name }}-${{ matrix.target }}
+          mkdir -p "$stage"
+          cp "zig-out/bin/${{ matrix.bin }}" "$stage/"
+          cp LICENSE README.md "$stage/"
+          echo "STAGE=$stage" >> "$GITHUB_ENV"
+
+      - name: Create tarball
+        if: matrix.archive == 'tar.gz'
+        run: tar -czf "${STAGE}.tar.gz" "$STAGE"
+
+      - name: Create zip
+        if: matrix.archive == 'zip'
+        run: zip -r "${STAGE}.zip" "$STAGE"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: archive-${{ matrix.target }}
+          path: zag-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: archive-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ startsWith(github.ref_name, 'v0.') }}
