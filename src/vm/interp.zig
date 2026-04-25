@@ -52,6 +52,17 @@ pub const Interp = struct {
         try self.builtins.setStr(self.allocator, name, Value{ .builtin_fn = f });
     }
 
+    pub fn registerBuiltinKw(
+        self: *Interp,
+        name: []const u8,
+        func: BuiltinFnPtr,
+        kw_func: value_mod.BuiltinKwFnPtr,
+    ) !void {
+        const f = try self.allocator.create(BuiltinFn);
+        f.* = .{ .name = name, .func = func, .kw_func = kw_func };
+        try self.builtins.setStr(self.allocator, name, Value{ .builtin_fn = f });
+    }
+
     pub fn run(self: *Interp, code: *Code) !Value {
         // Module frame: locals alias globals at the module level.
         const frame = try Frame.init(self.allocator, code, self.globals, self.builtins, self.globals);

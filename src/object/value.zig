@@ -23,6 +23,7 @@ const Instance = @import("instance.zig").Instance;
 const Descriptor = @import("descriptor.zig").Descriptor;
 const Generator = @import("generator.zig").Generator;
 const Set = @import("set.zig").Set;
+const EnumIter = @import("enum_iter.zig").EnumIter;
 
 pub const Tag = enum(u8) {
     none,
@@ -45,6 +46,7 @@ pub const Tag = enum(u8) {
     descriptor,
     generator,
     set,
+    enum_iter,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
     /// uses `NULL` as a C-level sentinel before a CALL and `None` as a
     /// real Python value.
@@ -56,9 +58,20 @@ pub const BuiltinFnPtr = *const fn (
     args: []const Value,
 ) anyerror!Value;
 
+pub const BuiltinKwFnPtr = *const fn (
+    interp: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value;
+
 pub const BuiltinFn = struct {
     name: []const u8,
     func: BuiltinFnPtr,
+    /// Optional kwarg-aware variant. When a CALL_KW lands on a builtin
+    /// with this set, the dispatcher routes through `kw_func` instead
+    /// of rejecting the call. Builtins without it stay positional-only.
+    kw_func: ?BuiltinKwFnPtr = null,
 };
 
 pub const Value = union(Tag) {
@@ -82,6 +95,7 @@ pub const Value = union(Tag) {
     descriptor: *Descriptor,
     generator: *Generator,
     set: *Set,
+    enum_iter: *EnumIter,
     null_sentinel,
 
     pub fn isTruthy(self: Value) bool {
@@ -96,7 +110,7 @@ pub const Value = union(Tag) {
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
             .set => |s| s.items.items.len != 0,
-            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator => true,
+            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter => true,
         };
     }
 
@@ -158,6 +172,7 @@ pub const Value = union(Tag) {
             .instance => |obj| try w.print("<{s} object>", .{obj.cls.name}),
             .iter => try w.writeAll("<iterator>"),
             .generator => try w.writeAll("<generator>"),
+            .enum_iter => try w.writeAll("<enumerate object>"),
             .descriptor => |d| switch (d.kind) {
                 .property => try w.writeAll("<property object>"),
                 .classmethod => try w.writeAll("<classmethod object>"),
@@ -290,6 +305,7 @@ pub const Value = union(Tag) {
             .descriptor => |p| p == b.descriptor,
             .generator => |p| p == b.generator,
             .set => |p| p == b.set,
+            .enum_iter => |p| p == b.enum_iter,
         };
     }
 
@@ -320,6 +336,7 @@ pub const Value = union(Tag) {
             },
             .generator => "generator",
             .set => "set",
+            .enum_iter => "enumerate",
         };
     }
 };

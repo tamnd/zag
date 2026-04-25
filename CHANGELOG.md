@@ -9,6 +9,50 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.33] - 2026-04-25
+
+### Added
+
+- `32_generators_deep` fixture, lifted from goipy's testdata,
+  byte-equal against CPython 3.14. `yield from` capturing the
+  delegate's return value through nested recursion, generator
+  expressions feeding `sum`/`min`/`max`/`any`/`all`/`dict`/`set`,
+  generator-of-generators, two-way `.send()` loops, generators on
+  class methods, and `enumerate(gen, start=…)` over both finite
+  and infinite sources.
+- `LOAD_COMMON_CONSTANT` opcode (3.14): names 0..6 cover
+  `AssertionError`, `NotImplementedError`, `tuple`, `list`,
+  `set`, `dict`, `frozenset` — looked up in the builtins module
+  the same way `LOAD_NAME` would have.
+- `tuple()`, `set()`, and `dict()` builtins. `dict()` accepts an
+  iterable of length-2 pairs (tuple or list); `set()` and
+  `tuple()` materialize from any iterable.
+- Builtins can opt into kwargs via `registerBuiltinKw`. `enumerate`
+  uses it to accept `start=`; the rest stay positional-only.
+- `EnumIter`, a lazy `enumerate` adapter. Wraps any iterable as a
+  `Value` and pairs each step with a counter, so
+  `enumerate(infinite_gen)` no longer drains the source up front.
+- `iterStep(interp, value)` — a single helper that advances any
+  iterator-shaped value (`iter` / `generator` / `enum_iter`).
+  `FOR_ITER` and `materialize` now route through it.
+- `AssertionError` and `NotImplementedError` exception classes in
+  the builtins module.
+
+### Fixed
+
+- Generator prologue now applies `COPY_FREE_VARS` before skipping
+  `RETURN_GENERATOR`, so closure cells are seeded into the fast
+  slots the body's `LOAD_DEREF` reads. Without this, a generator
+  that closes over outer locals would crash on first resume.
+- `LOAD_DEREF` and `STORE_DEREF` tolerate non-cell fast slots:
+  read passes the value through; write auto-promotes to a fresh
+  `Cell`. CPython sometimes elides `MAKE_CELL` for parameters
+  that are also closure variables, and we have to catch up.
+- Exhausted-generator `gen_yielded` is now the generator's
+  `return_value`, not `None`. `for x in gen` and `list(gen)`
+  don't observe this, but `yield from gen` does — it's how the
+  delegate's return value reaches the caller.
+
 ## [0.0.32] - 2026-04-25
 
 ### Added
