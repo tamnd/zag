@@ -9,6 +9,15 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.82] - 2026-04-26
+
+### Added
+
+- `82_annotations` fixture, byte-equal.
+- SET_FUNCTION_ATTRIBUTE arg=16 (PEP 649 lazy annotate) is ignored.
+- `str * int` and `int * str` sequence repetition.
+- `str.strip` / `lstrip` / `rstrip` with optional chars.
+
 ## [0.0.81] - 2026-04-26
 
 ### Added
