@@ -1128,6 +1128,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const value = frame.pop();
             switch (obj) {
                 .instance => |i| try i.dict.setStr(interp.allocator, name, value),
+                .module => |m| try m.attrs.setStr(interp.allocator, name, value),
                 else => {
                     try interp.attributeError(obj.typeName(), name);
                     return error.AttributeError;
