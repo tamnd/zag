@@ -519,6 +519,94 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.CALL_KW)]);
         },
 
+        .BUILD_MAP => {
+            const n = oparg(frame, ext_arg);
+            const d = try Dict.init(interp.allocator);
+            const base = frame.sp - 2 * n;
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                const k = frame.stack[base + 2 * i];
+                const v = frame.stack[base + 2 * i + 1];
+                if (k != .str) {
+                    try interp.typeError("zag: dict literals only support str keys");
+                    return error.TypeError;
+                }
+                try d.setStr(interp.allocator, k.str.bytes, v);
+            }
+            frame.sp = base;
+            frame.push(Value{ .dict = d });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .DELETE_SUBSCR => {
+            const key = frame.pop();
+            const container = frame.pop();
+            switch (container) {
+                .dict => |d| {
+                    if (key != .str) {
+                        try interp.typeError("zag: dict del only supports str keys");
+                        return error.TypeError;
+                    }
+                    if (!d.delete(key.str.bytes)) {
+                        try interp.stderr.print("KeyError: '{s}'\n", .{key.str.bytes});
+                        try interp.stderr.flush();
+                        return error.TypeError;
+                    }
+                },
+                else => {
+                    try interp.typeError("object does not support item deletion");
+                    return error.TypeError;
+                },
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .UNPACK_SEQUENCE => {
+            const n = oparg(frame, ext_arg);
+            const seq = frame.pop();
+            const items: []const Value = switch (seq) {
+                .tuple => |t| t.items,
+                .list => |l| l.items.items,
+                else => {
+                    try interp.typeError("cannot unpack non-sequence");
+                    return error.TypeError;
+                },
+            };
+            if (items.len != n) {
+                try interp.typeError("unpacked length mismatch");
+                return error.TypeError;
+            }
+            // Push in reverse so first element ends up on top.
+            var i: usize = n;
+            while (i > 0) {
+                i -= 1;
+                frame.push(items[i]);
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .STORE_FAST_STORE_FAST => {
+            const arg = oparg(frame, ext_arg);
+            const hi = (arg >> 4) & 0xF;
+            const lo = arg & 0xF;
+            frame.fast[hi] = frame.pop();
+            frame.fast[lo] = frame.pop();
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .MAP_ADD => {
+            // Stack: [..., dict, ..., key, value]; arg is depth of the dict.
+            const v = frame.pop();
+            const k = frame.pop();
+            const dict_val = frame.stack[frame.sp - oparg(frame, ext_arg)];
+            if (k != .str) {
+                try interp.typeError("zag: dict comp only supports str keys");
+                return error.TypeError;
+            }
+            try dict_val.dict.setStr(interp.allocator, k.str.bytes, v);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .RETURN_VALUE => {
             return frame.pop();
         },
@@ -697,6 +785,16 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
                 },
             }
         },
+        .dict => |d| {
+            if (key != .str) {
+                try interp.typeError("zag: dict subscript only supports str keys");
+                return error.TypeError;
+            }
+            if (d.getStr(key.str.bytes)) |v| return v;
+            try interp.stderr.print("KeyError: '{s}'\n", .{key.str.bytes});
+            try interp.stderr.flush();
+            return error.IndexError;
+        },
         else => {
             try interp.typeError("object is not subscriptable");
             return error.TypeError;
@@ -736,6 +834,13 @@ fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !voi
                 return error.TypeError;
             },
         },
+        .dict => |d| {
+            if (key != .str) {
+                try interp.typeError("zag: dict store only supports str keys");
+                return error.TypeError;
+            }
+            try d.setStr(interp.allocator, key.str.bytes, value);
+        },
         else => {
             try interp.typeError("object does not support item assignment");
             return error.TypeError;
@@ -771,6 +876,10 @@ fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
         .tuple => |t| {
             for (t.items) |it| if (it.equals(item)) return true;
             return false;
+        },
+        .dict => |d| {
+            if (item != .str) return false;
+            return d.contains(item.str.bytes);
         },
         else => {
             try interp.typeError("argument of type is not iterable");
