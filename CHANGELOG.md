@@ -9,6 +9,44 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-04-25
+
+### Added
+
+- `04_lists` fixture, lifted verbatim from goipy's testdata, running
+  byte-equal against CPython 3.14 stdout. First fixture to force a
+  list comprehension end-to-end.
+- `Iter` value type backing real Python iterators, with sources for
+  `list` and `tuple`. `GET_ITER`, `FOR_ITER`, `END_FOR`, `POP_ITER`,
+  `JUMP_BACKWARD`, and `LIST_APPEND` are wired through dispatch so
+  the inlined comprehension frame the 3.14 compiler emits actually
+  iterates.
+- Fast-local opcodes: `LOAD_FAST`, `LOAD_FAST_BORROW`,
+  `LOAD_FAST_CHECK`, `LOAD_FAST_AND_CLEAR`, `STORE_FAST`,
+  `STORE_FAST_LOAD_FAST` (with the high-nibble/low-nibble packed
+  argument).
+- `STORE_SUBSCR` for `a[i] = value` on lists.
+- `BINARY_OP` arg=5 (multiply) for `int * int`. Other operand type
+  combinations still raise `TypeError`; the next fixture to force
+  them will widen the table.
+- List slicing: `a[i:j]` returns a new list. Step != 1 raises
+  `TypeError`, matching M4's policy for strings.
+- Four `list` methods, in `src/vm/listmethods.zig` behind the same
+  name-keyed lookup `str` already uses: `append`, `extend`, `pop`
+  (no-arg), `reverse`. `LOAD_ATTR`'s method form picks the right
+  table by receiver tag.
+- `sum()` and `sorted()` builtins. `sorted` uses `Value.order` and
+  `std.sort.pdq`; `sum` walks any iterable made of ints/bools.
+
+### Notes
+
+- Comprehension cleanup is implemented by following the bytecode,
+  not the exception table. The single try-region in this fixture
+  is a NULL-cleanup that never fires; full exception-table walking
+  arrives the first time a fixture forces it.
+- `pop` is the no-arg form. `pop(i)` and `sort(key=...)` aren't in
+  scope until a fixture needs them.
+
 ## [0.0.4] - 2026-04-25
 
 ### Added
@@ -133,7 +171,8 @@ changes.
 - CI workflow running `zig build`, `zig build test`, and one end-to-
   end `zig build run` of the hello fixture on every push and PR.
 
-[Unreleased]: https://github.com/tamnd/zag/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/tamnd/zag/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/tamnd/zag/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/tamnd/zag/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/tamnd/zag/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/tamnd/zag/compare/v0.0.1...v0.0.2

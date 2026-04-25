@@ -7,12 +7,15 @@ const std = @import("std");
 const op = @import("../op/opcode.zig");
 const Opcode = op.Opcode;
 
-const Value = @import("../object/value.zig").Value;
+const value_mod = @import("../object/value.zig");
+const Value = value_mod.Value;
 const Str = @import("../object/string.zig").Str;
 const List = @import("../object/list.zig").List;
+const Iter = @import("../object/iter.zig").Iter;
 const Frame = @import("frame.zig").Frame;
 const Interp = @import("interp.zig").Interp;
 const strmethods = @import("strmethods.zig");
+const listmethods = @import("listmethods.zig");
 
 pub const DispatchError = error{
     UnknownOpcode,
@@ -135,14 +138,14 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
             const name = frame.code.names[name_idx];
             const obj = frame.pop();
             if (is_method) {
-                if (obj == .str) {
-                    if (strmethods.lookup(name)) |m| {
-                        frame.push(Value{ .builtin_fn = m });
-                        frame.push(obj);
-                    } else {
-                        try interp.attributeError(obj.typeName(), name);
-                        return error.AttributeError;
-                    }
+                const method: ?*value_mod.BuiltinFn = switch (obj) {
+                    .str => strmethods.lookup(name),
+                    .list => listmethods.lookup(name),
+                    else => null,
+                };
+                if (method) |m| {
+                    frame.push(Value{ .builtin_fn = m });
+                    frame.push(obj);
                 } else {
                     try interp.attributeError(obj.typeName(), name);
                     return error.AttributeError;
@@ -277,6 +280,97 @@ pub fn run(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
         },
 
+        .STORE_SUBSCR => {
+            const idx = frame.pop();
+            const container = frame.pop();
+            const value = frame.pop();
+            try storeSubscr(interp, container, idx, value);
+            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.STORE_SUBSCR)]);
+        },
+
+        .GET_ITER => {
+            const v = frame.pop();
+            const it = try makeIter(interp, v);
+            frame.push(Value{ .iter = it });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .FOR_ITER => {
+            const arg = oparg(frame, ext_arg);
+            const cw = op.cache_width[@intFromEnum(Opcode.FOR_ITER)];
+            // TOS is the iterator. Peek, don't pop.
+            const it = frame.stack[frame.sp - 1];
+            if (it != .iter) {
+                try interp.typeError("FOR_ITER on non-iterator");
+                return error.TypeError;
+            }
+            if (it.iter.next()) |v| {
+                frame.push(v);
+                frame.ip += 2 + 2 * @as(u32, cw);
+            } else {
+                // Exhausted: push the end-of-iter sentinel and jump.
+                // END_FOR will pop the sentinel; POP_ITER pops the iter.
+                frame.push(Value.null_sentinel);
+                frame.ip += 2 + 2 * @as(u32, cw) + 2 * arg;
+            }
+            ext_arg = 0;
+            continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
+        },
+
+        .END_FOR => {
+            _ = frame.pop();
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .POP_ITER => {
+            _ = frame.pop();
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .JUMP_BACKWARD, .JUMP_BACKWARD_NO_INTERRUPT => {
+            const arg = oparg(frame, ext_arg);
+            const cw = op.cache_width[@intFromEnum(Opcode.JUMP_BACKWARD)];
+            frame.ip = frame.ip + 2 + 2 * @as(u32, cw) - 2 * arg;
+            ext_arg = 0;
+            continue :sw @as(Opcode, @enumFromInt(code[frame.ip]));
+        },
+
+        .LIST_APPEND => {
+            const arg = oparg(frame, ext_arg);
+            const v = frame.pop();
+            const list_val = frame.stack[frame.sp - arg];
+            try list_val.list.append(interp.allocator, v);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .LOAD_FAST, .LOAD_FAST_BORROW, .LOAD_FAST_CHECK => {
+            const arg = oparg(frame, ext_arg);
+            frame.push(frame.fast[arg]);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .LOAD_FAST_AND_CLEAR => {
+            const arg = oparg(frame, ext_arg);
+            frame.push(frame.fast[arg]);
+            frame.fast[arg] = Value.null_sentinel;
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .STORE_FAST => {
+            const arg = oparg(frame, ext_arg);
+            frame.fast[arg] = frame.pop();
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .STORE_FAST_LOAD_FAST => {
+            const arg = oparg(frame, ext_arg);
+            const store_idx = (arg >> 4) & 0xF;
+            const load_idx = arg & 0xF;
+            frame.fast[store_idx] = frame.pop();
+            frame.push(frame.fast[load_idx]);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .RETURN_VALUE => {
             return frame.pop();
         },
@@ -306,15 +400,26 @@ inline fn advance(frame: *Frame, ext_arg: *u32, cw: u8) Opcode {
 /// to need them prompts a fix instead of silently doing the wrong
 /// thing.
 fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
-    if (arg != 26) {
-        try interp.stderr.print(
-            "TypeError: zag: unsupported BINARY_OP arg {d}\n",
-            .{arg},
-        );
-        try interp.stderr.flush();
-        return error.TypeError;
+    return switch (arg) {
+        5 => multiply(interp, a, b),
+        26 => subscript(interp, a, b),
+        else => blk: {
+            try interp.stderr.print(
+                "TypeError: zag: unsupported BINARY_OP arg {d}\n",
+                .{arg},
+            );
+            try interp.stderr.flush();
+            break :blk error.TypeError;
+        },
+    };
+}
+
+fn multiply(interp: *Interp, a: Value, b: Value) !Value {
+    if (a == .small_int and b == .small_int) {
+        return Value{ .small_int = a.small_int *% b.small_int };
     }
-    return subscript(interp, a, b);
+    try interp.typeError("unsupported operand type(s) for *");
+    return error.TypeError;
 }
 
 fn subscript(interp: *Interp, container: Value, key: Value) !Value {
@@ -364,6 +469,20 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
                     }
                     return l.items.items[@intCast(idx)];
                 },
+                .slice => |sl| {
+                    if (sl.step != .none) {
+                        try interp.typeError("slice step != 1 not supported");
+                        return error.TypeError;
+                    }
+                    const n: i64 = @intCast(l.items.items.len);
+                    const start = clampSliceBound(sl.start, n, 0);
+                    const stop = clampSliceBound(sl.stop, n, n);
+                    const lo: usize = @intCast(start);
+                    const hi: usize = @intCast(if (stop < start) start else stop);
+                    const out = try List.init(interp.allocator);
+                    for (l.items.items[lo..hi]) |it| try out.append(interp.allocator, it);
+                    return Value{ .list = out };
+                },
                 else => {
                     try interp.typeError("list indices must be integers");
                     return error.TypeError;
@@ -388,6 +507,42 @@ fn clampSliceBound(v: Value, n: i64, default_: i64) i64 {
             break :blk x;
         },
         else => default_,
+    };
+}
+
+fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !void {
+    switch (container) {
+        .list => |l| switch (key) {
+            .small_int => |i| {
+                const n: i64 = @intCast(l.items.items.len);
+                var idx = i;
+                if (idx < 0) idx += n;
+                if (idx < 0 or idx >= n) {
+                    try interp.indexError("list assignment index out of range");
+                    return error.IndexError;
+                }
+                l.items.items[@intCast(idx)] = value;
+            },
+            else => {
+                try interp.typeError("list indices must be integers");
+                return error.TypeError;
+            },
+        },
+        else => {
+            try interp.typeError("object does not support item assignment");
+            return error.TypeError;
+        },
+    }
+}
+
+fn makeIter(interp: *Interp, v: Value) !*Iter {
+    return switch (v) {
+        .list => |l| try Iter.init(interp.allocator, .{ .list = l }),
+        .tuple => |t| try Iter.init(interp.allocator, .{ .tuple = t }),
+        else => {
+            try interp.typeError("object is not iterable");
+            return error.TypeError;
+        },
     };
 }
 
