@@ -9,6 +9,41 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.40] - 2026-04-25
+
+### Added
+
+- `39_packages` fixture and the `_39pkg/` package tree (lifted
+  from goipy's testdata), byte-equal against CPython 3.14.
+  `import _39pkg.sub.leaf`, `from _39pkg.sub import leaf,
+  SUB_VERSION, combined`, dotted attribute access through
+  packages, submodule binding on the parent package, and
+  relative imports in a subpackage's `__init__` (`from .. import
+  util`, `from . import leaf`).
+- Dotted-name imports. `IMPORT_NAME` now walks the dotted chain,
+  loading each prefix in order and binding the leaf as an
+  attribute on its parent. With an empty `fromlist` it returns
+  the top of the chain (matches `import a.b.c` binding `a`);
+  with a non-empty `fromlist` it returns the innermost module
+  and eagerly loads any `fromlist` entries that name submodules.
+- Relative imports. `IMPORT_NAME` reads the level operand and
+  resolves against the caller frame's `__package__`. Walks up
+  `level - 1` parents, then prepends to the `name`. `from ..
+  import x` and `from . import y` both work.
+- `Module.is_package`. Set when the module's code came from an
+  `__init__.py`; controls whether a non-empty `fromlist`
+  triggers eager submodule loading.
+- `STORE_ATTR` learnt nothing this round, but `__name__` and
+  `__package__` are now seeded into module globals on first
+  execution so a body's relative imports can resolve.
+- The fixture harness picks up package directories. `gen.sh`
+  recurses into any `_*/` helper, compiling every `.py` to a
+  `.pyc` next to it, and emits a `helpers` table in
+  `fixtures.zig` with each module's dotted name and `__init__`
+  flag. The integration test registers them all before running
+  any fixture; the CLI binary does the same walk on disk so
+  `zag-bin some_script.pyc` finds neighbour packages.
+
 ## [0.0.39] - 2026-04-25
 
 ### Added

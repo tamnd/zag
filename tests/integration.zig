@@ -39,16 +39,22 @@ fn runFixture(name: []const u8, pyc: []const u8, expected: []const u8) !void {
 
     var interp = try zag.vm.interp.Interp.init(run_alloc, &writer, &stderr_writer);
     try interp.installBuiltins();
-    // Pre-register every helper fixture (the ones whose name starts
-    // with an underscore — convention for "imported by another
-    // fixture") so `import _36_mymod` finds them. Helpers are lazy:
-    // their body only runs if something actually imports them.
+    // Pre-register every helper fixture (top-level scripts whose name
+    // starts with an underscore, plus every module inside a helper
+    // package) so `import _36_mymod` and `import _39pkg.sub.leaf`
+    // both resolve. Helpers are lazy: their body only runs if
+    // something actually imports them.
     inline for (fixtures.names) |fname| {
         if (fname.len > 0 and fname[0] == '_') {
             const helper_pyc = @embedFile("fixtures/" ++ fname ++ ".cpython-314.pyc");
             const helper_code = try zag.marshal.pyc.loadBytes(run_alloc, helper_pyc);
-            try interp.registerModuleCode(fname, helper_code);
+            try interp.registerModuleCode(fname, helper_code, false);
         }
+    }
+    inline for (fixtures.helpers) |h| {
+        const helper_pyc = @embedFile("fixtures/" ++ h.path);
+        const helper_code = try zag.marshal.pyc.loadBytes(run_alloc, helper_pyc);
+        try interp.registerModuleCode(h.name, helper_code, h.is_package);
     }
     _ = try interp.run(code);
     try writer.flush();

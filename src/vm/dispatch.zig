@@ -115,23 +115,75 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
 
         .IMPORT_NAME => {
             const arg = oparg(frame, ext_arg);
-            // Stack: [..., level, fromlist]. Levels (relative imports)
-            // aren't modelled; the fromlist is irrelevant on this side
-            // because IMPORT_FROM does the per-name binding.
-            _ = frame.pop();
-            _ = frame.pop();
-            const name = frame.code.names[arg];
-            if (interp.getBuiltinModule(name)) |m| {
+            // Stack: [..., level, fromlist]. Both inform what we
+            // return: empty/None fromlist hands back the top of the
+            // dotted chain (`import a.b.c` binds `a`); a non-empty
+            // fromlist hands back the innermost so IMPORT_FROM can
+            // peel names off it. `level > 0` is a relative import
+            // resolved against the caller frame's `__package__`.
+            const fromlist = frame.pop();
+            const level_v = frame.pop();
+            const level: i64 = if (level_v == .small_int) level_v.small_int else 0;
+            const raw_name = frame.code.names[arg];
+
+            const abs_name = blk: {
+                if (level == 0) break :blk raw_name;
+                // Resolve relative against the caller's __package__.
+                const pkg_v = frame.globals.getStr("__package__") orelse Value{ .str = try Str.init(interp.allocator, "") };
+                var pkg: []const u8 = if (pkg_v == .str) pkg_v.str.bytes else "";
+                var k: i64 = 1;
+                while (k < level) : (k += 1) {
+                    if (std.mem.lastIndexOfScalar(u8, pkg, '.')) |d| {
+                        pkg = pkg[0..d];
+                    } else if (pkg.len > 0) {
+                        pkg = "";
+                    } else {
+                        try interp.raisePy("ImportError", "attempted relative import beyond top-level package");
+                        return error.PyException;
+                    }
+                }
+                if (raw_name.len == 0) break :blk pkg;
+                if (pkg.len == 0) break :blk raw_name;
+                break :blk try std.fmt.allocPrint(interp.allocator, "{s}.{s}", .{ pkg, raw_name });
+            };
+
+            if (interp.getBuiltinModule(abs_name)) |m| {
                 frame.push(Value{ .module = m });
                 continue :sw advance(frame, &ext_arg, 0);
             }
-            if (try interp.loadUserModule(name)) |m| {
-                frame.push(Value{ .module = m });
-                continue :sw advance(frame, &ext_arg, 0);
+            const chain_opt = try interp.loadModuleChain(abs_name);
+            const chain = chain_opt orelse {
+                const msg = try std.fmt.allocPrint(interp.allocator, "No module named '{s}'", .{abs_name});
+                try interp.raisePy("ModuleNotFoundError", msg);
+                return error.PyException;
+            };
+            const has_fromlist = switch (fromlist) {
+                .tuple => |t| t.items.len > 0,
+                .list => |l| l.items.items.len > 0,
+                else => false,
+            };
+            if (has_fromlist and chain.innermost.is_package) {
+                // Eagerly load any fromlist entries that name a
+                // submodule. Anything that's already an attribute on
+                // the package (a constant, a function, a sub-import
+                // bound by the package's own `__init__`) is skipped.
+                const items: []const Value = switch (fromlist) {
+                    .tuple => |t| t.items,
+                    .list => |l| l.items.items,
+                    else => &.{},
+                };
+                for (items) |it| {
+                    if (it != .str) continue;
+                    const sub = it.str.bytes;
+                    if (std.mem.eql(u8, sub, "*")) continue;
+                    if (chain.innermost.attrs.getStr(sub) != null) continue;
+                    const dotted = try std.fmt.allocPrint(interp.allocator, "{s}.{s}", .{ chain.innermost.name, sub });
+                    _ = interp.loadModuleChain(dotted) catch {};
+                }
             }
-            const msg = try std.fmt.allocPrint(interp.allocator, "No module named '{s}'", .{name});
-            try interp.raisePy("ModuleNotFoundError", msg);
-            return error.PyException;
+            const result = if (has_fromlist) chain.innermost else chain.top;
+            frame.push(Value{ .module = result });
+            continue :sw advance(frame, &ext_arg, 0);
         },
 
         .IMPORT_FROM => {
