@@ -20,6 +20,10 @@ const functools_mod = @import("functools_mod.zig");
 const itertools_mod = @import("itertools_mod.zig");
 const operator_mod = @import("operator_mod.zig");
 const collections_mod = @import("collections_mod.zig");
+const math_mod = @import("math_mod.zig");
+const heapq_mod = @import("heapq_mod.zig");
+const bisect_mod = @import("bisect_mod.zig");
+const random_mod = @import("random_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -42,6 +46,10 @@ pub const Interp = struct {
     itertools_module: ?*Module = null,
     operator_module: ?*Module = null,
     collections_module: ?*Module = null,
+    math_module: ?*Module = null,
+    heapq_module: ?*Module = null,
+    bisect_module: ?*Module = null,
+    random_module: ?*Module = null,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every
     /// helper `.pyc`; the CLI pre-registers siblings of the entry
@@ -296,6 +304,30 @@ pub const Interp = struct {
             if (self.collections_module) |m| return m;
             const m = collections_mod.build(self) catch return null;
             self.collections_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "math")) {
+            if (self.math_module) |m| return m;
+            const m = math_mod.build(self) catch return null;
+            self.math_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "heapq")) {
+            if (self.heapq_module) |m| return m;
+            const m = heapq_mod.build(self) catch return null;
+            self.heapq_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "bisect")) {
+            if (self.bisect_module) |m| return m;
+            const m = bisect_mod.build(self) catch return null;
+            self.bisect_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "random")) {
+            if (self.random_module) |m| return m;
+            const m = random_mod.build(self) catch return null;
+            self.random_module = m;
             return m;
         }
         return null;
