@@ -136,7 +136,7 @@ pub const Reader = struct {
             .none => return Value.none,
             .true_ => return Value{ .boolean = true },
             .false_ => return Value{ .boolean = false },
-            .ellipsis => return Value.none, // Ellipsis not modelled yet; treat as None for M1
+            .ellipsis => return Value.ellipsis,
             .stopiter => return Value.none, // same
 
             .int32 => {

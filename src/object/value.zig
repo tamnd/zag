@@ -54,6 +54,11 @@ pub const Tag = enum(u8) {
     set,
     enum_iter,
     module,
+    /// `...` / `Ellipsis` singleton.
+    ellipsis,
+    /// `NotImplemented` singleton -- distinct from the
+    /// `NotImplementedError` exception class.
+    not_implemented,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
     /// uses `NULL` as a C-level sentinel before a CALL and `None` as a
     /// real Python value.
@@ -109,6 +114,8 @@ pub const Value = union(Tag) {
     set: *Set,
     enum_iter: *EnumIter,
     module: *Module,
+    ellipsis,
+    not_implemented,
     null_sentinel,
 
     pub fn isTruthy(self: Value) bool {
@@ -126,6 +133,7 @@ pub const Value = union(Tag) {
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
             .set => |s| s.items.items.len != 0,
+            .ellipsis, .not_implemented => true,
             .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter, .module => true,
         };
     }
@@ -227,6 +235,8 @@ pub const Value = union(Tag) {
                 try sl.step.writeRepr(w);
                 try w.writeByte(')');
             },
+            .ellipsis => try w.writeAll("Ellipsis"),
+            .not_implemented => try w.writeAll("NotImplemented"),
         }
     }
 
@@ -460,7 +470,7 @@ pub const Value = union(Tag) {
     pub fn identityEq(a: Value, b: Value) bool {
         if (@as(Tag, a) != @as(Tag, b)) return false;
         return switch (a) {
-            .none, .null_sentinel => true,
+            .none, .null_sentinel, .ellipsis, .not_implemented => true,
             .boolean => |x| x == b.boolean,
             .small_int => |x| x == b.small_int,
             .float => |x| x == b.float,
@@ -520,6 +530,8 @@ pub const Value = union(Tag) {
             .set => |s| if (s.frozen) "frozenset" else "set",
             .enum_iter => "enumerate",
             .module => "module",
+            .ellipsis => "ellipsis",
+            .not_implemented => "NotImplementedType",
         };
     }
 };

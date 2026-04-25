@@ -2547,6 +2547,24 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
     }
+    if (obj == .slice) {
+        const sl = obj.slice;
+        const v: ?Value = if (std.mem.eql(u8, name, "start"))
+            sl.start
+        else if (std.mem.eql(u8, name, "stop"))
+            sl.stop
+        else if (std.mem.eql(u8, name, "step"))
+            sl.step
+        else
+            null;
+        if (v) |val| {
+            if (is_method) {
+                frame.push(val);
+                frame.push(Value.null_sentinel);
+            } else frame.push(val);
+            return;
+        }
+    }
     if (obj == .memoryview) {
         const mv = obj.memoryview;
         if (std.mem.eql(u8, name, "readonly")) {

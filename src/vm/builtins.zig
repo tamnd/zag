@@ -13,6 +13,7 @@ const Dict = @import("../object/dict.zig").Dict;
 const Str = @import("../object/string.zig").Str;
 const Bytes = @import("../object/bytes.zig").Bytes;
 const Descriptor = @import("../object/descriptor.zig").Descriptor;
+const format_mod = @import("format.zig");
 
 pub const BuiltinError = error{
     BadArgument,
@@ -642,6 +643,24 @@ pub fn typeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
             interp.memoryview_type = c;
             break :blk Value{ .class = c };
         },
+        .ellipsis => blk: {
+            if (interp.ellipsis_type) |c| break :blk Value{ .class = c };
+            const c = try Class.init(interp.allocator, "ellipsis", &.{}, try Dict.init(interp.allocator));
+            interp.ellipsis_type = c;
+            break :blk Value{ .class = c };
+        },
+        .not_implemented => blk: {
+            if (interp.not_implemented_type) |c| break :blk Value{ .class = c };
+            const c = try Class.init(interp.allocator, "NotImplementedType", &.{}, try Dict.init(interp.allocator));
+            interp.not_implemented_type = c;
+            break :blk Value{ .class = c };
+        },
+        .slice => blk: {
+            if (interp.slice_type) |c| break :blk Value{ .class = c };
+            const c = try Class.init(interp.allocator, "slice", &.{}, try Dict.init(interp.allocator));
+            interp.slice_type = c;
+            break :blk Value{ .class = c };
+        },
         .set => |s| blk: {
             if (s.frozen) {
                 if (interp.frozenset_type) |c| break :blk Value{ .class = c };
@@ -879,6 +898,349 @@ pub fn complexBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!V
     return Value{ .complex_num = .{ .re = re, .im = im } };
 }
 
+/// `pow(b, e)` and `pow(b, e, m)`. The 3-arg form requires int args
+/// and computes `b ** e mod m` with the modular-inverse trick when
+/// `e` is negative.
+pub fn powBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 2 or args.len > 3) {
+        try interp.typeError("pow() takes 2 or 3 arguments");
+        return error.TypeError;
+    }
+    const has_mod = args.len == 3;
+    if (has_mod) {
+        const b = try intArgFlex(interp, args[0]);
+        const e = try intArgFlex(interp, args[1]);
+        const m = try intArgFlex(interp, args[2]);
+        if (m == 0) {
+            try interp.raisePy("ValueError", "pow() 3rd argument cannot be 0");
+            return error.PyException;
+        }
+        var base: i128 = b;
+        var exp: i128 = e;
+        const mod: i128 = m;
+        if (exp < 0) {
+            const inv = modInverse(@mod(base, mod), mod) orelse {
+                try interp.raisePy("ValueError", "base is not invertible for the given modulus");
+                return error.PyException;
+            };
+            base = inv;
+            exp = -exp;
+        }
+        var result: i128 = @mod(@as(i128, 1), mod);
+        var b_acc: i128 = @mod(base, mod);
+        if (b_acc < 0) b_acc += mod;
+        while (exp > 0) {
+            if ((exp & 1) == 1) result = @mod(result * b_acc, mod);
+            exp >>= 1;
+            if (exp > 0) b_acc = @mod(b_acc * b_acc, mod);
+        }
+        if (result < 0) result += mod;
+        return Value{ .small_int = @intCast(result) };
+    }
+    // 2-arg: integer fast path -> int when exponent is non-negative,
+    // float otherwise. Float bases always go through pow(f64).
+    if ((args[0] == .small_int or args[0] == .boolean) and (args[1] == .small_int or args[1] == .boolean)) {
+        const b = try intArgFlex(interp, args[0]);
+        const e = try intArgFlex(interp, args[1]);
+        if (e < 0) {
+            const f = std.math.pow(f64, @floatFromInt(b), @floatFromInt(e));
+            return Value{ .float = f };
+        }
+        var result: i128 = 1;
+        var base: i128 = b;
+        var exp: i128 = e;
+        while (exp > 0) : (exp >>= 1) {
+            if ((exp & 1) == 1) result *= base;
+            if (exp > 1) base *= base;
+        }
+        return Value{ .small_int = @intCast(result) };
+    }
+    const bf: f64 = switch (args[0]) {
+        .small_int => |i| @floatFromInt(i),
+        .boolean => |b| if (b) 1.0 else 0.0,
+        .float => |f| f,
+        else => {
+            try interp.typeError("pow() base must be a number");
+            return error.TypeError;
+        },
+    };
+    const ef: f64 = switch (args[1]) {
+        .small_int => |i| @floatFromInt(i),
+        .boolean => |b| if (b) 1.0 else 0.0,
+        .float => |f| f,
+        else => {
+            try interp.typeError("pow() exponent must be a number");
+            return error.TypeError;
+        },
+    };
+    return Value{ .float = std.math.pow(f64, bf, ef) };
+}
+
+fn intArgFlex(interp: *Interp, v: Value) !i64 {
+    return switch (v) {
+        .small_int => |i| i,
+        .boolean => |b| @intFromBool(b),
+        else => {
+            try interp.typeError("an integer is required");
+            return error.TypeError;
+        },
+    };
+}
+
+/// Extended Euclidean to find the modular inverse of `a` mod `m`.
+/// Returns null when `gcd(a, m) != 1`. Caller has already taken
+/// `a mod m` so 0 <= a < |m|.
+fn modInverse(a: i128, m: i128) ?i128 {
+    var old_r: i128 = a;
+    var r: i128 = if (m < 0) -m else m;
+    var old_s: i128 = 1;
+    var s: i128 = 0;
+    while (r != 0) {
+        const q = @divTrunc(old_r, r);
+        const new_r = old_r - q * r;
+        old_r = r;
+        r = new_r;
+        const new_s = old_s - q * s;
+        old_s = s;
+        s = new_s;
+    }
+    if (old_r != 1 and old_r != -1) return null;
+    var inv = if (old_r == -1) -old_s else old_s;
+    const am = if (m < 0) -m else m;
+    inv = @mod(inv, am);
+    if (inv < 0) inv += am;
+    return inv;
+}
+
+pub fn formatBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 1 or args.len > 2) {
+        try interp.typeError("format() takes 1 or 2 arguments");
+        return error.TypeError;
+    }
+    const spec_str: []const u8 = if (args.len == 2) switch (args[1]) {
+        .str => |s| s.bytes,
+        else => {
+            try interp.typeError("format() spec must be a str");
+            return error.TypeError;
+        },
+    } else "";
+    const buf = try format_mod.format(interp.allocator, args[0], spec_str);
+    const s = try Str.fromOwnedSlice(interp.allocator, buf);
+    return Value{ .str = s };
+}
+
+/// `ascii(obj)` is `repr(obj)` with non-ASCII bytes inside string
+/// literals escaped as `\xHH` / `\uHHHH` / `\UHHHHHHHH`.
+pub fn asciiBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.typeError("ascii() takes exactly one argument");
+        return error.TypeError;
+    }
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try args[0].writeRepr(&w);
+    const repr_bytes = w.buffered();
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(interp.allocator);
+    if (args[0] == .str) {
+        // String repr: escape non-ASCII codepoints in the body, leave
+        // the wrapping quotes alone.
+        try out.append(interp.allocator, repr_bytes[0]);
+        const body = repr_bytes[1 .. repr_bytes.len - 1];
+        try escapeAsciiUtf8(interp.allocator, &out, body);
+        try out.append(interp.allocator, repr_bytes[repr_bytes.len - 1]);
+    } else {
+        try out.appendSlice(interp.allocator, repr_bytes);
+    }
+    const s = try Str.init(interp.allocator, out.items);
+    return Value{ .str = s };
+}
+
+fn escapeAsciiUtf8(a: std.mem.Allocator, out: *std.ArrayList(u8), body: []const u8) !void {
+    var i: usize = 0;
+    while (i < body.len) {
+        const c = body[i];
+        if (c < 0x80) {
+            try out.append(a, c);
+            i += 1;
+            continue;
+        }
+        // Decode one UTF-8 codepoint.
+        const len = std.unicode.utf8ByteSequenceLength(c) catch {
+            try out.append(a, c);
+            i += 1;
+            continue;
+        };
+        if (i + len > body.len) {
+            try out.append(a, c);
+            i += 1;
+            continue;
+        }
+        const cp = std.unicode.utf8Decode(body[i .. i + len]) catch {
+            try out.append(a, c);
+            i += 1;
+            continue;
+        };
+        if (cp <= 0xff) {
+            var tmp: [4]u8 = undefined;
+            const s = try std.fmt.bufPrint(&tmp, "\\x{x:0>2}", .{cp});
+            try out.appendSlice(a, s);
+        } else if (cp <= 0xffff) {
+            var tmp: [6]u8 = undefined;
+            const s = try std.fmt.bufPrint(&tmp, "\\u{x:0>4}", .{cp});
+            try out.appendSlice(a, s);
+        } else {
+            var tmp: [10]u8 = undefined;
+            const s = try std.fmt.bufPrint(&tmp, "\\U{x:0>8}", .{cp});
+            try out.appendSlice(a, s);
+        }
+        i += len;
+    }
+}
+
+pub fn sliceBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const Slice = @import("../object/slice.zig").Slice;
+    var start: Value = Value.none;
+    var stop: Value = Value.none;
+    var step: Value = Value.none;
+    switch (args.len) {
+        1 => stop = args[0],
+        2 => {
+            start = args[0];
+            stop = args[1];
+        },
+        3 => {
+            start = args[0];
+            stop = args[1];
+            step = args[2];
+        },
+        else => {
+            try interp.typeError("slice expected 1 to 3 arguments");
+            return error.TypeError;
+        },
+    }
+    const sl = try Slice.init(interp.allocator, start, stop, step);
+    return Value{ .slice = sl };
+}
+
+pub fn hasattrBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[1] != .str) {
+        try interp.typeError("hasattr() takes (obj, str)");
+        return error.TypeError;
+    }
+    const name = args[1].str.bytes;
+    return Value{ .boolean = lookupAttr(args[0], name) != null };
+}
+
+pub fn getattrBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len < 2 or args.len > 3 or args[1] != .str) {
+        try interp.typeError("getattr() takes (obj, str[, default])");
+        return error.TypeError;
+    }
+    const name = args[1].str.bytes;
+    if (lookupAttr(args[0], name)) |v| return v;
+    if (args.len == 3) return args[2];
+    try interp.attributeError(args[0].typeName(), name);
+    return error.AttributeError;
+}
+
+pub fn setattrBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 3 or args[1] != .str) {
+        try interp.typeError("setattr() takes (obj, str, value)");
+        return error.TypeError;
+    }
+    const name = args[1].str.bytes;
+    if (args[0] == .instance) {
+        try args[0].instance.dict.setStr(interp.allocator, name, args[2]);
+        return Value.none;
+    }
+    try interp.typeError("setattr: target object has no writable attributes");
+    return error.TypeError;
+}
+
+pub fn delattrBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[1] != .str) {
+        try interp.typeError("delattr() takes (obj, str)");
+        return error.TypeError;
+    }
+    const name = args[1].str.bytes;
+    if (args[0] == .instance) {
+        if (args[0].instance.dict.delete(name)) return Value.none;
+        try interp.attributeError(args[0].typeName(), name);
+        return error.AttributeError;
+    }
+    try interp.typeError("delattr: target object is immutable");
+    return error.TypeError;
+}
+
+fn lookupAttr(obj: Value, name: []const u8) ?Value {
+    return switch (obj) {
+        .instance => |inst| inst.dict.getStr(name) orelse inst.cls.lookup(name),
+        .class => |cls| cls.lookup(name),
+        .module => |m| m.attrs.getStr(name),
+        else => null,
+    };
+}
+
+pub fn dirBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.typeError("dir() takes exactly one argument in zag");
+        return error.TypeError;
+    }
+    const out = try List.init(interp.allocator);
+    var seen = std.StringHashMapUnmanaged(void){};
+    defer seen.deinit(interp.allocator);
+    const a = interp.allocator;
+    switch (args[0]) {
+        .instance => |inst| {
+            for (inst.dict.keys.items) |k| {
+                if (seen.contains(k)) continue;
+                try seen.put(a, k, {});
+                const s = try Str.init(a, k);
+                try out.append(a, Value{ .str = s });
+            }
+            for (inst.cls.mro) |cls| {
+                for (cls.dict.keys.items) |k| {
+                    if (seen.contains(k)) continue;
+                    try seen.put(a, k, {});
+                    const s = try Str.init(a, k);
+                    try out.append(a, Value{ .str = s });
+                }
+            }
+        },
+        .class => |cls| {
+            for (cls.mro) |c| {
+                for (c.dict.keys.items) |k| {
+                    if (seen.contains(k)) continue;
+                    try seen.put(a, k, {});
+                    const s = try Str.init(a, k);
+                    try out.append(a, Value{ .str = s });
+                }
+            }
+        },
+        .module => |m| {
+            for (m.attrs.keys.items) |k| {
+                if (seen.contains(k)) continue;
+                try seen.put(a, k, {});
+                const s = try Str.init(a, k);
+                try out.append(a, Value{ .str = s });
+            }
+        },
+        else => {},
+    }
+    std.sort.pdq(Value, out.items.items, {}, lessThanForSort);
+    return Value{ .list = out };
+}
+
 pub fn strBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len == 0) {
@@ -941,6 +1303,17 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("staticmethod", staticmethodBuiltin);
     try interp.registerBuiltin("next", dispatch.nextBuiltin);
     try interp.registerBuiltin("iter", dispatch.iterBuiltin);
+    try interp.registerBuiltin("pow", powBuiltin);
+    try interp.registerBuiltin("format", formatBuiltin);
+    try interp.registerBuiltin("ascii", asciiBuiltin);
+    try interp.registerBuiltin("slice", sliceBuiltin);
+    try interp.registerBuiltin("hasattr", hasattrBuiltin);
+    try interp.registerBuiltin("getattr", getattrBuiltin);
+    try interp.registerBuiltin("setattr", setattrBuiltin);
+    try interp.registerBuiltin("delattr", delattrBuiltin);
+    try interp.registerBuiltin("dir", dirBuiltin);
+    try interp.builtins.setStr(interp.allocator, "Ellipsis", Value.ellipsis);
+    try interp.builtins.setStr(interp.allocator, "NotImplemented", Value.not_implemented);
     try installExceptions(interp);
 }
 
