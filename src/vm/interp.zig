@@ -104,6 +104,16 @@ pub const Interp = struct {
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
     os_module: ?*Module = null,
+    threading_module: ?*Module = null,
+    threading_lock_class: ?*@import("../object/class.zig").Class = null,
+    threading_rlock_class: ?*@import("../object/class.zig").Class = null,
+    threading_thread_class: ?*@import("../object/class.zig").Class = null,
+    threading_event_class: ?*@import("../object/class.zig").Class = null,
+    threading_sem_class: ?*@import("../object/class.zig").Class = null,
+    threading_cond_class: ?*@import("../object/class.zig").Class = null,
+    threading_barrier_class: ?*@import("../object/class.zig").Class = null,
+    threading_local_class: ?*@import("../object/class.zig").Class = null,
+    threading_main_thread: ?*@import("../object/instance.zig").Instance = null,
     sys_stream_class: ?*@import("../object/class.zig").Class = null,
     traceback_class: ?*@import("../object/class.zig").Class = null,
     frame_class: ?*@import("../object/class.zig").Class = null,
@@ -584,6 +594,12 @@ pub const Interp = struct {
             if (self.os_module) |m| return m;
             const m = @import("os_mod.zig").build(self) catch return null;
             self.os_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "threading")) {
+            if (self.threading_module) |m| return m;
+            const m = @import("threading_mod.zig").build(self) catch return null;
+            self.threading_module = m;
             return m;
         }
         return null;
