@@ -947,14 +947,7 @@ pub fn powBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
             const f = std.math.pow(f64, @floatFromInt(b), @floatFromInt(e));
             return Value{ .float = f };
         }
-        var result: i128 = 1;
-        var base: i128 = b;
-        var exp: i128 = e;
-        while (exp > 0) : (exp >>= 1) {
-            if ((exp & 1) == 1) result *= base;
-            if (exp > 1) base *= base;
-        }
-        return Value{ .small_int = @intCast(result) };
+        return integerPow(interp, b, e);
     }
     const bf: f64 = switch (args[0]) {
         .small_int => |i| @floatFromInt(i),
@@ -975,6 +968,47 @@ pub fn powBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         },
     };
     return Value{ .float = std.math.pow(f64, bf, ef) };
+}
+
+fn integerPow(interp: *Interp, base: i64, exp: i64) !Value {
+    const BigInt = @import("../object/bigint.zig").BigInt;
+    if (exp == 0) return Value{ .small_int = 1 };
+    if (base == 0) return Value{ .small_int = 0 };
+    if (base == 1) return Value{ .small_int = 1 };
+    if (base == -1) return Value{ .small_int = if (@mod(exp, 2) == 0) 1 else -1 };
+    // Try i64 fast path with overflow check.
+    var result: i64 = 1;
+    var b_acc: i64 = base;
+    var e: u64 = @intCast(exp);
+    var overflowed = false;
+    while (e > 0 and !overflowed) {
+        if ((e & 1) == 1) {
+            const r = @mulWithOverflow(result, b_acc);
+            if (r[1] != 0) {
+                overflowed = true;
+                break;
+            }
+            result = r[0];
+        }
+        e >>= 1;
+        if (e > 0) {
+            const r = @mulWithOverflow(b_acc, b_acc);
+            if (r[1] != 0) {
+                overflowed = true;
+                break;
+            }
+            b_acc = r[0];
+        }
+    }
+    if (!overflowed) return Value{ .small_int = result };
+    // Promote to bigint and finish.
+    var acc = try std.math.big.int.Managed.initSet(interp.allocator, base);
+    const u32_exp: u32 = @intCast(exp);
+    var out = try std.math.big.int.Managed.init(interp.allocator);
+    try out.pow(&acc, u32_exp);
+    acc.deinit();
+    const bi = try BigInt.fromManaged(interp.allocator, out);
+    return Value{ .big_int = bi };
 }
 
 fn intArgFlex(interp: *Interp, v: Value) !i64 {
@@ -1032,39 +1066,105 @@ pub fn formatBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Va
 }
 
 /// `ascii(obj)` is `repr(obj)` with non-ASCII bytes inside string
-/// literals escaped as `\xHH` / `\uHHHH` / `\UHHHHHHHH`.
+/// literals escaped as `\xHH` / `\uHHHH` / `\UHHHHHHHH`. Containers
+/// (list/tuple/dict/set) are walked so nested strings get the same
+/// treatment.
 pub fn asciiBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len != 1) {
         try interp.typeError("ascii() takes exactly one argument");
         return error.TypeError;
     }
-    var buf: [4096]u8 = undefined;
-    var w = std.Io.Writer.fixed(&buf);
-    try args[0].writeRepr(&w);
-    const repr_bytes = w.buffered();
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(interp.allocator);
-    if (args[0] == .str) {
-        // String repr: escape non-ASCII codepoints in the body, leave
-        // the wrapping quotes alone.
-        try out.append(interp.allocator, repr_bytes[0]);
-        const body = repr_bytes[1 .. repr_bytes.len - 1];
-        try escapeAsciiUtf8(interp.allocator, &out, body);
-        try out.append(interp.allocator, repr_bytes[repr_bytes.len - 1]);
-    } else {
-        try out.appendSlice(interp.allocator, repr_bytes);
-    }
+    try writeAsciiRepr(interp.allocator, &out, args[0]);
     const s = try Str.init(interp.allocator, out.items);
     return Value{ .str = s };
 }
 
-fn escapeAsciiUtf8(a: std.mem.Allocator, out: *std.ArrayList(u8), body: []const u8) !void {
+fn writeAsciiRepr(a: std.mem.Allocator, out: *std.ArrayList(u8), v: Value) anyerror!void {
+    switch (v) {
+        .str => |s| {
+            try out.append(a, '\'');
+            try escapeAsciiStr(a, out, s.bytes);
+            try out.append(a, '\'');
+        },
+        .list => |lst| {
+            try out.append(a, '[');
+            for (lst.items.items, 0..) |item, i| {
+                if (i > 0) try out.appendSlice(a, ", ");
+                try writeAsciiRepr(a, out, item);
+            }
+            try out.append(a, ']');
+        },
+        .tuple => |tup| {
+            try out.append(a, '(');
+            for (tup.items, 0..) |item, i| {
+                if (i > 0) try out.appendSlice(a, ", ");
+                try writeAsciiRepr(a, out, item);
+            }
+            if (tup.items.len == 1) try out.append(a, ',');
+            try out.append(a, ')');
+        },
+        .dict => |d| {
+            try out.append(a, '{');
+            var first = true;
+            for (d.keys.items) |k| {
+                if (!first) try out.appendSlice(a, ", ");
+                first = false;
+                try out.append(a, '\'');
+                try escapeAsciiStr(a, out, k);
+                try out.append(a, '\'');
+                try out.appendSlice(a, ": ");
+                const val = d.getStr(k).?;
+                try writeAsciiRepr(a, out, val);
+            }
+            try out.append(a, '}');
+        },
+        .set => |sv| {
+            if (sv.items.items.len == 0) {
+                try out.appendSlice(a, "set()");
+            } else {
+                try out.append(a, '{');
+                for (sv.items.items, 0..) |item, i| {
+                    if (i > 0) try out.appendSlice(a, ", ");
+                    try writeAsciiRepr(a, out, item);
+                }
+                try out.append(a, '}');
+            }
+        },
+        else => {
+            // Fall back to repr for non-string non-container values;
+            // their reprs are pure ASCII already.
+            var buf: [4096]u8 = undefined;
+            var w = std.Io.Writer.fixed(&buf);
+            try v.writeRepr(&w);
+            try out.appendSlice(a, w.buffered());
+        },
+    }
+}
+
+fn escapeAsciiStr(a: std.mem.Allocator, out: *std.ArrayList(u8), body: []const u8) !void {
     var i: usize = 0;
     while (i < body.len) {
         const c = body[i];
         if (c < 0x80) {
-            try out.append(a, c);
+            switch (c) {
+                '\\' => try out.appendSlice(a, "\\\\"),
+                '\'' => try out.appendSlice(a, "\\'"),
+                '\n' => try out.appendSlice(a, "\\n"),
+                '\r' => try out.appendSlice(a, "\\r"),
+                '\t' => try out.appendSlice(a, "\\t"),
+                else => {
+                    if (c < 0x20 or c == 0x7f) {
+                        var tmp: [4]u8 = undefined;
+                        const s = try std.fmt.bufPrint(&tmp, "\\x{x:0>2}", .{c});
+                        try out.appendSlice(a, s);
+                    } else {
+                        try out.append(a, c);
+                    }
+                },
+            }
             i += 1;
             continue;
         }
@@ -1174,11 +1274,17 @@ pub fn delattrBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!V
     const name = args[1].str.bytes;
     if (args[0] == .instance) {
         if (args[0].instance.dict.delete(name)) return Value.none;
-        try interp.attributeError(args[0].typeName(), name);
-        return error.AttributeError;
+        const msg = try std.fmt.allocPrint(
+            interp.allocator,
+            "'{s}' object has no attribute '{s}'",
+            .{ args[0].typeName(), name },
+        );
+        defer interp.allocator.free(msg);
+        try interp.raisePy("AttributeError", msg);
+        return error.PyException;
     }
-    try interp.typeError("delattr: target object is immutable");
-    return error.TypeError;
+    try interp.raisePy("TypeError", "delattr: target object is immutable");
+    return error.PyException;
 }
 
 fn lookupAttr(obj: Value, name: []const u8) ?Value {
