@@ -9,8 +9,11 @@
 </p>
 
 ```sh
-python3.14 -m py_compile hello.py
-zig build run -- __pycache__/hello.cpython-314.pyc
+# One-off: generate .pyc + expected-stdout pairs for the fixtures.
+bash tests/fixtures/gen.sh
+
+zig build test
+zig build run -- tests/fixtures/00_hello.cpython-314.pyc
 ```
 
 zag reads a `.pyc` file and runs it. CPython compiles; zag executes. Execution happens inside a Zig `switch` with labeled-continue dispatch (the equivalent of GCC's computed goto), with Python values held in a tagged union and memory owned explicitly by the interpreter.

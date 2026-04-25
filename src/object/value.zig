@@ -1,0 +1,150 @@
+//! The tagged-union runtime value. Every Python-visible thing that
+//! the VM pushes on the operand stack, stores in a local, or puts in
+//! a collection is a `Value`.
+//!
+//! Heap arms are single-indirection pointers owned by an allocator
+//! kept on the `Interp`. Milestone 1 leaks heap objects at process
+//! exit; that is deliberate and called out in the README.
+
+const std = @import("std");
+
+const Str = @import("string.zig").Str;
+const Bytes = @import("bytes.zig").Bytes;
+const Tuple = @import("tuple.zig").Tuple;
+const List = @import("list.zig").List;
+const Dict = @import("dict.zig").Dict;
+const Code = @import("code.zig").Code;
+
+pub const Tag = enum(u8) {
+    none,
+    boolean,
+    small_int,
+    float,
+    str,
+    bytes,
+    tuple,
+    list,
+    dict,
+    code,
+    builtin_fn,
+    /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
+    /// uses `NULL` as a C-level sentinel before a CALL and `None` as a
+    /// real Python value.
+    null_sentinel,
+};
+
+pub const BuiltinFnPtr = *const fn (
+    interp: *anyopaque, // *vm.interp.Interp; avoid circular import at comptime
+    args: []const Value,
+) anyerror!Value;
+
+pub const BuiltinFn = struct {
+    name: []const u8,
+    func: BuiltinFnPtr,
+};
+
+pub const Value = union(Tag) {
+    none,
+    boolean: bool,
+    small_int: i64,
+    float: f64,
+    str: *Str,
+    bytes: *Bytes,
+    tuple: *Tuple,
+    list: *List,
+    dict: *Dict,
+    code: *Code,
+    builtin_fn: *BuiltinFn,
+    null_sentinel,
+
+    pub fn isTruthy(self: Value) bool {
+        return switch (self) {
+            .none, .null_sentinel => false,
+            .boolean => |b| b,
+            .small_int => |i| i != 0,
+            .float => |f| f != 0.0,
+            .str => |s| s.bytes.len != 0,
+            .bytes => |b| b.data.len != 0,
+            .tuple => |t| t.items.len != 0,
+            .list => |l| l.items.items.len != 0,
+            .dict => |d| d.count() != 0,
+            .code, .builtin_fn => true,
+        };
+    }
+
+    /// Python `repr()` for a small set of types. Enough to format the
+    /// None/Bool/Int/Str cases the hello fixture exercises via print().
+    pub fn writeRepr(self: Value, w: *std.Io.Writer) !void {
+        switch (self) {
+            .none => try w.writeAll("None"),
+            .null_sentinel => try w.writeAll("<NULL>"),
+            .boolean => |b| try w.writeAll(if (b) "True" else "False"),
+            .small_int => |i| try w.print("{d}", .{i}),
+            .float => |f| try w.print("{d}", .{f}),
+            .str => |s| {
+                try w.writeByte('\'');
+                try w.writeAll(s.bytes);
+                try w.writeByte('\'');
+            },
+            .bytes => |b| try w.print("b'{s}'", .{b.data}),
+            .tuple => |t| {
+                try w.writeByte('(');
+                for (t.items, 0..) |it, i| {
+                    if (i != 0) try w.writeAll(", ");
+                    try it.writeRepr(w);
+                }
+                if (t.items.len == 1) try w.writeByte(',');
+                try w.writeByte(')');
+            },
+            .list => |l| {
+                try w.writeByte('[');
+                for (l.items.items, 0..) |it, i| {
+                    if (i != 0) try w.writeAll(", ");
+                    try it.writeRepr(w);
+                }
+                try w.writeByte(']');
+            },
+            .dict => try w.writeAll("{...}"),
+            .code => |c| try w.print("<code object {s}>", .{c.name}),
+            .builtin_fn => |f| try w.print("<built-in function {s}>", .{f.name}),
+        }
+    }
+
+    /// Python `str()` for values where it differs from repr — strings
+    /// render without quotes, everything else falls back to repr.
+    pub fn writeStr(self: Value, w: *std.Io.Writer) !void {
+        switch (self) {
+            .str => |s| try w.writeAll(s.bytes),
+            else => try self.writeRepr(w),
+        }
+    }
+
+    pub fn typeName(self: Value) []const u8 {
+        return switch (self) {
+            .none => "NoneType",
+            .null_sentinel => "<NULL>",
+            .boolean => "bool",
+            .small_int => "int",
+            .float => "float",
+            .str => "str",
+            .bytes => "bytes",
+            .tuple => "tuple",
+            .list => "list",
+            .dict => "dict",
+            .code => "code",
+            .builtin_fn => "builtin_function_or_method",
+        };
+    }
+};
+
+test "value size is small" {
+    try std.testing.expect(@sizeOf(Value) <= 24);
+}
+
+test "bool truthy" {
+    try std.testing.expect(!Value.none.isTruthy());
+    try std.testing.expect((Value{ .boolean = true }).isTruthy());
+    try std.testing.expect(!(Value{ .boolean = false }).isTruthy());
+    try std.testing.expect((Value{ .small_int = 1 }).isTruthy());
+    try std.testing.expect(!(Value{ .small_int = 0 }).isTruthy());
+}
