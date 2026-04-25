@@ -1252,6 +1252,14 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                             _ = try dunder.call(interp, descr, "__set__", &.{ obj, value });
                             continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.STORE_ATTR)]);
                         }
+                        if (descr == .descriptor and descr.descriptor.kind == .property) {
+                            if (descr.descriptor.fset != .none) {
+                                _ = try invoke(interp, descr.descriptor.fset, &.{ obj, value });
+                                continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.STORE_ATTR)]);
+                            }
+                            try interp.attributeError(obj.typeName(), name);
+                            return error.AttributeError;
+                        }
                     }
                     try i.dict.setStr(interp.allocator, name, value);
                 },
@@ -1275,6 +1283,14 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                         if (descr == .instance and dunder.lookup(descr, "__delete__") != null) {
                             _ = try dunder.call(interp, descr, "__delete__", &.{obj});
                             continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.DELETE_ATTR)]);
+                        }
+                        if (descr == .descriptor and descr.descriptor.kind == .property) {
+                            if (descr.descriptor.fdel != .none) {
+                                _ = try invoke(interp, descr.descriptor.fdel, &.{obj});
+                                continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.DELETE_ATTR)]);
+                            }
+                            try interp.attributeError(obj.typeName(), name);
+                            return error.AttributeError;
                         }
                     }
                     if (!i.dict.delete(name)) {
@@ -2885,6 +2901,14 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
                 try bindDescriptor(interp, frame, v.descriptor, Value.null_sentinel, obj, is_method);
                 return;
             }
+            if (v == .instance and dunder.lookup(v, "__get__") != null) {
+                const r = (try dunder.call(interp, v, "__get__", &.{ Value.none, obj })) orelse Value.none;
+                if (is_method) {
+                    frame.push(r);
+                    frame.push(Value.null_sentinel);
+                } else frame.push(r);
+                return;
+            }
             if (is_method) {
                 frame.push(v);
                 frame.push(Value.null_sentinel);
@@ -2913,6 +2937,27 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
                 frame.push(v);
                 frame.push(Value.null_sentinel);
             } else frame.push(v);
+            return;
+        }
+    }
+    if (obj == .descriptor and obj.descriptor.kind == .property) {
+        const m: ?*value_mod.BuiltinFn = if (std.mem.eql(u8, name, "setter"))
+            &property_setter_method
+        else if (std.mem.eql(u8, name, "deleter"))
+            &property_deleter_method
+        else if (std.mem.eql(u8, name, "getter"))
+            &property_getter_method
+        else
+            null;
+        if (m) |meth| {
+            if (is_method) {
+                frame.push(Value{ .builtin_fn = meth });
+                frame.push(obj);
+            } else {
+                const BoundMethod = @import("../object/bound_method.zig").BoundMethod;
+                const bm = try BoundMethod.init(interp.allocator, Value{ .builtin_fn = meth }, obj);
+                frame.push(Value{ .bound_method = bm });
+            }
             return;
         }
     }
@@ -3108,6 +3153,13 @@ fn invokeKw(
             }
             return try f.func(@ptrCast(interp), positional);
         },
+        .bound_method => |bm| {
+            const buf = try interp.allocator.alloc(Value, positional.len + 1);
+            defer interp.allocator.free(buf);
+            buf[0] = bm.self;
+            @memcpy(buf[1..], positional);
+            return invokeKw(interp, bm.func, buf, kw_names, kw_values);
+        },
         .function => |fn_val| return callPyFunction(interp, fn_val, positional, kw_names, kw_values, null),
         .class => |cls| return instantiate(interp, cls, positional, kw_names, kw_values),
         .instance => {
@@ -3237,6 +3289,55 @@ pub fn genCloseBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!
 }
 
 var gen_close_method: value_mod.BuiltinFn = .{ .name = "close", .func = genCloseBuiltin };
+
+/// `prop.setter(fn)`, `prop.deleter(fn)`, `prop.getter(fn)`. Each
+/// returns a new property descriptor with the corresponding slot
+/// replaced. Bound-method form receives the property as args[0].
+fn propertySetterImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[0] != .descriptor) {
+        try interp.typeError("property.setter expects (self, fn)");
+        return error.TypeError;
+    }
+    const old = args[0].descriptor;
+    const Descriptor = @import("../object/descriptor.zig").Descriptor;
+    const new = try Descriptor.init(interp.allocator, .property, old.func);
+    new.fset = args[1];
+    new.fdel = old.fdel;
+    return Value{ .descriptor = new };
+}
+
+fn propertyDeleterImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[0] != .descriptor) {
+        try interp.typeError("property.deleter expects (self, fn)");
+        return error.TypeError;
+    }
+    const old = args[0].descriptor;
+    const Descriptor = @import("../object/descriptor.zig").Descriptor;
+    const new = try Descriptor.init(interp.allocator, .property, old.func);
+    new.fset = old.fset;
+    new.fdel = args[1];
+    return Value{ .descriptor = new };
+}
+
+fn propertyGetterImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2 or args[0] != .descriptor) {
+        try interp.typeError("property.getter expects (self, fn)");
+        return error.TypeError;
+    }
+    const old = args[0].descriptor;
+    const Descriptor = @import("../object/descriptor.zig").Descriptor;
+    const new = try Descriptor.init(interp.allocator, .property, args[1]);
+    new.fset = old.fset;
+    new.fdel = old.fdel;
+    return Value{ .descriptor = new };
+}
+
+var property_setter_method: value_mod.BuiltinFn = .{ .name = "setter", .func = propertySetterImpl };
+var property_deleter_method: value_mod.BuiltinFn = .{ .name = "deleter", .func = propertyDeleterImpl };
+var property_getter_method: value_mod.BuiltinFn = .{ .name = "getter", .func = propertyGetterImpl };
 
 pub fn complexConjugateBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     _ = interp_opaque;
@@ -3422,6 +3523,15 @@ fn instantiate(
 /// that dict into a Class. The class body itself returns None;
 /// the namespace is harvested from the frame after the run.
 pub fn buildClass(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return buildClassKw(interp_opaque, args, &.{}, &.{});
+}
+
+pub fn buildClassKw(
+    interp_opaque: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len < 2 or args[0] != .function or args[1] != .str) {
         try interp.typeError("__build_class__ expects (body_fn, name, *bases)");
@@ -3468,7 +3578,7 @@ pub fn buildClass(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         var i: usize = 1;
         while (i < cls.mro.len) : (i += 1) {
             if (cls.mro[i].dict.getStr("__init_subclass__")) |hook| {
-                _ = try invoke(interp, hook, &.{Value{ .class = cls }});
+                _ = try invokeKw(interp, hook, &.{Value{ .class = cls }}, kw_names, kw_values);
                 break;
             }
         }

@@ -99,26 +99,49 @@ fn splitImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
 fn joinImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const sep = args[0].str.bytes;
-    const items = switch (args[1]) {
-        .list => |l| l.items.items,
-        .tuple => |t| t.items,
+    const dispatch = @import("dispatch.zig");
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(interp.allocator);
+
+    var first = true;
+    const append = struct {
+        fn f(allocator: std.mem.Allocator, b: *std.ArrayList(u8), is_first: *bool, sep_b: []const u8, item: Value, interp_ref: *Interp) !void {
+            if (item != .str) {
+                try interp_ref.typeError("can only join an iterable of strings");
+                return error.TypeError;
+            }
+            if (!is_first.*) try b.appendSlice(allocator, sep_b);
+            try b.appendSlice(allocator, item.str.bytes);
+            is_first.* = false;
+        }
+    }.f;
+
+    switch (args[1]) {
+        .list => |l| for (l.items.items) |it| try append(interp.allocator, &buf, &first, sep, it, interp),
+        .tuple => |t| for (t.items) |it| try append(interp.allocator, &buf, &first, sep, it, interp),
+        .set => |s| for (s.items.items) |it| try append(interp.allocator, &buf, &first, sep, it, interp),
+        .iter, .generator, .enum_iter, .instance => {
+            const iter_val = blk: {
+                if (args[1] == .iter or args[1] == .generator) break :blk args[1];
+                const it = try dispatch.makeIter(interp, args[1]);
+                break :blk Value{ .iter = it };
+            };
+            while (try dispatch.iterStep(interp, iter_val)) |it| {
+                try append(interp.allocator, &buf, &first, sep, it, interp);
+            }
+        },
+        .str => |s| {
+            for (s.bytes) |b| {
+                if (!first) try buf.appendSlice(interp.allocator, sep);
+                try buf.append(interp.allocator, b);
+                first = false;
+            }
+        },
         else => {
             try interp.typeError("can only join an iterable of strings");
             return error.TypeError;
         },
-    };
-
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(interp.allocator);
-    for (items, 0..) |it, idx| {
-        if (idx != 0) try buf.appendSlice(interp.allocator, sep);
-        switch (it) {
-            .str => |s| try buf.appendSlice(interp.allocator, s.bytes),
-            else => {
-                try interp.typeError("sequence item: expected str");
-                return error.TypeError;
-            },
-        }
     }
     const owned = try buf.toOwnedSlice(interp.allocator);
     return Value{ .str = try Str.fromOwnedSlice(interp.allocator, owned) };
