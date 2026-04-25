@@ -31,6 +31,8 @@ const listmethods = @import("listmethods.zig");
 const setmethods = @import("setmethods.zig");
 const bytearraymethods = @import("bytearraymethods.zig");
 const bytesmethods = @import("bytesmethods.zig");
+const intmethods = @import("intmethods.zig");
+const floatmethods = @import("floatmethods.zig");
 const memoryviewmethods = @import("memoryviewmethods.zig");
 const dictmethods = @import("dictmethods.zig");
 const collmethods = @import("collections_methods.zig");
@@ -3188,6 +3190,8 @@ pub fn loadAttrValue(interp: *Interp, obj: Value, name: []const u8) !Value {
         .bytes => bytesmethods.lookup(name),
         .bytearray => bytearraymethods.lookup(name),
         .memoryview => memoryviewmethods.lookup(name),
+        .small_int, .boolean => intmethods.lookup(name),
+        .float => floatmethods.lookup(name),
         else => null,
     };
     if (method) |m| {
@@ -3582,6 +3586,8 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             .bytes => bytesmethods.lookup(name),
             .bytearray => bytearraymethods.lookup(name),
             .memoryview => memoryviewmethods.lookup(name),
+            .small_int, .boolean => intmethods.lookup(name),
+            .float => floatmethods.lookup(name),
             .deque => collmethods.dequeLookup(name),
             .counter => |c| blk: {
                 if (collmethods.counterLookup(name)) |m| break :blk m;
@@ -3623,6 +3629,57 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             frame.push(Value.null_sentinel);
         } else frame.push(v);
         return;
+    }
+    // int.from_bytes -- class-level attribute access on the `int` builtin.
+    if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "int") and std.mem.eql(u8, name, "from_bytes")) {
+        const v = Value{ .builtin_fn = &intmethods.from_bytes_entry };
+        if (is_method) {
+            frame.push(v);
+            frame.push(Value.null_sentinel);
+        } else frame.push(v);
+        return;
+    }
+    if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "float") and std.mem.eql(u8, name, "fromhex")) {
+        const v = Value{ .builtin_fn = &floatmethods.from_hex_entry };
+        if (is_method) {
+            frame.push(v);
+            frame.push(Value.null_sentinel);
+        } else frame.push(v);
+        return;
+    }
+    // int simple attrs: numerator/denominator/real/imag
+    if ((obj == .small_int or obj == .boolean)) {
+        const n: i64 = if (obj == .small_int) obj.small_int else if (obj.boolean) @as(i64, 1) else @as(i64, 0);
+        const v: ?Value = if (std.mem.eql(u8, name, "numerator") or std.mem.eql(u8, name, "real"))
+            Value{ .small_int = n }
+        else if (std.mem.eql(u8, name, "denominator"))
+            Value{ .small_int = 1 }
+        else if (std.mem.eql(u8, name, "imag"))
+            Value{ .small_int = 0 }
+        else
+            null;
+        if (v) |vv| {
+            if (is_method) {
+                frame.push(vv);
+                frame.push(Value.null_sentinel);
+            } else frame.push(vv);
+            return;
+        }
+    }
+    if (obj == .float) {
+        const v: ?Value = if (std.mem.eql(u8, name, "real"))
+            Value{ .float = obj.float }
+        else if (std.mem.eql(u8, name, "imag"))
+            Value{ .float = 0.0 }
+        else
+            null;
+        if (v) |vv| {
+            if (is_method) {
+                frame.push(vv);
+                frame.push(Value.null_sentinel);
+            } else frame.push(vv);
+            return;
+        }
     }
     try interp.attributeError(obj.typeName(), name);
     return error.AttributeError;
