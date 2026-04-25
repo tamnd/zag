@@ -9,6 +9,14 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.96] - 2026-04-26
+
+### Added
+
+- `96_threadsafe_set` fixture, byte-equal. The Python 3.13+
+  thread-safety set operations all already worked — the fixture
+  locks them down.
+
 ## [0.0.95] - 2026-04-26
 
 ### Added
