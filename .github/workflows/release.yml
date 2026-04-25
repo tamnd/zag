@@ -6,7 +6,6 @@ on:
       - "v*.*.*"
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   ZIG_VERSION: 0.16.0-dev.2984+cb7d2b056
 
 permissions:
@@ -38,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: mlugg/setup-zig@v2
+      - uses: tamnd/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
 
