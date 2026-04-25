@@ -11,6 +11,7 @@ const Tuple = @import("../object/tuple.zig").Tuple;
 const Class = @import("../object/class.zig").Class;
 const Dict = @import("../object/dict.zig").Dict;
 const Str = @import("../object/string.zig").Str;
+const Bytes = @import("../object/bytes.zig").Bytes;
 const Descriptor = @import("../object/descriptor.zig").Descriptor;
 
 pub const BuiltinError = error{
@@ -162,6 +163,7 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
             const piece = try Str.init(a, &[_]u8{b});
             try out.append(a, Value{ .str = piece });
         },
+        .bytes => |b| for (b.data) |x| try out.append(a, Value{ .small_int = @intCast(x) }),
         .dict => |d| for (d.keys.items) |k| {
             const piece = try Str.init(a, k);
             try out.append(a, Value{ .str = piece });
@@ -465,6 +467,25 @@ pub fn floatBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
     };
 }
 
+pub fn bytesBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len == 0) {
+        const out = try Bytes.init(interp.allocator, "");
+        return Value{ .bytes = out };
+    }
+    const list = try materialize(interp, args[0]);
+    var buf = try interp.allocator.alloc(u8, list.items.items.len);
+    for (list.items.items, 0..) |v, i| {
+        if (v != .small_int) {
+            try interp.typeError("bytes() argument must be iterable of ints");
+            return error.TypeError;
+        }
+        buf[i] = @intCast(v.small_int);
+    }
+    const out = try Bytes.fromOwnedSlice(interp.allocator, buf);
+    return Value{ .bytes = out };
+}
+
 pub fn strBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len == 0) {
@@ -504,6 +525,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("int", intBuiltin);
     try interp.registerBuiltin("float", floatBuiltin);
     try interp.registerBuiltin("str", strBuiltin);
+    try interp.registerBuiltin("bytes", bytesBuiltin);
     const dispatch = @import("dispatch.zig");
     try interp.registerBuiltin("__build_class__", dispatch.buildClass);
     try interp.registerBuiltin("isinstance", dispatch.isInstanceBuiltin);

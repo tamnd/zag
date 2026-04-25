@@ -1504,8 +1504,51 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
                     }
                     return t.items[@intCast(idx)];
                 },
+                .slice => |sl| {
+                    const n: i64 = @intCast(t.items.len);
+                    const r = try resolveSlice(interp, sl, n);
+                    const out = try Tuple.init(interp.allocator, r.count);
+                    var idx = r.start;
+                    var k: usize = 0;
+                    while (k < r.count) : (k += 1) {
+                        out.items[k] = t.items[@intCast(idx)];
+                        idx += r.step;
+                    }
+                    return Value{ .tuple = out };
+                },
                 else => {
                     try interp.typeError("tuple indices must be integers");
+                    return error.TypeError;
+                },
+            }
+        },
+        .bytes => |b| {
+            switch (key) {
+                .small_int => |i| {
+                    const n: i64 = @intCast(b.data.len);
+                    var idx = i;
+                    if (idx < 0) idx += n;
+                    if (idx < 0 or idx >= n) {
+                        try interp.raisePy("IndexError", "bytes index out of range");
+                        return error.PyException;
+                    }
+                    return Value{ .small_int = @intCast(b.data[@intCast(idx)]) };
+                },
+                .slice => |sl| {
+                    const n: i64 = @intCast(b.data.len);
+                    const r = try resolveSlice(interp, sl, n);
+                    var buf = try interp.allocator.alloc(u8, r.count);
+                    var idx = r.start;
+                    var k: usize = 0;
+                    while (k < r.count) : (k += 1) {
+                        buf[k] = b.data[@intCast(idx)];
+                        idx += r.step;
+                    }
+                    const out = try @import("../object/bytes.zig").Bytes.fromOwnedSlice(interp.allocator, buf);
+                    return Value{ .bytes = out };
+                },
+                else => {
+                    try interp.typeError("bytes indices must be integers or slices");
                     return error.TypeError;
                 },
             }
