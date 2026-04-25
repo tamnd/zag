@@ -32,11 +32,23 @@ fn extendImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
 fn popImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const lst = args[0].list;
-    if (lst.items.items.len == 0) {
+    const n = lst.items.items.len;
+    if (n == 0) {
         try interp.indexError("pop from empty list");
         return error.IndexError;
     }
-    return lst.items.pop().?;
+    if (args.len < 2) return lst.items.pop().?;
+    if (args[1] != .small_int) {
+        try interp.typeError("pop() index must be an integer");
+        return error.TypeError;
+    }
+    var idx = args[1].small_int;
+    if (idx < 0) idx += @intCast(n);
+    if (idx < 0 or idx >= @as(i64, @intCast(n))) {
+        try interp.indexError("pop index out of range");
+        return error.IndexError;
+    }
+    return lst.items.orderedRemove(@intCast(idx));
 }
 
 fn reverseImpl(_: *anyopaque, args: []const Value) anyerror!Value {
