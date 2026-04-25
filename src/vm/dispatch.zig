@@ -129,7 +129,8 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 frame.push(Value{ .module = m });
                 continue :sw advance(frame, &ext_arg, 0);
             }
-            try interp.importError(name);
+            const msg = try std.fmt.allocPrint(interp.allocator, "No module named '{s}'", .{name});
+            try interp.raisePy("ModuleNotFoundError", msg);
             return error.PyException;
         },
 
@@ -142,8 +143,13 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const tos = frame.top();
             const v: Value = switch (tos) {
                 .module => |m| m.attrs.getStr(name) orelse {
-                    try interp.attributeError("module", name);
-                    return error.AttributeError;
+                    const msg = try std.fmt.allocPrint(
+                        interp.allocator,
+                        "cannot import name '{s}' from '{s}'",
+                        .{ name, m.name },
+                    );
+                    try interp.raisePy("ImportError", msg);
+                    return error.PyException;
                 },
                 else => {
                     try interp.typeError("IMPORT_FROM expects a module on TOS");

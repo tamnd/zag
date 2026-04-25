@@ -42,6 +42,12 @@ pub const Interp = struct {
     /// the body; subsequent imports return the cached `*Module` so
     /// identity holds (e.g. `import x as a; import x as b; a is b`).
     user_modules: std.StringHashMapUnmanaged(*Module) = .empty,
+    /// The synthetic class returned by `type(some_module)`. Built
+    /// lazily so scripts that never call `type()` on a module pay
+    /// nothing. CPython's spelling of this is `types.ModuleType`; we
+    /// expose it directly off `type()` because that's all the
+    /// fixtures probe.
+    module_type: ?*@import("../object/class.zig").Class = null,
 
     pub fn init(
         allocator: std.mem.Allocator,

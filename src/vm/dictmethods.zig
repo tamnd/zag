@@ -15,8 +15,8 @@ const List = @import("../object/list.zig").List;
 
 /// Materialize a list of `(key, value)` 2-tuples in insertion
 /// order. CPython returns a `dict_items` view object, but for the
-/// only consumer this fixture has -- `sorted(kw.items())` -- a
-/// plain list is indistinguishable.
+/// fixture consumers (`sorted(kw.items())`, `for k, v in d.items()`)
+/// a plain list is indistinguishable.
 pub fn itemsImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len != 1 or args[0] != .dict) {
@@ -25,22 +25,17 @@ pub fn itemsImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value 
     }
     const d = args[0].dict;
     const out = try List.init(interp.allocator);
-    var i: usize = 0;
-    while (i < d.keys.items.len) : (i += 1) {
-        const k = d.keys.items[i];
-        const v = d.getStr(k) orelse continue;
-        const key_str = try Str.init(interp.allocator, k);
+    for (d.pairs.items) |p| {
         const pair = try Tuple.init(interp.allocator, 2);
-        pair.items[0] = Value{ .str = key_str };
-        pair.items[1] = v;
+        pair.items[0] = p.key;
+        pair.items[1] = p.value;
         try out.append(interp.allocator, Value{ .tuple = pair });
     }
     return Value{ .list = out };
 }
 
-/// `dict.keys()` -- list of string keys in insertion order. Like
-/// `items()` we materialize a list rather than the `dict_keys`
-/// view.
+/// `dict.keys()` -- list of keys in insertion order. Materializes a
+/// list rather than a `dict_keys` view.
 pub fn keysImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len != 1 or args[0] != .dict) {
@@ -49,10 +44,7 @@ pub fn keysImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     }
     const d = args[0].dict;
     const out = try List.init(interp.allocator);
-    for (d.keys.items) |k| {
-        const s = try Str.init(interp.allocator, k);
-        try out.append(interp.allocator, Value{ .str = s });
-    }
+    for (d.pairs.items) |p| try out.append(interp.allocator, p.key);
     return Value{ .list = out };
 }
 
@@ -64,25 +56,20 @@ pub fn valuesImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
     }
     const d = args[0].dict;
     const out = try List.init(interp.allocator);
-    for (d.keys.items) |k| {
-        if (d.getStr(k)) |v| try out.append(interp.allocator, v);
-    }
+    for (d.pairs.items) |p| try out.append(interp.allocator, p.value);
     return Value{ .list = out };
 }
 
 /// `dict.get(key)` returns None if missing; `dict.get(key, default)`
-/// returns the default. Only string keys are in scope.
+/// returns the default. Routes through `getKey` so any hashable
+/// (today: ints, strs, tuples) works.
 pub fn getImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len < 2 or args.len > 3 or args[0] != .dict) {
         try interp.typeError("dict.get() takes 1 or 2 arguments");
         return error.TypeError;
     }
-    if (args[1] != .str) {
-        try interp.typeError("zag: dict.get only supports str keys");
-        return error.TypeError;
-    }
-    if (args[0].dict.getStr(args[1].str.bytes)) |v| return v;
+    if (args[0].dict.getKey(args[1])) |v| return v;
     return if (args.len == 3) args[2] else Value.none;
 }
 
