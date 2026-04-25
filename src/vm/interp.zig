@@ -16,6 +16,8 @@ const dispatch = @import("dispatch.zig");
 const builtins = @import("builtins.zig");
 const asyncio_mod = @import("asyncio.zig");
 const importlib_mod = @import("importlib.zig");
+const functools_mod = @import("functools_mod.zig");
+const itertools_mod = @import("itertools_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -34,6 +36,8 @@ pub const Interp = struct {
     /// script that doesn't reach for them pays nothing.
     asyncio_module: ?*Module = null,
     importlib_module: ?*Module = null,
+    functools_module: ?*Module = null,
+    itertools_module: ?*Module = null,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every
     /// helper `.pyc`; the CLI pre-registers siblings of the entry
@@ -264,6 +268,18 @@ pub const Interp = struct {
             if (self.importlib_module) |m| return m;
             const m = importlib_mod.build(self) catch return null;
             self.importlib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "functools")) {
+            if (self.functools_module) |m| return m;
+            const m = functools_mod.build(self) catch return null;
+            self.functools_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "itertools")) {
+            if (self.itertools_module) |m| return m;
+            const m = itertools_mod.build(self) catch return null;
+            self.itertools_module = m;
             return m;
         }
         return null;

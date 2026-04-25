@@ -29,6 +29,9 @@ const EnumIter = @import("enum_iter.zig").EnumIter;
 const Module = @import("module.zig").Module;
 const BigInt = @import("bigint.zig").BigInt;
 const BoundMethod = @import("bound_method.zig").BoundMethod;
+const Partial = @import("partial.zig").Partial;
+const CachedFn = @import("cached_fn.zig").CachedFn;
+const CachedProperty = @import("cached_property.zig").CachedProperty;
 
 pub const Tag = enum(u8) {
     none,
@@ -47,6 +50,9 @@ pub const Tag = enum(u8) {
     code,
     builtin_fn,
     bound_method,
+    partial,
+    cached_fn,
+    cached_property,
     function,
     cell,
     class,
@@ -109,6 +115,9 @@ pub const Value = union(Tag) {
     code: *Code,
     builtin_fn: *BuiltinFn,
     bound_method: *BoundMethod,
+    partial: *Partial,
+    cached_fn: *CachedFn,
+    cached_property: *CachedProperty,
     function: *Function,
     cell: *Cell,
     class: *Class,
@@ -141,7 +150,7 @@ pub const Value = union(Tag) {
             .dict => |d| d.count() != 0,
             .set => |s| s.items.items.len != 0,
             .ellipsis, .not_implemented => true,
-            .code, .builtin_fn, .bound_method, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter, .module => true,
+            .code, .builtin_fn, .bound_method, .partial, .cached_fn, .cached_property, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator, .enum_iter, .module => true,
         };
     }
 
@@ -230,6 +239,9 @@ pub const Value = union(Tag) {
                 .builtin_fn => |f| try w.print("<built-in method {s}>", .{f.name}),
                 else => try w.writeAll("<bound method>"),
             },
+            .partial => try w.writeAll("functools.partial(...)"),
+            .cached_fn => try w.writeAll("<cached function>"),
+            .cached_property => try w.writeAll("<cached_property>"),
             .function => |f| try w.print("<function {s}>", .{f.code.qualname}),
             .cell => try w.writeAll("<cell>"),
             .class => |c| try w.print("<class '{s}'>", .{c.name}),
@@ -510,6 +522,9 @@ pub const Value = union(Tag) {
             .code => |p| p == b.code,
             .builtin_fn => |p| p == b.builtin_fn,
             .bound_method => |p| p == b.bound_method,
+            .partial => |p| p == b.partial,
+            .cached_fn => |p| p == b.cached_fn,
+            .cached_property => |p| p == b.cached_property,
             .function => |p| p == b.function,
             .cell => |p| p == b.cell,
             .class => |p| p == b.class,
@@ -543,6 +558,9 @@ pub const Value = union(Tag) {
             .code => "code",
             .builtin_fn => "builtin_function_or_method",
             .bound_method => "method",
+            .partial => "functools.partial",
+            .cached_fn => "function",
+            .cached_property => "cached_property",
             .function => "function",
             .cell => "cell",
             .class => "type",

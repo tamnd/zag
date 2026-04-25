@@ -9,6 +9,40 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.60] - 2026-04-25
+
+### Added
+
+- `59_functools_itertools` fixture, byte-equal against CPython
+  3.14. Covers a representative slice of both stdlib modules:
+  `reduce`, `partial` (positional + keyword binding),
+  `lru_cache`, `cache`, `wraps`, `cached_property`; `count`,
+  `cycle`, `repeat`, `chain` and `chain.from_iterable`,
+  `compress`, `dropwhile`, `takewhile`, `starmap`,
+  `zip_longest`, `product`, `permutations`, `combinations`,
+  `combinations_with_replacement`, `accumulate`, `pairwise`,
+  `filterfalse`, `islice`.
+- `functools` and `itertools` builtin modules. Lazy-built on
+  first import, like `asyncio` and `importlib`.
+- `Value.partial` carrying `(func, bound_args, bound_kwargs)`;
+  `Value.cached_fn` carrying `(func, cache, maxsize)`;
+  `Value.cached_property` carrying `(func, name)`. All three
+  route through `invokeKw` (and, for `cached_property`,
+  through instance `LOAD_ATTR`).
+- `int(s, base=...)` accepts `base` as a positional or keyword
+  argument, so `functools.partial(int, base=16)` works.
+- `Function.name_override` / `doc_override` / `wrapped`
+  fields, written by `functools.wraps` and read by `LOAD_ATTR`
+  for `__name__` / `__doc__` / `__wrapped__`.
+
+### Changed
+
+- `LOAD_ATTR` on a `function` returns `name_override` for
+  `__name__` when set (`functools.wraps` writes it).
+- `__build_class__` records the attribute name on
+  `cached_property` during class body finalization, so the
+  cache key for `@cached_property` is the attribute slot.
+
 ## [0.0.59] - 2026-04-25
 
 ### Added
