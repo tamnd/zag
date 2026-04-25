@@ -359,17 +359,17 @@ pub const Value = union(Tag) {
             };
         }
         // bytes / bytearray are lexicographically comparable, including
-        // cross-type (`bytearray(b"abc") < b"abd"` works).
+        // cross-type (`bytearray(b"abc") < b"abd"` works). memoryview
+        // is intentionally excluded -- CPython raises TypeError on
+        // `mv < mv`, so we let the compare fall through to null here.
         const a_bytes: ?[]const u8 = switch (a) {
             .bytes => |x| x.data,
             .bytearray => |x| x.data.items,
-            .memoryview => |m| m.data(),
             else => null,
         };
         const b_bytes: ?[]const u8 = switch (b) {
             .bytes => |x| x.data,
             .bytearray => |x| x.data.items,
-            .memoryview => |m| m.data(),
             else => null,
         };
         if (a_bytes != null and b_bytes != null) {
