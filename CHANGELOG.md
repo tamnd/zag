@@ -9,6 +9,19 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.80] - 2026-04-26
+
+### Added
+
+- `80_builtins_missing` fixture, byte-equal.
+- Builtins `globals`, `locals`, `vars`, `aiter`, `anext`, `breakpoint`,
+  `help`, `object`. `locals()` and `vars()` (no-arg) snapshot
+  `frame.fast` when the locals dict aliases globals.
+- `open()` reads/writes real files via `interp.io`; supports `r`/`w`/`b`
+  modes and the context-manager protocol.
+- New exceptions: `StopAsyncIteration`, `OSError`, `FileNotFoundError`.
+- Pinhole `os` module: `remove`/`unlink`.
+
 ## [0.0.79] - 2026-04-26
 
 ### Added
