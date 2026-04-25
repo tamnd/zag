@@ -9,6 +9,47 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-04-25
+
+### Added
+
+- `05_control_flow` fixture, lifted verbatim from goipy's testdata,
+  running byte-equal against CPython 3.14 stdout. First fixture to
+  drive `for i in range(...)` loops, `while` with an accumulator,
+  and `break`/`continue` inside a `for`.
+- `range()` builtin in 1-arg (`range(stop)`) and 2-arg
+  (`range(start, stop)`) forms. The result is an `Iter` directly --
+  for `for i in range(...):` that's indistinguishable from CPython's
+  separate `range` sequence + `range_iterator` pair, and skipping
+  the sequence object until a fixture forces it (len / contains /
+  reuse) keeps the value union from gaining a tag it doesn't yet
+  earn.
+- `Iter.Kind.range` variant carrying `{ current, stop, step }`. Only
+  positive step is in scope; the 3-arg form and negative ranges wait
+  for a fixture.
+- `BINARY_OP` arg=13 (`NB_INPLACE_ADD`) for `int + int`. Ints are
+  immutable so the "in-place" path just returns a fresh `small_int`,
+  matching what CPython does at the C level.
+- `BINARY_OP` arg=6 (`NB_REMAINDER`) for `int % int`, with Python's
+  floor-modulo semantics: the result takes the sign of the divisor,
+  not the dividend (`@rem` in Zig takes the dividend's sign). The
+  fixture only uses positive operands but the right answer is cheap.
+- `GET_ITER` pass-through when handed something already iterable as
+  an `Iter` -- needed because `range()` returns one directly and the
+  emitted code is `range(); GET_ITER; FOR_ITER`.
+
+### Notes
+
+- `break` and `continue` need no new opcodes: the 3.14 compiler
+  emits `POP_TOP; JUMP_FORWARD` past the loop's `END_FOR; POP_ITER`
+  for `break`, and a plain `JUMP_BACKWARD` to `FOR_ITER` for
+  `continue`. The exception-table cleanup region the compiler also
+  emits never fires for plain `for`/`while` loops, so we still
+  haven't needed an exception-table walker.
+- `BINARY_OP` arg=0 (regular `+`) isn't wired yet; the fixture's
+  adds are all augmented (`+=`, arg=13). The next fixture to force a
+  bare `+` between non-constant ints will widen the table.
+
 ## [0.0.5] - 2026-04-25
 
 ### Added
@@ -171,7 +212,8 @@ changes.
 - CI workflow running `zig build`, `zig build test`, and one end-to-
   end `zig build run` of the hello fixture on every push and PR.
 
-[Unreleased]: https://github.com/tamnd/zag/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/tamnd/zag/compare/v0.0.6...HEAD
+[0.0.6]: https://github.com/tamnd/zag/compare/v0.0.5...v0.0.6
 [0.0.5]: https://github.com/tamnd/zag/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/tamnd/zag/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/tamnd/zag/compare/v0.0.2...v0.0.3

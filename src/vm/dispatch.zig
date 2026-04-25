@@ -402,6 +402,8 @@ inline fn advance(frame: *Frame, ext_arg: *u32, cw: u8) Opcode {
 fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
     return switch (arg) {
         5 => multiply(interp, a, b),
+        6 => remainder(interp, a, b),
+        13 => inplaceAdd(interp, a, b),
         26 => subscript(interp, a, b),
         else => blk: {
             try interp.stderr.print(
@@ -419,6 +421,37 @@ fn multiply(interp: *Interp, a: Value, b: Value) !Value {
         return Value{ .small_int = a.small_int *% b.small_int };
     }
     try interp.typeError("unsupported operand type(s) for *");
+    return error.TypeError;
+}
+
+/// `int + int` for the BINARY_OP arg=13 (`NB_INPLACE_ADD`) path.
+/// Ints are immutable, so "in-place" just means we return a fresh
+/// small_int. Other operand combinations wait for a fixture.
+fn inplaceAdd(interp: *Interp, a: Value, b: Value) !Value {
+    if (a == .small_int and b == .small_int) {
+        return Value{ .small_int = a.small_int +% b.small_int };
+    }
+    try interp.typeError("unsupported operand type(s) for +");
+    return error.TypeError;
+}
+
+/// `int % int` with Python semantics: the result takes the sign of
+/// the divisor, not the dividend (Zig's `@rem` takes the dividend's
+/// sign). Cheap to do correctly even though the fixture only uses
+/// positive operands.
+fn remainder(interp: *Interp, a: Value, b: Value) !Value {
+    if (a == .small_int and b == .small_int) {
+        const x = a.small_int;
+        const y = b.small_int;
+        if (y == 0) {
+            try interp.typeError("integer modulo by zero");
+            return error.TypeError;
+        }
+        const r = @rem(x, y);
+        const adjusted = if (r != 0 and ((r < 0) != (y < 0))) r + y else r;
+        return Value{ .small_int = adjusted };
+    }
+    try interp.typeError("unsupported operand type(s) for %");
     return error.TypeError;
 }
 
@@ -539,6 +572,7 @@ fn makeIter(interp: *Interp, v: Value) !*Iter {
     return switch (v) {
         .list => |l| try Iter.init(interp.allocator, .{ .list = l }),
         .tuple => |t| try Iter.init(interp.allocator, .{ .tuple = t }),
+        .iter => |it| it,
         else => {
             try interp.typeError("object is not iterable");
             return error.TypeError;

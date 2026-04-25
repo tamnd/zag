@@ -6,6 +6,7 @@ const BuiltinFn = value_mod.BuiltinFn;
 
 const Interp = @import("interp.zig").Interp;
 const List = @import("../object/list.zig").List;
+const Iter = @import("../object/iter.zig").Iter;
 
 pub const BuiltinError = error{
     BadArgument,
@@ -123,10 +124,47 @@ fn lessThanForSort(_: void, a: Value, b: Value) bool {
     return false;
 }
 
+/// Python `range(stop)` and `range(start, stop)`. We hand back an
+/// `Iter` directly rather than a separate range sequence object —
+/// for `for i in range(...):` the distinction is invisible, and
+/// fixtures don't yet exercise len/contains/repr on a range.
+pub fn rangeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    var start: i64 = 0;
+    var stop: i64 = 0;
+    if (args.len == 1) {
+        stop = try intArg(interp, args[0]);
+    } else if (args.len == 2) {
+        start = try intArg(interp, args[0]);
+        stop = try intArg(interp, args[1]);
+    } else {
+        try interp.typeError("range expected 1 or 2 arguments");
+        return error.TypeError;
+    }
+    const it = try Iter.init(interp.allocator, .{ .range = .{
+        .current = start,
+        .stop = stop,
+        .step = 1,
+    } });
+    return Value{ .iter = it };
+}
+
+fn intArg(interp: *Interp, v: Value) !i64 {
+    return switch (v) {
+        .small_int => |i| i,
+        .boolean => |b| @intFromBool(b),
+        else => {
+            try interp.typeError("range argument must be int");
+            return error.TypeError;
+        },
+    };
+}
+
 pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("print", print);
     try interp.registerBuiltin("abs", absBuiltin);
     try interp.registerBuiltin("len", lenBuiltin);
     try interp.registerBuiltin("sum", sumBuiltin);
     try interp.registerBuiltin("sorted", sortedBuiltin);
+    try interp.registerBuiltin("range", rangeBuiltin);
 }
