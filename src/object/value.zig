@@ -22,6 +22,7 @@ const Class = @import("class.zig").Class;
 const Instance = @import("instance.zig").Instance;
 const Descriptor = @import("descriptor.zig").Descriptor;
 const Generator = @import("generator.zig").Generator;
+const Set = @import("set.zig").Set;
 
 pub const Tag = enum(u8) {
     none,
@@ -43,6 +44,7 @@ pub const Tag = enum(u8) {
     iter,
     descriptor,
     generator,
+    set,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
     /// uses `NULL` as a C-level sentinel before a CALL and `None` as a
     /// real Python value.
@@ -79,6 +81,7 @@ pub const Value = union(Tag) {
     iter: *Iter,
     descriptor: *Descriptor,
     generator: *Generator,
+    set: *Set,
     null_sentinel,
 
     pub fn isTruthy(self: Value) bool {
@@ -92,6 +95,7 @@ pub const Value = union(Tag) {
             .tuple => |t| t.items.len != 0,
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
+            .set => |s| s.items.items.len != 0,
             .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor, .generator => true,
         };
     }
@@ -130,14 +134,19 @@ pub const Value = union(Tag) {
             },
             .dict => |d| {
                 try w.writeByte('{');
-                var i: usize = 0;
-                while (i < d.keys.items.len) : (i += 1) {
+                for (d.pairs.items, 0..) |p, i| {
                     if (i != 0) try w.writeAll(", ");
-                    const k = d.keys.items[i];
-                    try w.writeByte('\'');
-                    try w.writeAll(k);
-                    try w.writeAll("': ");
-                    if (d.getStr(k)) |v| try v.writeRepr(w);
+                    try p.key.writeRepr(w);
+                    try w.writeAll(": ");
+                    try p.value.writeRepr(w);
+                }
+                try w.writeByte('}');
+            },
+            .set => |s| {
+                try w.writeByte('{');
+                for (s.items.items, 0..) |it, i| {
+                    if (i != 0) try w.writeAll(", ");
+                    try it.writeRepr(w);
                 }
                 try w.writeByte('}');
             },
@@ -263,6 +272,7 @@ pub const Value = union(Tag) {
             .iter => |p| p == b.iter,
             .descriptor => |p| p == b.descriptor,
             .generator => |p| p == b.generator,
+            .set => |p| p == b.set,
         };
     }
 
@@ -292,6 +302,7 @@ pub const Value = union(Tag) {
                 .staticmethod => "staticmethod",
             },
             .generator => "generator",
+            .set => "set",
         };
     }
 };

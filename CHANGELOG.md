@@ -9,6 +9,28 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.20] - 2026-04-25
+
+### Added
+
+- `19_comprehensions` fixture, lifted from goipy's testdata,
+  running byte-equal against CPython 3.14. List, dict, set, and
+  generator comprehensions; multi-loop with `enumerate`; a
+  `sum(...)` over a generator expression.
+- `Set` value type backed by an insertion-ordered ArrayList,
+  with `BUILD_SET` and `SET_ADD` opcodes.
+- Generic dict keys: `Dict` now stores `(Value, Value)` pairs,
+  and `BUILD_MAP` / `MAP_ADD` / subscript / store / repr go
+  through the value-keyed API. `setStr` / `getStr` remain as
+  thin wrappers so module / class / instance namespaces stay
+  ergonomic.
+
+### Changed
+
+- `Dict` repr walks `pairs` directly so int / bool / mixed-key
+  dicts render correctly. The previous `keys` slice (str-only)
+  is now an insertion-order shadow used by namespace iteration.
+
 ## [0.0.19] - 2026-04-25
 
 ### Added

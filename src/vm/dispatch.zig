@@ -21,6 +21,7 @@ const Class = @import("../object/class.zig").Class;
 const Instance = @import("../object/instance.zig").Instance;
 const Generator = @import("../object/generator.zig").Generator;
 const Slice = @import("../object/slice.zig").Slice;
+const Set = @import("../object/set.zig").Set;
 const Dict = @import("../object/dict.zig").Dict;
 const Frame = @import("frame.zig").Frame;
 const Interp = @import("interp.zig").Interp;
@@ -594,6 +595,26 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.CALL_KW)]);
         },
 
+        .BUILD_SET => {
+            const n = oparg(frame, ext_arg);
+            const s = try Set.init(interp.allocator);
+            const base = frame.sp - n;
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                try s.add(interp.allocator, frame.stack[base + i]);
+            }
+            frame.sp = base;
+            frame.push(Value{ .set = s });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .SET_ADD => {
+            const v = frame.pop();
+            const set_val = frame.stack[frame.sp - oparg(frame, ext_arg)];
+            try set_val.set.add(interp.allocator, v);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .BUILD_MAP => {
             const n = oparg(frame, ext_arg);
             const d = try Dict.init(interp.allocator);
@@ -602,11 +623,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             while (i < n) : (i += 1) {
                 const k = frame.stack[base + 2 * i];
                 const v = frame.stack[base + 2 * i + 1];
-                if (k != .str) {
-                    try interp.typeError("zag: dict literals only support str keys");
-                    return error.TypeError;
-                }
-                try d.setStr(interp.allocator, k.str.bytes, v);
+                try d.setKey(interp.allocator, k, v);
             }
             frame.sp = base;
             frame.push(Value{ .dict = d });
@@ -890,11 +907,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const v = frame.pop();
             const k = frame.pop();
             const dict_val = frame.stack[frame.sp - oparg(frame, ext_arg)];
-            if (k != .str) {
-                try interp.typeError("zag: dict comp only supports str keys");
-                return error.TypeError;
-            }
-            try dict_val.dict.setStr(interp.allocator, k.str.bytes, v);
+            try dict_val.dict.setKey(interp.allocator, k, v);
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -1442,14 +1455,9 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
             }
         },
         .dict => |d| {
-            if (key != .str) {
-                try interp.typeError("zag: dict subscript only supports str keys");
-                return error.TypeError;
-            }
-            if (d.getStr(key.str.bytes)) |v| return v;
-            try interp.stderr.print("KeyError: '{s}'\n", .{key.str.bytes});
-            try interp.stderr.flush();
-            return error.IndexError;
+            if (d.getKey(key)) |v| return v;
+            try interp.raisePy("KeyError", "key not found");
+            return error.PyException;
         },
         else => {
             try interp.typeError("object is not subscriptable");
@@ -1573,11 +1581,7 @@ fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !voi
             },
         },
         .dict => |d| {
-            if (key != .str) {
-                try interp.typeError("zag: dict store only supports str keys");
-                return error.TypeError;
-            }
-            try d.setStr(interp.allocator, key.str.bytes, value);
+            try d.setKey(interp.allocator, key, value);
         },
         else => {
             try interp.typeError("object does not support item assignment");
