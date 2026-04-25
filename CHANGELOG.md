@@ -9,6 +9,28 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.37] - 2026-04-25
+
+### Added
+
+- `36_import_basic` fixture and its companion `_36_mymod` helper
+  (lifted from goipy's testdata), byte-equal against CPython 3.14.
+  Plain `import x as y`, `from x import a, b, c`, attribute access
+  on the imported module, calls into module-level functions and
+  classes, module-level side effects observable from the importer,
+  and identity (`mymod is again`) across re-imports.
+- Module loading for user `.pyc` files. The CLI binary scans the
+  directory of the entry script and registers every sibling
+  `.cpython-314.pyc` as an importable module; the test harness
+  pre-registers helper fixtures (those whose name starts with
+  `_`). Bodies are lazy — they only run on first import.
+- `IMPORT_FROM` opcode. Peeks the module on TOS, looks up the
+  attribute, and pushes it for the following `STORE_*` to bind.
+- `IMPORT_NAME` learned to consult user modules: builtin lookup
+  first (so `asyncio` still wins), then the user-module cache,
+  then the registered `.pyc` codes (executed and cached on first
+  hit).
+
 ## [0.0.36] - 2026-04-25
 
 ### Added
