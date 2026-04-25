@@ -27,6 +27,7 @@ const listmethods = @import("listmethods.zig");
 const dictmethods = @import("dictmethods.zig");
 const exc = @import("exc.zig");
 const builtins_mod = @import("builtins.zig");
+const format_mod = @import("format.zig");
 
 pub const DispatchError = error{
     UnknownOpcode,
@@ -251,6 +252,21 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const same = a.identityEq(b);
             const invert = (arg & 1) != 0;
             frame.push(Value{ .boolean = same != invert });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .UNARY_NEGATIVE => {
+            const v = frame.pop();
+            const r: Value = switch (v) {
+                .small_int => |i| Value{ .small_int = -i },
+                .float => |f| Value{ .float = -f },
+                .boolean => |b| Value{ .small_int = -@as(i64, @intFromBool(b)) },
+                else => {
+                    try interp.typeError("bad operand type for unary -");
+                    return error.TypeError;
+                },
+            };
+            frame.push(r);
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -751,6 +767,66 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             };
             const owner = frame.pop();
             try loadAttr(interp, frame, owner, name, true);
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .BUILD_STRING => {
+            const n = oparg(frame, ext_arg);
+            const start = frame.sp - n;
+            var total: usize = 0;
+            var i: usize = 0;
+            while (i < n) : (i += 1) {
+                const v = frame.stack[start + i];
+                if (v != .str) {
+                    try interp.typeError("BUILD_STRING: non-str argument");
+                    return error.TypeError;
+                }
+                total += v.str.bytes.len;
+            }
+            const buf = try interp.allocator.alloc(u8, total);
+            var off: usize = 0;
+            i = 0;
+            while (i < n) : (i += 1) {
+                const v = frame.stack[start + i];
+                @memcpy(buf[off .. off + v.str.bytes.len], v.str.bytes);
+                off += v.str.bytes.len;
+            }
+            frame.sp = start;
+            const s = try Str.init(interp.allocator, buf);
+            frame.push(Value{ .str = s });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .FORMAT_SIMPLE => {
+            // PEP 701 fast path -- equivalent to format(value, "").
+            const v = frame.pop();
+            if (v == .str) {
+                frame.push(v);
+            } else {
+                var w = std.Io.Writer.Allocating.init(interp.allocator);
+                try v.writeStr(&w.writer);
+                const s = try Str.init(interp.allocator, w.written());
+                frame.push(Value{ .str = s });
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .FORMAT_WITH_SPEC => {
+            const spec_v = frame.pop();
+            const v = frame.pop();
+            if (spec_v != .str) {
+                try interp.typeError("FORMAT_WITH_SPEC: spec must be str");
+                return error.TypeError;
+            }
+            const out = format_mod.format(interp.allocator, v, spec_v.str.bytes) catch |e| {
+                if (e == error.TypeError) {
+                    try interp.typeError("unsupported format spec");
+                    return error.TypeError;
+                }
+                return e;
+            };
+            const s = try Str.init(interp.allocator, out);
+            frame.push(Value{ .str = s });
             continue :sw advance(frame, &ext_arg, 0);
         },
 

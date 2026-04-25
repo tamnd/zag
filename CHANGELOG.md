@@ -9,6 +9,27 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-04-25
+
+### Added
+
+- `14_fstring_format` fixture, lifted from goipy's testdata,
+  running byte-equal against CPython 3.14. Covers width, zero-pad,
+  int bases (`b/o/x/X`), thousands separator, float `.Nf` and
+  `.Ne`, fill+align combos, and the `+` sign flag.
+- `FORMAT_WITH_SPEC` opcode plus a PEP 3101 mini-language parser
+  in `src/vm/format.zig`. Dispatches on value kind: int formats
+  go through `printInt` plus a comma-insertion pass; float `e/E`
+  is hand-rolled because Zig's `{e}` doesn't produce Python's
+  two-digit signed exponent.
+- `FORMAT_SIMPLE` empty-spec fast path. Strings pass through;
+  everything else converts via `writeStr`.
+- `BUILD_STRING` for f-strings that interleave literal text with
+  formatted interpolations. Concatenates n stack entries into a
+  single `Str`.
+- `UNARY_NEGATIVE`. The fixture's `-n` test forced it; small_int,
+  float, and bool are in scope.
+
 ## [0.0.14] - 2026-04-25
 
 ### Added
