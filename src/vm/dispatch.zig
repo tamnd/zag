@@ -3654,6 +3654,22 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
         return;
     }
     // int.from_bytes -- class-level attribute access on the `int` builtin.
+    if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "bytes") and std.mem.eql(u8, name, "fromhex")) {
+        const v = Value{ .builtin_fn = &bytesmethods.fromhex_entry };
+        if (is_method) {
+            frame.push(v);
+            frame.push(Value.null_sentinel);
+        } else frame.push(v);
+        return;
+    }
+    if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "bytearray") and std.mem.eql(u8, name, "fromhex")) {
+        const v = Value{ .builtin_fn = &bytesmethods.fromhex_bytearray_entry };
+        if (is_method) {
+            frame.push(v);
+            frame.push(Value.null_sentinel);
+        } else frame.push(v);
+        return;
+    }
     if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "dict") and std.mem.eql(u8, name, "fromkeys")) {
         const v = Value{ .builtin_fn = &dictmethods.fromkeys_entry };
         if (is_method) {
