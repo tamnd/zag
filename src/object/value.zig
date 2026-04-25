@@ -20,6 +20,7 @@ const Function = @import("function.zig").Function;
 const Cell = @import("cell.zig").Cell;
 const Class = @import("class.zig").Class;
 const Instance = @import("instance.zig").Instance;
+const Descriptor = @import("descriptor.zig").Descriptor;
 
 pub const Tag = enum(u8) {
     none,
@@ -39,6 +40,7 @@ pub const Tag = enum(u8) {
     instance,
     slice,
     iter,
+    descriptor,
     /// Placeholder pushed by PUSH_NULL. Distinct from `.none` — CPython
     /// uses `NULL` as a C-level sentinel before a CALL and `None` as a
     /// real Python value.
@@ -73,6 +75,7 @@ pub const Value = union(Tag) {
     instance: *Instance,
     slice: *Slice,
     iter: *Iter,
+    descriptor: *Descriptor,
     null_sentinel,
 
     pub fn isTruthy(self: Value) bool {
@@ -86,7 +89,7 @@ pub const Value = union(Tag) {
             .tuple => |t| t.items.len != 0,
             .list => |l| l.items.items.len != 0,
             .dict => |d| d.count() != 0,
-            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter => true,
+            .code, .builtin_fn, .function, .cell, .class, .instance, .slice, .iter, .descriptor => true,
         };
     }
 
@@ -142,6 +145,11 @@ pub const Value = union(Tag) {
             .class => |c| try w.print("<class '{s}'>", .{c.name}),
             .instance => |obj| try w.print("<{s} object>", .{obj.cls.name}),
             .iter => try w.writeAll("<iterator>"),
+            .descriptor => |d| switch (d.kind) {
+                .property => try w.writeAll("<property object>"),
+                .classmethod => try w.writeAll("<classmethod object>"),
+                .staticmethod => try w.writeAll("<staticmethod object>"),
+            },
             .slice => |sl| {
                 try w.writeAll("slice(");
                 try sl.start.writeRepr(w);
@@ -249,6 +257,7 @@ pub const Value = union(Tag) {
             .instance => |p| p == b.instance,
             .slice => |p| p == b.slice,
             .iter => |p| p == b.iter,
+            .descriptor => |p| p == b.descriptor,
         };
     }
 
@@ -272,6 +281,11 @@ pub const Value = union(Tag) {
             .instance => |obj| obj.cls.name,
             .slice => "slice",
             .iter => "iterator",
+            .descriptor => |d| switch (d.kind) {
+                .property => "property",
+                .classmethod => "classmethod",
+                .staticmethod => "staticmethod",
+            },
         };
     }
 };

@@ -9,6 +9,25 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-04-25
+
+### Added
+
+- `13_descriptors` fixture, lifted from goipy's testdata, running
+  byte-equal against CPython 3.14. Exercises `@property`,
+  `@classmethod`, and `@staticmethod` through both instance and
+  class access.
+- `property`, `classmethod`, `staticmethod` builtins. Each returns
+  a `Descriptor` -- a thin wrapper over the decorated callable
+  plus a kind tag.
+- `Value.descriptor` arm. `loadAttr` recognizes it when walking the
+  MRO and applies the binding rule:
+  - `property` on instance access invokes `getter(self)` and
+    pushes the result; class access returns the descriptor.
+  - `classmethod` pushes `(func, cls)` so `CALL` threads the class
+    as the first argument.
+  - `staticmethod` pushes `(func, NULL)` for no binding.
+
 ## [0.0.13] - 2026-04-25
 
 ### Added
