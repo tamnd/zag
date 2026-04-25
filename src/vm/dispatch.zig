@@ -404,7 +404,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 return error.TypeError;
             }
             for (src.dict.pairs.items) |p| {
-                try dst_val.dict.setKey(interp.allocator, p.key, p.value);
+                try dictSetKey(interp, dst_val.dict, p.key, p.value);
             }
             continue :sw advance(frame, &ext_arg, 0);
         },
@@ -470,6 +470,11 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 .float => |f| Value{ .float = -f },
                 .complex_num => |c| Value{ .complex_num = .{ .re = -c.re, .im = -c.im } },
                 .boolean => |b| Value{ .small_int = -@as(i64, @intFromBool(b)) },
+                .instance => blk: {
+                    if (try @import("dunder.zig").call(interp, v, "__neg__", &.{})) |x| break :blk x;
+                    try interp.typeError("bad operand type for unary -");
+                    return error.TypeError;
+                },
                 else => {
                     try interp.typeError("bad operand type for unary -");
                     return error.TypeError;
@@ -815,7 +820,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const base = frame.sp - n;
             var i: usize = 0;
             while (i < n) : (i += 1) {
-                try s.add(interp.allocator, frame.stack[base + i]);
+                try setAddEq(interp, s, frame.stack[base + i]);
             }
             frame.sp = base;
             frame.push(Value{ .set = s });
@@ -831,14 +836,14 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 return error.TypeError;
             }
             const drained = try @import("builtins.zig").materialize(interp, iterable);
-            for (drained.items.items) |it| try set_val.set.add(interp.allocator, it);
+            for (drained.items.items) |it| try setAddEq(interp, set_val.set, it);
             continue :sw advance(frame, &ext_arg, 0);
         },
 
         .SET_ADD => {
             const v = frame.pop();
             const set_val = frame.stack[frame.sp - oparg(frame, ext_arg)];
-            try set_val.set.add(interp.allocator, v);
+            try setAddEq(interp, set_val.set, v);
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -850,7 +855,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             while (i < n) : (i += 1) {
                 const k = frame.stack[base + 2 * i];
                 const v = frame.stack[base + 2 * i + 1];
-                try d.setKey(interp.allocator, k, v);
+                try dictSetKey(interp, d, k, v);
             }
             frame.sp = base;
             frame.push(Value{ .dict = d });
@@ -953,6 +958,12 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                         try interp.typeError("bytearray indices must be integers or slices");
                         return error.TypeError;
                     },
+                },
+                .instance => {
+                    if (try @import("dunder.zig").call(interp, container, "__delitem__", &.{key})) |_| {} else {
+                        try interp.typeError("object does not support item deletion");
+                        return error.TypeError;
+                    }
                 },
                 else => {
                     try interp.typeError("object does not support item deletion");
@@ -1185,7 +1196,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const v = frame.pop();
             const k = frame.pop();
             const dict_val = frame.stack[frame.sp - oparg(frame, ext_arg)];
-            try dict_val.dict.setKey(interp.allocator, k, v);
+            try dictSetKey(interp, dict_val.dict, k, v);
             continue :sw advance(frame, &ext_arg, 0);
         },
 
@@ -1453,6 +1464,10 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const v = frame.pop();
             if (v == .str) {
                 frame.push(v);
+            } else if (v == .instance) {
+                const bytes = try @import("builtins.zig").formatInstance(interp, v, .str);
+                const s = try Str.init(interp.allocator, bytes);
+                frame.push(Value{ .str = s });
             } else {
                 var w = std.Io.Writer.Allocating.init(interp.allocator);
                 try v.writeStr(&w.writer);
@@ -1565,6 +1580,30 @@ inline fn advance(frame: *Frame, ext_arg: *u32, cw: u8) Opcode {
 /// to need them prompts a fix instead of silently doing the wrong
 /// thing.
 fn binaryOp(interp: *Interp, a: Value, b: Value, arg: u32) !Value {
+    // User instances override arithmetic via dunders. Fall through to
+    // the built-in dispatch only if neither operand defines the op.
+    if (a == .instance or b == .instance) {
+        const pair: ?struct { op: []const u8, rop: []const u8 } = switch (arg) {
+            0, 13 => .{ .op = "__add__", .rop = "__radd__" },
+            1 => .{ .op = "__and__", .rop = "__rand__" },
+            5 => .{ .op = "__mul__", .rop = "__rmul__" },
+            6 => .{ .op = "__mod__", .rop = "__rmod__" },
+            7 => .{ .op = "__or__", .rop = "__ror__" },
+            8 => .{ .op = "__pow__", .rop = "__rpow__" },
+            10 => .{ .op = "__sub__", .rop = "__rsub__" },
+            11 => .{ .op = "__truediv__", .rop = "__rtruediv__" },
+            12 => .{ .op = "__xor__", .rop = "__rxor__" },
+            26 => .{ .op = "__getitem__", .rop = "" },
+            else => null,
+        };
+        if (pair) |p| {
+            if (arg == 26) {
+                if (a == .instance) {
+                    if (try @import("dunder.zig").call(interp, a, p.op, &.{b})) |r| return r;
+                }
+            } else if (try @import("dunder.zig").binop(interp, a, b, p.op, p.rop)) |r| return r;
+        }
+    }
     return switch (arg) {
         0 => add(interp, a, b),
         1 => bitwiseAnd(interp, a, b),
@@ -2033,15 +2072,59 @@ fn subscript(interp: *Interp, container: Value, key: Value) !Value {
             },
         },
         .dict => |d| {
-            if (d.getKey(key)) |v| return v;
+            if (try dictGetKey(interp, d, key)) |v| return v;
             try interp.raisePy("KeyError", "key not found");
             return error.PyException;
+        },
+        .instance => {
+            if (try @import("dunder.zig").call(interp, container, "__getitem__", &.{key})) |v| return v;
+            try interp.typeError("object is not subscriptable");
+            return error.TypeError;
         },
         else => {
             try interp.typeError("object is not subscriptable");
             return error.TypeError;
         },
     }
+}
+
+/// Interp-aware dict lookup: instance keys compare via `__eq__`,
+/// other keys fall through to the linear `Value.equals` scan.
+pub fn dictGetKey(interp: *Interp, d: *const @import("../object/dict.zig").Dict, key: Value) !?Value {
+    for (d.pairs.items) |p| {
+        if (try @import("dunder.zig").valuesEqual(interp, p.key, key)) return p.value;
+    }
+    return null;
+}
+
+/// Insert / overwrite a dict entry, comparing keys with `__eq__` for
+/// instance keys. Mirrors Dict.setKey but interp-aware.
+pub fn dictSetKey(
+    interp: *Interp,
+    d: *@import("../object/dict.zig").Dict,
+    key: Value,
+    value: Value,
+) !void {
+    for (d.pairs.items, 0..) |p, i| {
+        if (try @import("dunder.zig").valuesEqual(interp, p.key, key)) {
+            d.pairs.items[i].value = value;
+            return;
+        }
+    }
+    try d.pairs.append(interp.allocator, .{ .key = key, .value = value });
+    if (key == .str) try d.keys.append(interp.allocator, key.str.bytes);
+}
+
+/// Insert into a Set with `__eq__` semantics for instance members.
+pub fn setAddEq(
+    interp: *Interp,
+    s: *@import("../object/set.zig").Set,
+    v: Value,
+) !void {
+    for (s.items.items) |it| {
+        if (try @import("dunder.zig").valuesEqual(interp, it, v)) return;
+    }
+    try s.items.append(interp.allocator, v);
 }
 
 const Resolved = struct { start: i64, step: i64, count: usize };
@@ -2159,7 +2242,12 @@ fn storeSubscr(interp: *Interp, container: Value, key: Value, value: Value) !voi
             },
         },
         .dict => |d| {
-            try d.setKey(interp.allocator, key, value);
+            try dictSetKey(interp, d, key, value);
+        },
+        .instance => {
+            if (try @import("dunder.zig").call(interp, container, "__setitem__", &.{ key, value })) |_| return;
+            try interp.typeError("object does not support item assignment");
+            return error.TypeError;
         },
         .bytearray => |b| switch (key) {
             .small_int => |i| {
@@ -2299,6 +2387,24 @@ pub fn makeIter(interp: *Interp, v: Value) !*Iter {
             const lst = try @import("builtins.zig").materialize(interp, v);
             break :blk try Iter.init(interp.allocator, .{ .list = lst });
         },
+        .instance => blk: {
+            const it_v = try makeInstanceIter(interp, v);
+            switch (it_v) {
+                .iter => |it| break :blk it,
+                .generator => {
+                    // Drain generator into a fresh list, then iterate.
+                    const lst = try List.init(interp.allocator);
+                    while (try genResume(interp, it_v.generator, Value.none)) |x| {
+                        try lst.append(interp.allocator, x);
+                    }
+                    break :blk try Iter.init(interp.allocator, .{ .list = lst });
+                },
+                else => {
+                    try interp.typeError("__iter__ returned non-iterator");
+                    return error.TypeError;
+                },
+            }
+        },
         else => {
             try interp.typeError("object is not iterable");
             return error.TypeError;
@@ -2324,21 +2430,72 @@ fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
             return false;
         },
         .dict => |d| {
+            if (item == .instance) {
+                for (d.pairs.items) |p| {
+                    if (try @import("dunder.zig").valuesEqual(interp, p.key, item)) return true;
+                }
+                return false;
+            }
             if (item != .str) return false;
             return d.contains(item.str.bytes);
         },
         .set => |s| {
-            for (s.items.items) |it| if (it.equals(item)) return true;
+            for (s.items.items) |it| {
+                if (try @import("dunder.zig").valuesEqual(interp, it, item)) return true;
+            }
             return false;
         },
         .bytes => |b| return bytesContains(b.data, item),
         .bytearray => |b| return bytesContains(b.data.items, item),
         .memoryview => |m| return bytesContains(m.data(), item),
+        .instance => {
+            if (try @import("dunder.zig").call(interp, container, "__contains__", &.{item})) |r| {
+                return r.isTruthy();
+            }
+            // Fall back to iterating the instance.
+            const it_v = try makeInstanceIter(interp, container);
+            while (try iterStep(interp, it_v)) |x| {
+                if (try @import("dunder.zig").valuesEqual(interp, x, item)) return true;
+            }
+            return false;
+        },
         else => {
             try interp.typeError("argument of type is not iterable");
             return error.TypeError;
         },
     }
+}
+
+/// Build an iterator over a user-defined instance, honoring `__iter__`
+/// then falling back to the indexed `__getitem__` protocol (call with
+/// 0, 1, 2, ... until IndexError).
+fn makeInstanceIter(interp: *Interp, v: Value) !Value {
+    if (try @import("dunder.zig").call(interp, v, "__iter__", &.{})) |it| {
+        return it;
+    }
+    if (@import("dunder.zig").lookup(v, "__getitem__")) |_| {
+        const out = try List.init(interp.allocator);
+        var i: i64 = 0;
+        while (true) : (i += 1) {
+            const idx = Value{ .small_int = i };
+            const r = @import("dunder.zig").call(interp, v, "__getitem__", &.{idx}) catch |e| switch (e) {
+                error.PyException => {
+                    // IndexError ends iteration; other exceptions propagate.
+                    if (interp.current_exc) |cur| {
+                        if (cur == .instance and std.mem.eql(u8, cur.instance.cls.name, "IndexError")) {
+                            interp.current_exc = null;
+                            return Value{ .iter = try Iter.init(interp.allocator, .{ .list = out }) };
+                        }
+                    }
+                    return e;
+                },
+                else => return e,
+            };
+            try out.append(interp.allocator, r.?);
+        }
+    }
+    try interp.typeError("object is not iterable");
+    return error.TypeError;
 }
 
 /// `int in bytes/bytearray` matches a single byte; `bytes/bytearray
@@ -2359,6 +2516,12 @@ fn bytesContains(haystack: []const u8, item: Value) bool {
 /// types compare unequal); ordering on unsupported types raises
 /// TypeError.
 fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
+    if (a == .instance or b == .instance) {
+        if (try @import("dunder.zig").compare(interp, a, b, kind)) |result| return result;
+        // Equality with no dunder falls back to identity, matching CPython.
+        if (kind == 2) return a.identityEq(b);
+        if (kind == 3) return !a.identityEq(b);
+    }
     return switch (kind) {
         2 => a.equals(b),
         3 => !a.equals(b),
@@ -2702,6 +2865,11 @@ fn invokeKw(
         },
         .function => |fn_val| return callPyFunction(interp, fn_val, positional, kw_names, kw_values, null),
         .class => |cls| return instantiate(interp, cls, positional, kw_names, kw_values),
+        .instance => {
+            if (try @import("dunder.zig").call(interp, callable, "__call__", positional)) |r| return r;
+            try interp.typeError("object is not callable");
+            return error.TypeError;
+        },
         else => {
             try interp.typeError("object is not callable");
             return error.TypeError;

@@ -26,11 +26,36 @@ pub fn print(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const w = interp.stdout;
     for (args, 0..) |a, i| {
         if (i != 0) try w.writeByte(' ');
-        try a.writeStr(w);
+        if (a == .instance) {
+            const s = try formatInstance(interp, a, .str);
+            try w.writeAll(s);
+        } else {
+            try a.writeStr(w);
+        }
     }
     try w.writeByte('\n');
     try w.flush();
     return Value.none;
+}
+
+const FormatKind = enum { repr, str };
+
+/// Render an instance via `__str__` / `__repr__` (with `__str__`
+/// falling back to `__repr__`). Returns the rendered bytes; falls
+/// back to the default `<X object>` form if neither dunder exists.
+pub fn formatInstance(interp: *Interp, v: Value, kind: FormatKind) ![]const u8 {
+    const dunder = @import("dunder.zig");
+    if (kind == .str) {
+        if (try dunder.call(interp, v, "__str__", &.{})) |r| {
+            if (r == .str) return r.str.bytes;
+        }
+    }
+    if (try dunder.call(interp, v, "__repr__", &.{})) |r| {
+        if (r == .str) return r.str.bytes;
+    }
+    var w = std.Io.Writer.Allocating.init(interp.allocator);
+    if (kind == .str) try v.writeStr(&w.writer) else try v.writeRepr(&w.writer);
+    return w.written();
 }
 
 pub fn absBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
@@ -111,6 +136,15 @@ pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         .list => |l| Value{ .small_int = @intCast(l.items.items.len) },
         .dict => |d| Value{ .small_int = @intCast(d.count()) },
         .set => |s| Value{ .small_int = @intCast(s.items.items.len) },
+        .instance => blk: {
+            if (try @import("dunder.zig").call(interp, args[0], "__len__", &.{})) |r| break :blk r;
+            try interp.stderr.print(
+                "TypeError: object of type '{s}' has no len()\n",
+                .{args[0].typeName()},
+            );
+            try interp.stderr.flush();
+            break :blk error.TypeError;
+        },
         else => |v| blk: {
             try interp.stderr.print(
                 "TypeError: object of type '{s}' has no len()\n",
@@ -182,6 +216,34 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
             try out.append(a, Value{ .str = piece });
         },
         .set => |s| for (s.items.items) |x| try out.append(a, x),
+        .instance => {
+            const dispatch = @import("dispatch.zig");
+            const dunder = @import("dunder.zig");
+            if (try dunder.call(interp, v, "__iter__", &.{})) |it_v| {
+                while (try dispatch.iterStep(interp, it_v)) |x| try out.append(a, x);
+            } else if (dunder.lookup(v, "__getitem__")) |_| {
+                var i: i64 = 0;
+                while (true) : (i += 1) {
+                    const idx = Value{ .small_int = i };
+                    const r = dunder.call(interp, v, "__getitem__", &.{idx}) catch |e| switch (e) {
+                        error.PyException => {
+                            if (interp.current_exc) |cur| {
+                                if (cur == .instance and std.mem.eql(u8, cur.instance.cls.name, "IndexError")) {
+                                    interp.current_exc = null;
+                                    return out;
+                                }
+                            }
+                            return e;
+                        },
+                        else => return e,
+                    };
+                    try out.append(a, r.?);
+                }
+            } else {
+                try interp.typeError("object is not iterable");
+                return error.TypeError;
+            }
+        },
         else => {
             try interp.typeError("object is not iterable");
             return error.TypeError;
@@ -311,6 +373,9 @@ pub fn hashBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
     if (args[0] == .dict) {
         try interp.raisePy("TypeError", "unhashable type: 'dict'");
         return error.PyException;
+    }
+    if (args[0] == .instance) {
+        if (try @import("dunder.zig").call(interp, args[0], "__hash__", &.{})) |r| return r;
     }
     return Value{ .small_int = 0 };
 }
@@ -785,8 +850,22 @@ pub fn memoryviewBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerro
 }
 
 pub fn boolBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
-    _ = interp_opaque;
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len == 0) return Value{ .boolean = false };
+    if (args[0] == .instance) {
+        if (try @import("dunder.zig").call(interp, args[0], "__bool__", &.{})) |r| {
+            return Value{ .boolean = r.isTruthy() };
+        }
+        if (try @import("dunder.zig").call(interp, args[0], "__len__", &.{})) |r| {
+            const n: i64 = switch (r) {
+                .small_int => |i| i,
+                .boolean => |x| @intFromBool(x),
+                else => 1,
+            };
+            return Value{ .boolean = n != 0 };
+        }
+        return Value{ .boolean = true };
+    }
     return Value{ .boolean = args[0].isTruthy() };
 }
 
@@ -849,6 +928,11 @@ pub fn reprBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
     if (args.len != 1) {
         try interp.typeError("repr() takes exactly one argument");
         return error.TypeError;
+    }
+    if (args[0] == .instance) {
+        const bytes = try formatInstance(interp, args[0], .repr);
+        const s = try Str.init(interp.allocator, bytes);
+        return Value{ .str = s };
     }
     var buf: [4096]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
@@ -1354,6 +1438,11 @@ pub fn strBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         return Value{ .str = piece };
     }
     if (args[0] == .str) return args[0];
+    if (args[0] == .instance) {
+        const bytes = try formatInstance(interp, args[0], .str);
+        const piece = try Str.init(interp.allocator, bytes);
+        return Value{ .str = piece };
+    }
     var buf: [256]u8 = undefined;
     var w = std.Io.Writer.fixed(&buf);
     try args[0].writeStr(&w);
