@@ -2373,8 +2373,8 @@ fn compareOp(interp: *Interp, a: Value, b: Value, kind: u3) !bool {
                 };
             }
             const o = a.order(b) orelse {
-                try interp.typeError("'<' not supported between these types");
-                return error.TypeError;
+                try interp.raisePy("TypeError", "'<' not supported between these types");
+                return error.PyException;
             };
             break :blk switch (kind) {
                 0 => o == .lt,

@@ -9,6 +9,32 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.51] - 2026-04-25
+
+### Added
+
+- `50_memoryview_stress` fixture, byte-equal against CPython 3.14.
+  Exercises nested slicing (slice-of-slice writes still land in
+  the original `bytearray`), negative indices, slice assignment
+  with a mismatched length raising `ValueError`, `enumerate` over
+  a `memoryview`, `!=` across the bytes-like family, the
+  read-only flag propagating through slicing, `nbytes` /
+  `tolist`, the empty view, ordering between memoryviews raising
+  `TypeError`, and `sum(mv)`.
+
+### Changed
+
+- `Value.order` no longer treats `memoryview` as a member of the
+  bytes-like ordering family. CPython raises `TypeError` on
+  `mv < mv`, so we let `order` fall through to `null`. Equality
+  is unchanged — that path still treats all three types as one
+  family for content compare.
+- The `<` / `<=` / `>` / `>=` TypeError now goes through
+  `raisePy("TypeError", ...)` and unwinds as a Python exception,
+  so user code can catch it with `try / except TypeError`.
+  Previously the message was printed to stderr and the script
+  exited.
+
 ## [0.0.50] - 2026-04-25
 
 ### Added
