@@ -73,6 +73,7 @@ pub const Interp = struct {
     struct_module: ?*Module = null,
     csv_module: ?*Module = null,
     urlparse_module: ?*Module = null,
+    urllib_module: ?*Module = null,
     zlib_module: ?*Module = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
@@ -436,6 +437,12 @@ pub const Interp = struct {
             if (self.urlparse_module) |m| return m;
             const m = urlparse_mod.build(self) catch return null;
             self.urlparse_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "urllib")) {
+            if (self.urllib_module) |m| return m;
+            const m = urlparse_mod.buildUrllibPackage(self) catch return null;
+            self.urllib_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "zlib")) {

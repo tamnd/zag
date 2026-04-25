@@ -24,6 +24,7 @@ pub fn build(interp: *Interp) !*Module {
     try m.attrs.setStr(interp.allocator, "Z_BEST_COMPRESSION", Value{ .small_int = 9 });
     try m.attrs.setStr(interp.allocator, "Z_NO_COMPRESSION", Value{ .small_int = 0 });
     try m.attrs.setStr(interp.allocator, "Z_DEFAULT_COMPRESSION", Value{ .small_int = -1 });
+    try m.attrs.setStr(interp.allocator, "MAX_WBITS", Value{ .small_int = 15 });
     return m;
 }
 

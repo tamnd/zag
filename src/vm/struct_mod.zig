@@ -57,6 +57,8 @@ fn parseFields(a: std.mem.Allocator, body: []const u8) ![]Field {
     errdefer out.deinit(a);
     var i: usize = 0;
     while (i < body.len) {
+        while (i < body.len and (body[i] == ' ' or body[i] == '\t')) i += 1;
+        if (i >= body.len) break;
         var count: usize = 0;
         var any = false;
         while (i < body.len and body[i] >= '0' and body[i] <= '9') {

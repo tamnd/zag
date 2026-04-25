@@ -153,7 +153,18 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             };
 
             if (interp.getBuiltinModule(abs_name)) |m| {
-                frame.push(Value{ .module = m });
+                const has_fromlist_b = switch (fromlist) {
+                    .tuple => |t| t.items.len > 0,
+                    .list => |l| l.items.items.len > 0,
+                    else => false,
+                };
+                var top_mod = m;
+                if (std.mem.indexOfScalar(u8, abs_name, '.')) |first_dot| {
+                    const top_name = abs_name[0..first_dot];
+                    if (interp.getBuiltinModule(top_name)) |top| top_mod = top;
+                }
+                const result = if (has_fromlist_b) m else top_mod;
+                frame.push(Value{ .module = result });
                 continue :sw advance(frame, &ext_arg, 0);
             }
             const chain_opt = try interp.loadModuleChain(abs_name);

@@ -215,14 +215,19 @@ fn writerFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return writerKw(p, args, &.{}, &.{});
 }
 
-fn writerKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const Value) anyerror!Value {
+fn writerKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     try ensureClasses(interp);
     if (args.len < 1) return error.TypeError;
     const a = interp.allocator;
     const inst = try Instance.init(a, interp.csv_writer_class.?);
     try inst.dict.setStr(a, "_target", args[0]);
-    const delim: u8 = if (args.len >= 2) dialectDelim(args[1]) else ',';
+    var delim: u8 = if (args.len >= 2) dialectDelim(args[1]) else ',';
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn == .str and std.mem.eql(u8, kn.str.bytes, "delimiter") and kv == .str and kv.str.bytes.len > 0) {
+            delim = kv.str.bytes[0];
+        }
+    }
     try inst.dict.setStr(a, "_delim", Value{ .small_int = @as(i64, delim) });
     return Value{ .instance = inst };
 }
