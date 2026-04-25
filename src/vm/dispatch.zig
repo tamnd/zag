@@ -547,6 +547,16 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .DELETE_FAST => {
+            // CPython's `except X as e:` block ends with DELETE_FAST e
+            // to avoid leaking the exception through the local. We
+            // don't track unbound vs bound (LOAD_FAST_CHECK is wired
+            // for this); blanking the slot is what the fixtures need.
+            const arg = oparg(frame, ext_arg);
+            frame.fast[arg] = Value.null_sentinel;
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .STORE_FAST_LOAD_FAST => {
             const arg = oparg(frame, ext_arg);
             const store_idx = (arg >> 4) & 0xF;
