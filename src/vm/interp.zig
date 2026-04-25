@@ -49,6 +49,11 @@ pub const Interp = struct {
     /// expose it directly off `type()` because that's all the
     /// fixtures probe.
     module_type: ?*@import("../object/class.zig").Class = null,
+    /// Same lazy-cached pattern for `type(complex_val)` so the result
+    /// has `.__name__ == "complex"`. The builtin `complex` name itself
+    /// stays bound to a constructor function; this class is only
+    /// reachable via `type()`.
+    complex_type: ?*@import("../object/class.zig").Class = null,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 

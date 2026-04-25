@@ -31,6 +31,7 @@ pub const Tag = enum(u8) {
     boolean,
     small_int,
     float,
+    complex_num,
     str,
     bytes,
     tuple,
@@ -76,11 +77,14 @@ pub const BuiltinFn = struct {
     kw_func: ?BuiltinKwFnPtr = null,
 };
 
+pub const Complex = struct { re: f64, im: f64 };
+
 pub const Value = union(Tag) {
     none,
     boolean: bool,
     small_int: i64,
     float: f64,
+    complex_num: Complex,
     str: *Str,
     bytes: *Bytes,
     tuple: *Tuple,
@@ -107,6 +111,7 @@ pub const Value = union(Tag) {
             .boolean => |b| b,
             .small_int => |i| i != 0,
             .float => |f| f != 0.0,
+            .complex_num => |c| c.re != 0.0 or c.im != 0.0,
             .str => |s| s.bytes.len != 0,
             .bytes => |b| b.data.len != 0,
             .tuple => |t| t.items.len != 0,
@@ -126,6 +131,7 @@ pub const Value = union(Tag) {
             .boolean => |b| try w.writeAll(if (b) "True" else "False"),
             .small_int => |i| try w.print("{d}", .{i}),
             .float => |f| try writeFloat(w, f),
+            .complex_num => |c| try writeComplex(w, c),
             .str => |s| {
                 try w.writeByte('\'');
                 try w.writeAll(s.bytes);
@@ -235,6 +241,33 @@ pub const Value = union(Tag) {
         }
     }
 
+    /// Format a complex number the way CPython's `repr(complex)` does:
+    /// when the real part is positive zero, drop it and the parens
+    /// (`2j`, `0j`); otherwise wrap in parens and always print an
+    /// explicit sign on the imaginary part (`(1+2j)`, `(-1-2j)`).
+    /// Component formatting differs from `float.__repr__` in one
+    /// place: whole-valued floats print *without* the trailing `.0`
+    /// (so `complex(5, 0)` reads `(5+0j)`, not `(5.0+0.0j)`).
+    fn writeComplex(w: *std.Io.Writer, c: Complex) !void {
+        const real_is_pos_zero = c.re == 0.0 and !std.math.signbit(c.re);
+        if (real_is_pos_zero) {
+            try writeComplexComponent(w, c.im);
+            try w.writeByte('j');
+            return;
+        }
+        try w.writeByte('(');
+        try writeComplexComponent(w, c.re);
+        if (c.im >= 0.0 or std.math.isNan(c.im)) try w.writeByte('+');
+        try writeComplexComponent(w, c.im);
+        try w.writeAll("j)");
+    }
+
+    fn writeComplexComponent(w: *std.Io.Writer, f: f64) !void {
+        var buf: [64]u8 = undefined;
+        const s = try std.fmt.bufPrint(&buf, "{d}", .{f});
+        try w.writeAll(s);
+    }
+
     pub const Order = enum { lt, eq, gt };
 
     /// Compare for the type pairs the comparison fixture exercises.
@@ -293,11 +326,30 @@ pub const Value = union(Tag) {
 
     /// Python `==`: equal-typed values delegate to `order`; mixed
     /// types that aren't orderable simply aren't equal (Python returns
-    /// False here, not TypeError).
+    /// False here, not TypeError). Complex compares to itself by
+    /// component, and to int/float when its imaginary part is zero
+    /// (matching CPython's mixed-numeric coercion rule).
     pub fn equals(a: Value, b: Value) bool {
         if (a == .none and b == .none) return true;
+        if (a == .complex_num or b == .complex_num) return complexEquals(a, b);
         if (order(a, b)) |o| return o == .eq;
         return false;
+    }
+
+    fn complexEquals(a: Value, b: Value) bool {
+        const ac = asComplex(a) orelse return false;
+        const bc = asComplex(b) orelse return false;
+        return ac.re == bc.re and ac.im == bc.im;
+    }
+
+    pub fn asComplex(v: Value) ?Complex {
+        return switch (v) {
+            .small_int => |i| Complex{ .re = @floatFromInt(i), .im = 0 },
+            .boolean => |x| Complex{ .re = if (x) 1.0 else 0.0, .im = 0 },
+            .float => |f| Complex{ .re = f, .im = 0 },
+            .complex_num => |c| c,
+            else => null,
+        };
     }
 
     /// Python `is`: object identity. Singletons (None/True/False) are
@@ -311,6 +363,7 @@ pub const Value = union(Tag) {
             .boolean => |x| x == b.boolean,
             .small_int => |x| x == b.small_int,
             .float => |x| x == b.float,
+            .complex_num => |x| x.re == b.complex_num.re and x.im == b.complex_num.im,
             .str => |p| p == b.str,
             .bytes => |p| p == b.bytes,
             .tuple => |p| p == b.tuple,
@@ -339,6 +392,7 @@ pub const Value = union(Tag) {
             .boolean => "bool",
             .small_int => "int",
             .float => "float",
+            .complex_num => "complex",
             .str => "str",
             .bytes => "bytes",
             .tuple => "tuple",

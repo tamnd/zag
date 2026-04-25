@@ -465,6 +465,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const r: Value = switch (v) {
                 .small_int => |i| Value{ .small_int = -i },
                 .float => |f| Value{ .float = -f },
+                .complex_num => |c| Value{ .complex_num = .{ .re = -c.re, .im = -c.im } },
                 .boolean => |b| Value{ .small_int = -@as(i64, @intFromBool(b)) },
                 else => {
                     try interp.typeError("bad operand type for unary -");
@@ -1569,6 +1570,11 @@ fn add(interp: *Interp, a: Value, b: Value) !Value {
     if (a == .small_int and b == .small_int) {
         return Value{ .small_int = a.small_int +% b.small_int };
     }
+    if (a == .complex_num or b == .complex_num) {
+        const ac = Value.asComplex(a) orelse return complexTypeError(interp, "+");
+        const bc = Value.asComplex(b) orelse return complexTypeError(interp, "+");
+        return Value{ .complex_num = .{ .re = ac.re + bc.re, .im = ac.im + bc.im } };
+    }
     if ((a == .float or b == .float) and asFloat(a) != null and asFloat(b) != null) {
         return Value{ .float = asFloat(a).? + asFloat(b).? };
     }
@@ -1587,6 +1593,11 @@ fn subtract(interp: *Interp, a: Value, b: Value) !Value {
     if (a == .small_int and b == .small_int) {
         return Value{ .small_int = a.small_int -% b.small_int };
     }
+    if (a == .complex_num or b == .complex_num) {
+        const ac = Value.asComplex(a) orelse return complexTypeError(interp, "-");
+        const bc = Value.asComplex(b) orelse return complexTypeError(interp, "-");
+        return Value{ .complex_num = .{ .re = ac.re - bc.re, .im = ac.im - bc.im } };
+    }
     if ((a == .float or b == .float) and asFloat(a) != null and asFloat(b) != null) {
         return Value{ .float = asFloat(a).? - asFloat(b).? };
     }
@@ -1598,10 +1609,24 @@ fn multiply(interp: *Interp, a: Value, b: Value) !Value {
     if (a == .small_int and b == .small_int) {
         return Value{ .small_int = a.small_int *% b.small_int };
     }
+    if (a == .complex_num or b == .complex_num) {
+        const ac = Value.asComplex(a) orelse return complexTypeError(interp, "*");
+        const bc = Value.asComplex(b) orelse return complexTypeError(interp, "*");
+        return Value{ .complex_num = .{
+            .re = ac.re * bc.re - ac.im * bc.im,
+            .im = ac.re * bc.im + ac.im * bc.re,
+        } };
+    }
     if ((a == .float or b == .float) and asFloat(a) != null and asFloat(b) != null) {
         return Value{ .float = asFloat(a).? * asFloat(b).? };
     }
     try interp.typeError("unsupported operand type(s) for *");
+    return error.TypeError;
+}
+
+fn complexTypeError(interp: *Interp, op_name: []const u8) anyerror!Value {
+    const msg = try std.fmt.allocPrint(interp.allocator, "unsupported operand type(s) for {s}", .{op_name});
+    try interp.typeError(msg);
     return error.TypeError;
 }
 
@@ -1625,6 +1650,19 @@ fn trueDivide(interp: *Interp, a: Value, b: Value) !Value {
             return error.PyException;
         }
         return Value{ .float = @as(f64, @floatFromInt(ai.?)) / @as(f64, @floatFromInt(bi.?)) };
+    }
+    if (a == .complex_num or b == .complex_num) {
+        const ac = Value.asComplex(a) orelse return complexTypeError(interp, "/");
+        const bc = Value.asComplex(b) orelse return complexTypeError(interp, "/");
+        const denom = bc.re * bc.re + bc.im * bc.im;
+        if (denom == 0.0) {
+            try interp.raisePy("ZeroDivisionError", "complex division by zero");
+            return error.PyException;
+        }
+        return Value{ .complex_num = .{
+            .re = (ac.re * bc.re + ac.im * bc.im) / denom,
+            .im = (ac.im * bc.re - ac.re * bc.im) / denom,
+        } };
     }
     try interp.typeError("unsupported operand type(s) for /");
     return error.TypeError;
@@ -2137,6 +2175,33 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
     }
+    if (obj == .complex_num) {
+        if (std.mem.eql(u8, name, "real")) {
+            const v = Value{ .float = obj.complex_num.re };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "imag")) {
+            const v = Value{ .float = obj.complex_num.im };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "conjugate")) {
+            if (is_method) {
+                frame.push(Value{ .builtin_fn = &complex_conjugate_method });
+                frame.push(obj);
+            } else {
+                frame.push(Value{ .builtin_fn = &complex_conjugate_method });
+            }
+            return;
+        }
+    }
     // Built-in methods on str/list/dict.
     if (is_method) {
         const method: ?*value_mod.BuiltinFn = switch (obj) {
@@ -2352,6 +2417,15 @@ pub fn genCloseBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!
 }
 
 var gen_close_method: value_mod.BuiltinFn = .{ .name = "close", .func = genCloseBuiltin };
+
+pub fn complexConjugateBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    _ = interp_opaque;
+    if (args.len != 1 or args[0] != .complex_num) return error.TypeError;
+    const c = args[0].complex_num;
+    return Value{ .complex_num = .{ .re = c.re, .im = -c.im } };
+}
+
+var complex_conjugate_method: value_mod.BuiltinFn = .{ .name = "conjugate", .func = complexConjugateBuiltin };
 
 fn callPyFunction(
     interp: *Interp,
