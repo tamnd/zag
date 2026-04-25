@@ -9,6 +9,24 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.31] - 2026-04-25
+
+### Added
+
+- `30_format_edge` fixture, lifted from goipy's testdata,
+  byte-equal against CPython 3.14. Edge cases of the format
+  mini-language: alt+sign+zero on negative ints, alignment
+  with grouping, repr-conversion + width, nested format spec,
+  and signed-zero / banker's-rounding for floats.
+
+### Fixed
+
+- `-0.0` now formats with the `-` sign (was `+`/empty because
+  `fff < 0` is false for negative zero — switched to
+  `std.math.signbit`).
+- `f"{2.5:.0f}"` now rounds half-to-even (`2`) like CPython,
+  instead of Zig's default half-away-from-zero (`3`).
+
 ## [0.0.30] - 2026-04-25
 
 ### Added
