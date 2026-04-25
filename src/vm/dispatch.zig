@@ -3589,6 +3589,65 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             } else frame.push(v);
             return;
         }
+        if (std.mem.eql(u8, name, "ndim")) {
+            const v = Value{ .small_int = 1 };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "shape")) {
+            const tup = try @import("../object/tuple.zig").Tuple.init(interp.allocator, 1);
+            tup.items[0] = Value{ .small_int = @intCast(mv.len) };
+            const v = Value{ .tuple = tup };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "strides")) {
+            const tup = try @import("../object/tuple.zig").Tuple.init(interp.allocator, 1);
+            tup.items[0] = Value{ .small_int = 1 };
+            const v = Value{ .tuple = tup };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "suboffsets")) {
+            const tup = try @import("../object/tuple.zig").Tuple.init(interp.allocator, 0);
+            const v = Value{ .tuple = tup };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "c_contiguous") or
+            std.mem.eql(u8, name, "f_contiguous") or
+            std.mem.eql(u8, name, "contiguous"))
+        {
+            const v = Value{ .boolean = true };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "obj")) {
+            const v: Value = switch (mv.backing) {
+                .bytes => |b| Value{ .bytes = b },
+                .bytearray => |b| Value{ .bytearray = b },
+            };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
     }
     // Special attributes on collections values that aren't methods.
     if (obj == .deque) {

@@ -25,7 +25,8 @@ fn tolistImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .list = out };
 }
 
-fn releaseImpl(_: *anyopaque, _: []const Value) anyerror!Value {
+fn releaseImpl(_: *anyopaque, args: []const Value) anyerror!Value {
+    args[0].memoryview.release();
     return Value.none;
 }
 

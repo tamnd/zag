@@ -11,6 +11,13 @@ const Interp = @import("interp.zig").Interp;
 const Bytearray = @import("../object/bytearray.zig").Bytearray;
 const bytesmethods = @import("bytesmethods.zig");
 
+fn checkResizable(interp: *Interp, ba: *Bytearray) !void {
+    if (ba.view_count > 0) {
+        try interp.raisePy("BufferError", "Existing exports of data: object cannot be re-sized");
+        return error.PyException;
+    }
+}
+
 fn coerceByte(interp: *Interp, v: Value) !u8 {
     const i: i64 = switch (v) {
         .small_int => |x| x,
@@ -29,6 +36,7 @@ fn coerceByte(interp: *Interp, v: Value) !u8 {
 
 fn appendImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    try checkResizable(interp, args[0].bytearray);
     const byte = try coerceByte(interp, args[1]);
     try args[0].bytearray.data.append(interp.allocator, byte);
     return Value.none;
@@ -37,6 +45,7 @@ fn appendImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
 fn extendImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const dst = args[0].bytearray;
+    try checkResizable(interp, dst);
     switch (args[1]) {
         .bytes => |b| try dst.data.appendSlice(interp.allocator, b.data),
         .bytearray => |b| try dst.data.appendSlice(interp.allocator, b.data.items),
@@ -54,6 +63,7 @@ fn extendImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
 fn popImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const ba = args[0].bytearray;
+    try checkResizable(interp, ba);
     const n = ba.data.items.len;
     if (n == 0) {
         try interp.indexError("pop from empty bytearray");
@@ -76,7 +86,9 @@ fn popImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .small_int = @intCast(byte) };
 }
 
-fn clearImpl(_: *anyopaque, args: []const Value) anyerror!Value {
+fn clearImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    try checkResizable(interp, args[0].bytearray);
     args[0].bytearray.data.clearRetainingCapacity();
     return Value.none;
 }
@@ -89,6 +101,7 @@ fn reverseImpl(_: *anyopaque, args: []const Value) anyerror!Value {
 fn insertImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const ba = args[0].bytearray;
+    try checkResizable(interp, ba);
     if (args[1] != .small_int and args[1] != .boolean) {
         try interp.typeError("insert() index must be an integer");
         return error.TypeError;
@@ -113,6 +126,7 @@ fn copyImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
 fn removeImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const ba = args[0].bytearray;
+    try checkResizable(interp, ba);
     const byte = try coerceByte(interp, args[1]);
     if (std.mem.indexOfScalar(u8, ba.data.items, byte)) |idx| {
         _ = ba.data.orderedRemove(idx);
