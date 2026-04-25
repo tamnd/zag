@@ -9,6 +9,15 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.86] - 2026-04-26
+
+### Added
+
+- `86_builtin_constants` fixture, byte-equal.
+- `Ellipsis == Ellipsis` and `NotImplemented == NotImplemented`.
+- Unsupported BINARY_OP `+` raises a real Python `TypeError` so
+  `try / except TypeError` catches it.
+
 ## [0.0.85] - 2026-04-26
 
 ### Added
