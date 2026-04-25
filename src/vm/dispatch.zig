@@ -1509,9 +1509,14 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             if (v == .str) {
                 frame.push(v);
             } else if (v == .instance) {
-                const bytes = try @import("builtins.zig").formatInstance(interp, v, .str);
-                const s = try Str.init(interp.allocator, bytes);
-                frame.push(Value{ .str = s });
+                const empty_str = try Str.init(interp.allocator, "");
+                if (try @import("dunder.zig").call(interp, v, "__format__", &.{Value{ .str = empty_str }})) |r| {
+                    frame.push(r);
+                } else {
+                    const bytes = try @import("builtins.zig").formatInstance(interp, v, .str);
+                    const s = try Str.init(interp.allocator, bytes);
+                    frame.push(Value{ .str = s });
+                }
             } else {
                 var w = std.Io.Writer.Allocating.init(interp.allocator);
                 try v.writeStr(&w.writer);
