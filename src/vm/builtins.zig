@@ -45,6 +45,7 @@ pub fn absBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
     return switch (args[0]) {
         .small_int => |i| Value{ .small_int = if (i < 0) -i else i },
         .float => |f| Value{ .float = if (f < 0) -f else f },
+        .complex_num => |c| Value{ .float = @sqrt(c.re * c.re + c.im * c.im) },
         .boolean => |b| Value{ .small_int = if (b) 1 else 0 },
         else => |v| blk: {
             try interp.stderr.print(
@@ -572,6 +573,12 @@ pub fn typeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
             interp.module_type = c;
             break :blk Value{ .class = c };
         },
+        .complex_num => blk: {
+            if (interp.complex_type) |c| break :blk Value{ .class = c };
+            const c = try Class.init(interp.allocator, "complex", &.{}, try Dict.init(interp.allocator));
+            interp.complex_type = c;
+            break :blk Value{ .class = c };
+        },
         else => |v| blk: {
             const name = v.typeName();
             if (interp.builtins.getStr(name)) |found| {
@@ -600,6 +607,60 @@ pub fn bytesBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
     }
     const out = try Bytes.fromOwnedSlice(interp.allocator, buf);
     return Value{ .bytes = out };
+}
+
+pub fn reprBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.typeError("repr() takes exactly one argument");
+        return error.TypeError;
+    }
+    var buf: [4096]u8 = undefined;
+    var w = std.Io.Writer.fixed(&buf);
+    try args[0].writeRepr(&w);
+    const s = try Str.init(interp.allocator, w.buffered());
+    return Value{ .str = s };
+}
+
+pub fn complexBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len > 2) {
+        try interp.typeError("complex() takes at most 2 arguments");
+        return error.TypeError;
+    }
+    var re: f64 = 0;
+    var im: f64 = 0;
+    if (args.len >= 1) {
+        switch (args[0]) {
+            .small_int => |i| re = @floatFromInt(i),
+            .boolean => |b| re = if (b) 1.0 else 0.0,
+            .float => |f| re = f,
+            .complex_num => |c| {
+                re = c.re;
+                im = c.im;
+            },
+            else => {
+                try interp.typeError("complex() first argument must be a number");
+                return error.TypeError;
+            },
+        }
+    }
+    if (args.len == 2) {
+        switch (args[1]) {
+            .small_int => |i| im += @as(f64, @floatFromInt(i)),
+            .boolean => |b| im += if (b) 1.0 else 0.0,
+            .float => |f| im += f,
+            .complex_num => |c| {
+                re -= c.im;
+                im += c.re;
+            },
+            else => {
+                try interp.typeError("complex() second argument must be a number");
+                return error.TypeError;
+            },
+        }
+    }
+    return Value{ .complex_num = .{ .re = re, .im = im } };
 }
 
 pub fn strBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
@@ -643,6 +704,8 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("bin", binBuiltin);
     try interp.registerBuiltin("int", intBuiltin);
     try interp.registerBuiltin("float", floatBuiltin);
+    try interp.registerBuiltin("complex", complexBuiltin);
+    try interp.registerBuiltin("repr", reprBuiltin);
     try interp.registerBuiltin("str", strBuiltin);
     try interp.registerBuiltin("bytes", bytesBuiltin);
     try interp.registerBuiltin("type", typeBuiltin);

@@ -161,16 +161,22 @@ pub const Reader = struct {
                 return self.setRef(try self.reserveRef(have_flag), Value{ .float = f });
             },
             .complex_bin => {
-                _ = try self.readU64(); // real
-                _ = try self.readU64(); // imag
-                return self.setRef(try self.reserveRef(have_flag), Value.none); // placeholder
+                const re_bits = try self.readU64();
+                const im_bits = try self.readU64();
+                const re: f64 = @bitCast(re_bits);
+                const im: f64 = @bitCast(im_bits);
+                return self.setRef(try self.reserveRef(have_flag), Value{ .complex_num = .{ .re = re, .im = im } });
             },
             .complex_ascii => {
                 const nr = try self.readU8();
-                self.pos += nr;
+                const re_bytes = try self.readBytes(nr);
+                defer self.allocator.free(re_bytes);
+                const re = std.fmt.parseFloat(f64, re_bytes) catch 0.0;
                 const ni = try self.readU8();
-                self.pos += ni;
-                return self.setRef(try self.reserveRef(have_flag), Value.none);
+                const im_bytes = try self.readBytes(ni);
+                defer self.allocator.free(im_bytes);
+                const im = std.fmt.parseFloat(f64, im_bytes) catch 0.0;
+                return self.setRef(try self.reserveRef(have_flag), Value{ .complex_num = .{ .re = re, .im = im } });
             },
 
             .string => {
