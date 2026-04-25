@@ -566,6 +566,12 @@ pub fn typeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
     return switch (args[0]) {
         .instance => |obj| Value{ .class = obj.cls },
         .class => |c| Value{ .class = c },
+        .module => blk: {
+            if (interp.module_type) |c| break :blk Value{ .class = c };
+            const c = try Class.init(interp.allocator, "module", &.{}, try Dict.init(interp.allocator));
+            interp.module_type = c;
+            break :blk Value{ .class = c };
+        },
         else => |v| blk: {
             const name = v.typeName();
             if (interp.builtins.getStr(name)) |found| {
@@ -675,6 +681,8 @@ fn installExceptions(interp: *Interp) !void {
     const stop_iter = try Class.init(a, "StopIteration", &.{exception}, try Dict.init(a));
     const assertion_err = try Class.init(a, "AssertionError", &.{exception}, try Dict.init(a));
     const not_impl_err = try Class.init(a, "NotImplementedError", &.{runtime_err}, try Dict.init(a));
+    const import_err = try Class.init(a, "ImportError", &.{exception}, try Dict.init(a));
+    const mod_not_found = try Class.init(a, "ModuleNotFoundError", &.{import_err}, try Dict.init(a));
 
     const pairs = [_]struct { name: []const u8, cls: *Class }{
         .{ .name = "BaseException", .cls = base_exc },
@@ -692,6 +700,8 @@ fn installExceptions(interp: *Interp) !void {
         .{ .name = "StopIteration", .cls = stop_iter },
         .{ .name = "AssertionError", .cls = assertion_err },
         .{ .name = "NotImplementedError", .cls = not_impl_err },
+        .{ .name = "ImportError", .cls = import_err },
+        .{ .name = "ModuleNotFoundError", .cls = mod_not_found },
     };
     for (pairs) |p| {
         try interp.builtins.setStr(a, p.name, Value{ .class = p.cls });

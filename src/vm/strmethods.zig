@@ -57,10 +57,32 @@ fn replaceImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
 
 fn splitImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    // No-arg form only: split on runs of ASCII whitespace, drop empties.
     const self = args[0].str.bytes;
     const list = try List.init(interp.allocator);
 
+    // 1-arg form: split on the literal separator, keeping empty
+    // pieces between consecutive separators (CPython semantics).
+    if (args.len >= 2 and args[1] == .str) {
+        const sep = args[1].str.bytes;
+        if (sep.len == 0) {
+            try interp.typeError("empty separator");
+            return error.TypeError;
+        }
+        var i: usize = 0;
+        while (i <= self.len) {
+            const idx = std.mem.indexOfPos(u8, self, i, sep) orelse {
+                const piece = try Str.init(interp.allocator, self[i..]);
+                try list.append(interp.allocator, Value{ .str = piece });
+                break;
+            };
+            const piece = try Str.init(interp.allocator, self[i..idx]);
+            try list.append(interp.allocator, Value{ .str = piece });
+            i = idx + sep.len;
+        }
+        return Value{ .list = list };
+    }
+
+    // No-arg form: split on runs of ASCII whitespace, drop empties.
     var i: usize = 0;
     while (i < self.len) {
         while (i < self.len and std.ascii.isWhitespace(self[i])) : (i += 1) {}
