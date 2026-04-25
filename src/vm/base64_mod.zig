@@ -13,7 +13,9 @@ const Interp = @import("interp.zig").Interp;
 pub fn build(interp: *Interp) !*Module {
     const m = try Module.init(interp.allocator, "base64");
     try reg(interp, m, "b64encode", b64encodeFn);
+    try reg(interp, m, "standard_b64encode", b64encodeFn);
     try reg(interp, m, "b64decode", b64decodeFn);
+    try reg(interp, m, "standard_b64decode", b64decodeFn);
     try reg(interp, m, "urlsafe_b64encode", urlsafeEncodeFn);
     try reg(interp, m, "urlsafe_b64decode", urlsafeDecodeFn);
     try reg(interp, m, "b32encode", b32encodeFn);
@@ -76,6 +78,7 @@ fn b64encode(a: std.mem.Allocator, src: []const u8, alphabet: []const u8) ![]u8 
 }
 
 fn b64decode(a: std.mem.Allocator, src: []const u8, alphabet: []const u8) ![]u8 {
+    if (src.len % 4 != 0) return error.InvalidBase64;
     var lookup: [256]i16 = .{-1} ** 256;
     for (alphabet, 0..) |c, idx| lookup[c] = @intCast(idx);
 
@@ -114,7 +117,13 @@ fn b64decodeFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
     const src = try argBytes(args[0]);
-    const dec = try b64decode(a, src, STD_ALPHABET);
+    const dec = b64decode(a, src, STD_ALPHABET) catch |err| switch (err) {
+        error.InvalidBase64 => {
+            try interp.raisePy("ValueError", "invalid base64 input");
+            return error.PyException;
+        },
+        else => return err,
+    };
     const b = try Bytes.fromOwnedSlice(a, dec);
     return Value{ .bytes = b };
 }

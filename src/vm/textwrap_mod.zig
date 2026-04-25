@@ -183,17 +183,33 @@ fn wrapWords(a: std.mem.Allocator, text: []const u8, width: usize, out: *std.Arr
 
     var line: std.ArrayList(u8) = .empty;
     defer line.deinit(a);
-    for (words.items) |w| {
-        if (line.items.len == 0) {
-            try line.appendSlice(a, w);
-        } else if (line.items.len + 1 + w.len <= width) {
-            try line.append(a, ' ');
-            try line.appendSlice(a, w);
-        } else {
-            const buf = try a.dupe(u8, line.items);
-            try out.append(a, buf);
-            line.clearRetainingCapacity();
-            try line.appendSlice(a, w);
+
+    for (words.items) |word| {
+        var w = word;
+        // Break a long word into width-sized chunks. The first chunk may
+        // share the current line if there's room.
+        while (w.len > 0) {
+            if (line.items.len == 0) {
+                if (w.len <= width) {
+                    try line.appendSlice(a, w);
+                    w = w[w.len..];
+                } else {
+                    try line.appendSlice(a, w[0..width]);
+                    const buf = try a.dupe(u8, line.items);
+                    try out.append(a, buf);
+                    line.clearRetainingCapacity();
+                    w = w[width..];
+                }
+            } else if (line.items.len + 1 + w.len <= width) {
+                try line.append(a, ' ');
+                try line.appendSlice(a, w);
+                w = w[w.len..];
+            } else {
+                const buf = try a.dupe(u8, line.items);
+                try out.append(a, buf);
+                line.clearRetainingCapacity();
+                // continue with the same word on a new line
+            }
         }
     }
     if (line.items.len > 0) {

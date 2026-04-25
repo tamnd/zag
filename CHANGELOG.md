@@ -9,6 +9,34 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.69] - 2026-04-25
+
+### Added
+
+- `68_io_hashlib_base64_textwrap_stress` fixture, byte-equal
+  against CPython 3.14.
+- `io.{StringIO,BytesIO}.truncate(size?)`.
+- `hashlib.sha224`, `hashlib.sha384`, and `hashlib.<h>.copy()`.
+- `base64.standard_b64encode` / `standard_b64decode` aliases.
+- `str.count(sub)` method.
+
+### Changed
+
+- `io.StringIO.writelines` accepts iterators and tuples, not just
+  lists. `io.BytesIO.write` accepts `bytearray`.
+- `hashlib` accepts `bytearray` wherever it accepted `bytes`.
+- `hashlib.new("unknown")` raises a catchable `ValueError`.
+- `base64.b64decode` rejects non-multiple-of-4 length with a
+  catchable `ValueError`.
+- `textwrap.wrap` breaks long words at the width boundary by
+  default, matching CPython.
+
+### Fixed
+
+- `io` and `hashlib` class objects are now cached on the `Interp`
+  instead of in module-level statics, so consecutive interpreters
+  in the integration test no longer share stale pointers.
+
 ## [0.0.68] - 2026-04-25
 
 ### Added

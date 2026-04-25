@@ -23,8 +23,6 @@ const Buf = struct {
     closed: bool = false,
 };
 
-var stringio_class: ?*Class = null;
-var bytesio_class: ?*Class = null;
 
 pub fn build(interp: *Interp) !*Module {
     const m = try Module.init(interp.allocator, "io");
@@ -48,7 +46,7 @@ fn methodReg(a: std.mem.Allocator, dict: *Dict, name: []const u8, func: BuiltinF
 
 fn ensureClasses(interp: *Interp) !void {
     const a = interp.allocator;
-    if (stringio_class == null) {
+    if (interp.io_stringio_class == null) {
         const d = try Dict.init(a);
         try methodReg(a, d, "write", strWrite);
         try methodReg(a, d, "writelines", strWritelines);
@@ -59,9 +57,10 @@ fn ensureClasses(interp: *Interp) !void {
         try methodReg(a, d, "tell", ioTell);
         try methodReg(a, d, "seek", ioSeek);
         try methodReg(a, d, "close", ioClose);
-        stringio_class = try Class.init(a, "StringIO", &.{}, d);
+        try methodReg(a, d, "truncate", ioTruncate);
+        interp.io_stringio_class = try Class.init(a, "StringIO", &.{}, d);
     }
-    if (bytesio_class == null) {
+    if (interp.io_bytesio_class == null) {
         const d = try Dict.init(a);
         try methodReg(a, d, "write", bytesWrite);
         try methodReg(a, d, "read", bytesRead);
@@ -69,7 +68,8 @@ fn ensureClasses(interp: *Interp) !void {
         try methodReg(a, d, "tell", ioTell);
         try methodReg(a, d, "seek", ioSeek);
         try methodReg(a, d, "close", ioClose);
-        bytesio_class = try Class.init(a, "BytesIO", &.{}, d);
+        try methodReg(a, d, "truncate", ioTruncate);
+        interp.io_bytesio_class = try Class.init(a, "BytesIO", &.{}, d);
     }
 }
 
@@ -95,7 +95,7 @@ fn stringIoCtor(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     try ensureClasses(interp);
     const a = interp.allocator;
-    const inst = try Instance.init(a, stringio_class.?);
+    const inst = try Instance.init(a, interp.io_stringio_class.?);
     const buf = try newBuf(a);
     if (args.len >= 1 and args[0] == .str) {
         try buf.data.appendSlice(a, args[0].str.bytes);
@@ -109,7 +109,7 @@ fn bytesIoCtor(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     try ensureClasses(interp);
     const a = interp.allocator;
-    const inst = try Instance.init(a, bytesio_class.?);
+    const inst = try Instance.init(a, interp.io_bytesio_class.?);
     const buf = try newBuf(a);
     if (args.len >= 1 and args[0] == .bytes) {
         try buf.data.appendSlice(a, args[0].bytes.data);
@@ -146,6 +146,21 @@ fn ioSeek(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .small_int = new_pos };
 }
 
+fn ioTruncate(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const inst = try argInst(args);
+    const buf = bufFromInstance(inst);
+    const size: usize = if (args.len >= 2 and args[1] == .small_int and args[1].small_int >= 0)
+        @intCast(args[1].small_int)
+    else
+        buf.pos;
+    if (size < buf.data.items.len) {
+        try buf.data.resize(a, size);
+    }
+    return Value{ .small_int = @intCast(size) };
+}
+
 fn ioClose(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
@@ -177,10 +192,23 @@ fn strWritelines(p: *anyopaque, args: []const Value) anyerror!Value {
     const a = interp.allocator;
     const inst = try argInst(args);
     const buf = bufFromInstance(inst);
-    if (args.len < 2 or args[1] != .list) return error.TypeError;
-    for (args[1].list.items.items) |it| {
-        if (it != .str) return error.TypeError;
-        try writeAt(a, buf, it.str.bytes);
+    if (args.len < 2) return error.TypeError;
+    switch (args[1]) {
+        .list => |l| for (l.items.items) |it| {
+            if (it != .str) return error.TypeError;
+            try writeAt(a, buf, it.str.bytes);
+        },
+        .tuple => |t| for (t.items) |it| {
+            if (it != .str) return error.TypeError;
+            try writeAt(a, buf, it.str.bytes);
+        },
+        .iter => |it| {
+            while (it.next()) |v| {
+                if (v != .str) return error.TypeError;
+                try writeAt(a, buf, v.str.bytes);
+            }
+        },
+        else => return error.TypeError,
     }
     return Value.none;
 }
@@ -262,8 +290,12 @@ fn bytesWrite(p: *anyopaque, args: []const Value) anyerror!Value {
     const a = interp.allocator;
     const inst = try argInst(args);
     const buf = bufFromInstance(inst);
-    if (args.len < 2 or args[1] != .bytes) return error.TypeError;
-    const data = args[1].bytes.data;
+    if (args.len < 2) return error.TypeError;
+    const data: []const u8 = switch (args[1]) {
+        .bytes => |b| b.data,
+        .bytearray => |b| b.data.items,
+        else => return error.TypeError,
+    };
     try writeAt(a, buf, data);
     return Value{ .small_int = @intCast(data.len) };
 }
