@@ -15,6 +15,12 @@ pub const Function = struct {
     defaults: ?*Tuple = null,
     closure: ?*Tuple = null,
     kw_defaults: ?*Dict = null,
+    /// Optional override for `__name__` and friends -- written by
+    /// `functools.wraps` so the wrapper reports the wrapped fn's
+    /// identity. `null` falls through to `code.qualname`.
+    name_override: ?[]const u8 = null,
+    doc_override: ?Value = null,
+    wrapped: ?Value = null,
 
     pub fn init(allocator: std.mem.Allocator, code: *Code, globals: *Dict) !*Function {
         const self = try allocator.create(Function);

@@ -626,7 +626,32 @@ fn formatRadix(interp_opaque: *anyopaque, args: []const Value, prefix: []const u
 }
 
 pub fn intBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return intBuiltinKw(interp_opaque, args, &.{}, &.{});
+}
+
+pub fn intBuiltinKw(
+    interp_opaque: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    var base: ?u8 = null;
+    if (args.len >= 2) {
+        switch (args[1]) {
+            .small_int => |b| base = @intCast(b),
+            else => {},
+        }
+    }
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "base")) {
+            switch (kv) {
+                .small_int => |b| base = @intCast(b),
+                else => {},
+            }
+        }
+    }
     if (args.len == 0) return Value{ .small_int = 0 };
     return switch (args[0]) {
         .small_int => args[0],
@@ -634,7 +659,8 @@ pub fn intBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         .float => |f| Value{ .small_int = @intFromFloat(f) },
         .str => |s| blk: {
             const trimmed = std.mem.trim(u8, s.bytes, " \t");
-            const v = std.fmt.parseInt(i64, trimmed, 10) catch {
+            const radix: u8 = base orelse 10;
+            const v = std.fmt.parseInt(i64, trimmed, radix) catch {
                 try interp.raisePy("ValueError", "invalid literal for int()");
                 break :blk error.PyException;
             };
@@ -1536,7 +1562,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("hex", hexBuiltin);
     try interp.registerBuiltin("oct", octBuiltin);
     try interp.registerBuiltin("bin", binBuiltin);
-    try interp.registerBuiltin("int", intBuiltin);
+    try interp.registerBuiltinKw("int", intBuiltin, intBuiltinKw);
     try interp.registerBuiltin("float", floatBuiltin);
     try interp.registerBuiltin("complex", complexBuiltin);
     try interp.registerBuiltin("repr", reprBuiltin);

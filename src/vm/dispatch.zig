@@ -1779,6 +1779,10 @@ fn asFloat(v: Value) ?f64 {
 
 /// `+` for int+int and str+str. Other operand combos wait for a
 /// fixture.
+pub fn binaryAdd(interp: *Interp, a: Value, b: Value) !Value {
+    return add(interp, a, b);
+}
+
 fn add(interp: *Interp, a: Value, b: Value) !Value {
     if (a == .small_int and b == .small_int) {
         return Value{ .small_int = a.small_int +% b.small_int };
@@ -2860,6 +2864,16 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
         if (class_v) |v| {
+            if (v == .cached_property) {
+                const cp = v.cached_property;
+                const result = try invoke(interp, cp.func, &.{obj});
+                try obj.instance.dict.setStr(interp.allocator, name, result);
+                if (is_method) {
+                    frame.push(result);
+                    frame.push(Value.null_sentinel);
+                } else frame.push(result);
+                return;
+            }
             if (v == .descriptor) {
                 try bindDescriptor(interp, frame, v.descriptor, obj, Value{ .class = obj.instance.cls }, is_method);
                 return;
@@ -2932,6 +2946,66 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
     if (obj == .builtin_fn) {
         if (std.mem.eql(u8, name, "__name__")) {
             const s = try Str.init(interp.allocator, obj.builtin_fn.name);
+            const v = Value{ .str = s };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        // `itertools.chain.from_iterable` -- a sibling builtin
+        // exposed off the `chain` callable.
+        if (std.mem.eql(u8, obj.builtin_fn.name, "chain") and std.mem.eql(u8, name, "from_iterable")) {
+            const fi = @import("itertools_mod.zig").chainFromIterableEntry(interp);
+            if (is_method) {
+                frame.push(fi);
+                frame.push(Value.null_sentinel);
+            } else frame.push(fi);
+            return;
+        }
+    }
+    if (obj == .function) {
+        const f = obj.function;
+        if (std.mem.eql(u8, name, "__name__")) {
+            const text = f.name_override orelse f.code.qualname;
+            const s = try Str.init(interp.allocator, text);
+            const v = Value{ .str = s };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "__doc__")) {
+            const v = f.doc_override orelse Value.none;
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "__wrapped__")) {
+            const v = f.wrapped orelse Value.none;
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+    }
+    if (obj == .cached_fn) {
+        if (std.mem.eql(u8, name, "__name__")) {
+            const c = obj.cached_fn;
+            const text: []const u8 = blk: {
+                if (c.name_override) |n| break :blk n;
+                if (c.func == .function) {
+                    if (c.func.function.name_override) |n2| break :blk n2;
+                    break :blk c.func.function.code.qualname;
+                }
+                if (c.func == .builtin_fn) break :blk c.func.builtin_fn.name;
+                break :blk "cached";
+            };
+            const s = try Str.init(interp.allocator, text);
             const v = Value{ .str = s };
             if (is_method) {
                 frame.push(v);
@@ -3159,6 +3233,32 @@ fn invokeKw(
             buf[0] = bm.self;
             @memcpy(buf[1..], positional);
             return invokeKw(interp, bm.func, buf, kw_names, kw_values);
+        },
+        .partial => |p| {
+            const merged_args = try interp.allocator.alloc(Value, p.args.len + positional.len);
+            defer interp.allocator.free(merged_args);
+            @memcpy(merged_args[0..p.args.len], p.args);
+            @memcpy(merged_args[p.args.len..], positional);
+            const merged_names = try interp.allocator.alloc(Value, p.kw_names.len + kw_names.len);
+            defer interp.allocator.free(merged_names);
+            const merged_vals = try interp.allocator.alloc(Value, p.kw_values.len + kw_values.len);
+            defer interp.allocator.free(merged_vals);
+            @memcpy(merged_names[0..p.kw_names.len], p.kw_names);
+            @memcpy(merged_names[p.kw_names.len..], kw_names);
+            @memcpy(merged_vals[0..p.kw_values.len], p.kw_values);
+            @memcpy(merged_vals[p.kw_values.len..], kw_values);
+            return invokeKw(interp, p.func, merged_args, merged_names, merged_vals);
+        },
+        .cached_fn => |c| {
+            if (kw_names.len != 0) {
+                return invokeKw(interp, c.func, positional, kw_names, kw_values);
+            }
+            const CachedFn = @import("../object/cached_fn.zig").CachedFn;
+            const key = try CachedFn.keyFor(interp.allocator, positional);
+            if (c.cache.getKey(key)) |hit| return hit;
+            const result = try invokeKw(interp, c.func, positional, kw_names, kw_values);
+            try c.cache.setKey(interp.allocator, key, result);
+            return result;
         },
         .function => |fn_val| return callPyFunction(interp, fn_val, positional, kw_names, kw_values, null),
         .class => |cls| return instantiate(interp, cls, positional, kw_names, kw_values),
@@ -3569,6 +3669,10 @@ pub fn buildClassKw(
     // parent class's `__init_subclass__` of the new subclass.
     for (ns.keys.items) |attr_name| {
         const v = ns.getStr(attr_name) orelse continue;
+        if (v == .cached_property) {
+            v.cached_property.name = attr_name;
+            continue;
+        }
         if (v != .instance) continue;
         if (dunder.lookup(v, "__set_name__") == null) continue;
         const name_str = try Str.init(interp.allocator, attr_name);
