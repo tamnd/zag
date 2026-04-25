@@ -9,6 +9,15 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.83] - 2026-04-26
+
+### Added
+
+- `83_tstrings` fixture, byte-equal.
+- BUILD_INTERPOLATION and BUILD_TEMPLATE opcodes (PEP 750 t-strings).
+- Synthetic Template/Interpolation classes; `list(template)` yields
+  interleaved string + Interpolation pieces; `template.values` shortcut.
+
 ## [0.0.82] - 2026-04-26
 
 ### Added
