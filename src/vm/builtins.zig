@@ -30,12 +30,93 @@ pub fn print(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
             const s = try formatInstance(interp, a, .str);
             try w.writeAll(s);
         } else {
-            try a.writeStr(w);
+            try writeStrDeep(interp, a, w);
         }
     }
     try w.writeByte('\n');
     try w.flush();
     return Value.none;
+}
+
+/// Like `Value.writeStr`, but when the value is a container that
+/// holds instances, format each element via the dunder-aware
+/// `formatInstance` so user-defined `__repr__` shows up inside
+/// `[...]` / `(...)` / `{...}` printouts.
+fn writeStrDeep(interp: *Interp, v: Value, w: *std.Io.Writer) !void {
+    switch (v) {
+        .list, .tuple, .dict, .set, .deque, .counter, .defaultdict, .ordered_dict, .named_tuple => try writeReprDeep(interp, v, w),
+        else => try v.writeStr(w),
+    }
+}
+
+pub fn writeReprDeep(interp: *Interp, v: Value, w: *std.Io.Writer) !void {
+    switch (v) {
+        .instance => {
+            const s = try formatInstance(interp, v, .repr);
+            try w.writeAll(s);
+        },
+        .tuple => |t| {
+            try w.writeByte('(');
+            for (t.items, 0..) |it, i| {
+                if (i != 0) try w.writeAll(", ");
+                try writeReprDeep(interp, it, w);
+            }
+            if (t.items.len == 1) try w.writeByte(',');
+            try w.writeByte(')');
+        },
+        .list => |l| {
+            try w.writeByte('[');
+            for (l.items.items, 0..) |it, i| {
+                if (i != 0) try w.writeAll(", ");
+                try writeReprDeep(interp, it, w);
+            }
+            try w.writeByte(']');
+        },
+        .dict => |d| {
+            try w.writeByte('{');
+            for (d.pairs.items, 0..) |p, i| {
+                if (i != 0) try w.writeAll(", ");
+                try writeReprDeep(interp, p.key, w);
+                try w.writeAll(": ");
+                try writeReprDeep(interp, p.value, w);
+            }
+            try w.writeByte('}');
+        },
+        .set => |s| {
+            if (s.items.items.len == 0) {
+                try w.writeAll(if (s.frozen) "frozenset()" else "set()");
+                return;
+            }
+            if (s.frozen) try w.writeAll("frozenset(");
+            try w.writeByte('{');
+            for (s.items.items, 0..) |it, i| {
+                if (i != 0) try w.writeAll(", ");
+                try writeReprDeep(interp, it, w);
+            }
+            try w.writeByte('}');
+            if (s.frozen) try w.writeByte(')');
+        },
+        .deque => |dq| {
+            try w.writeAll("deque([");
+            for (dq.items.items.items, 0..) |it, i| {
+                if (i != 0) try w.writeAll(", ");
+                try writeReprDeep(interp, it, w);
+            }
+            try w.writeByte(']');
+            if (dq.maxlen) |ml| try w.print(", maxlen={d}", .{ml});
+            try w.writeByte(')');
+        },
+        .named_tuple => |nt| {
+            try w.print("{s}(", .{nt.factory.type_name});
+            for (nt.factory.fields, nt.items, 0..) |fname, item, i| {
+                if (i != 0) try w.writeAll(", ");
+                try w.print("{s}=", .{fname});
+                try writeReprDeep(interp, item, w);
+            }
+            try w.writeByte(')');
+        },
+        else => try v.writeRepr(w),
+    }
 }
 
 const FormatKind = enum { repr, str };
@@ -268,13 +349,68 @@ pub fn materialize(interp: *Interp, v: Value) !*List {
 }
 
 pub fn sortedBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return sortedBuiltinKw(interp_opaque, args, &.{}, &.{});
+}
+
+pub fn sortedBuiltinKw(
+    interp_opaque: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const out = materialize(interp, args[0]) catch {
         try interp.typeError("sorted() argument must be iterable");
         return error.TypeError;
     };
+    var key_fn: ?Value = null;
+    var reverse = false;
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "key")) {
+            if (kv != .none) key_fn = kv;
+        } else if (std.mem.eql(u8, kn.str.bytes, "reverse")) {
+            reverse = kv.isTruthy();
+        }
+    }
     const slice = out.items.items;
-    std.sort.pdq(Value, slice, {}, lessThanForSort);
+    if (key_fn) |kf| {
+        // Compute keys, sort indices by key, rebuild slice in order.
+        const dispatch = @import("dispatch.zig");
+        const idx = try interp.allocator.alloc(usize, slice.len);
+        defer interp.allocator.free(idx);
+        const keys = try interp.allocator.alloc(Value, slice.len);
+        defer interp.allocator.free(keys);
+        for (slice, 0..) |x, i| {
+            idx[i] = i;
+            keys[i] = try dispatch.invoke(interp, kf, &.{x});
+        }
+        const Ctx = struct { keys: []const Value };
+        const ctx: Ctx = .{ .keys = keys };
+        std.sort.block(usize, idx, ctx, struct {
+            fn lt(c: Ctx, a: usize, b: usize) bool {
+                if (c.keys[a].order(c.keys[b])) |o| return o == .lt;
+                return false;
+            }
+        }.lt);
+        const buf = try interp.allocator.alloc(Value, slice.len);
+        for (idx, 0..) |src_i, i| buf[i] = slice[src_i];
+        @memcpy(slice, buf);
+        interp.allocator.free(buf);
+    } else {
+        std.sort.pdq(Value, slice, {}, lessThanForSort);
+    }
+    if (reverse) {
+        var i: usize = 0;
+        var j: usize = if (slice.len == 0) 0 else slice.len - 1;
+        while (i < j) {
+            const tmp = slice[i];
+            slice[i] = slice[j];
+            slice[j] = tmp;
+            i += 1;
+            j -= 1;
+        }
+    }
     return Value{ .list = out };
 }
 
@@ -1571,7 +1707,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("abs", absBuiltin);
     try interp.registerBuiltin("len", lenBuiltin);
     try interp.registerBuiltin("sum", sumBuiltin);
-    try interp.registerBuiltin("sorted", sortedBuiltin);
+    try interp.registerBuiltinKw("sorted", sortedBuiltin, sortedBuiltinKw);
     try interp.registerBuiltin("range", rangeBuiltin);
     try interp.registerBuiltin("list", listBuiltin);
     try interp.registerBuiltin("tuple", tupleBuiltin);

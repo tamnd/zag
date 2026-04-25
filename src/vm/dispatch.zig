@@ -2702,7 +2702,7 @@ pub fn makeIter(interp: *Interp, v: Value) !*Iter {
         .list => |l| try Iter.init(interp.allocator, .{ .list = l }),
         .tuple => |t| try Iter.init(interp.allocator, .{ .tuple = t }),
         .iter => |it| it,
-        .str, .bytes, .bytearray, .memoryview, .dict, .generator, .enum_iter, .set => blk: {
+        .str, .bytes, .bytearray, .memoryview, .dict, .generator, .enum_iter, .set, .deque, .counter, .defaultdict, .ordered_dict, .named_tuple => blk: {
             const lst = try @import("builtins.zig").materialize(interp, v);
             break :blk try Iter.init(interp.allocator, .{ .list = lst });
         },
@@ -2757,6 +2757,26 @@ pub fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
             }
             if (item != .str) return false;
             return d.contains(item.str.bytes);
+        },
+        .deque => |dq| {
+            for (dq.items.items.items) |x| if (x.equals(item)) return true;
+            return false;
+        },
+        .counter => |c| {
+            if (item != .str) return false;
+            return c.data.contains(item.str.bytes);
+        },
+        .defaultdict => |dd| {
+            if (item != .str) return false;
+            return dd.data.contains(item.str.bytes);
+        },
+        .ordered_dict => |od| {
+            if (item != .str) return false;
+            return od.data.contains(item.str.bytes);
+        },
+        .named_tuple => |nt| {
+            for (nt.items) |x| if (x.equals(item)) return true;
+            return false;
         },
         .set => |s| {
             for (s.items.items) |it| {
@@ -3298,6 +3318,16 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
     }
+    if (obj == .defaultdict) {
+        if (std.mem.eql(u8, name, "default_factory")) {
+            const v = obj.defaultdict.factory;
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+    }
     if (obj == .named_tuple) {
         // Field access by name.
         if (collmethods.ntFieldIndex(obj.named_tuple, name)) |i| {
@@ -3426,6 +3456,16 @@ pub fn invoke(interp: *Interp, callable: Value, args: []const Value) !Value {
     return invokeKw(interp, callable, args, &.{}, &.{});
 }
 
+pub fn invokeKwPub(
+    interp: *Interp,
+    callable: Value,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) !Value {
+    return invokeKw(interp, callable, args, kw_names, kw_values);
+}
+
 fn invokeKw(
     interp: *Interp,
     callable: Value,
@@ -3524,8 +3564,8 @@ fn invokeKw(
             defer interp.allocator.free(filled);
             for (filled) |*b| b.* = false;
             if (positional.len > f.fields.len) {
-                try interp.typeError("namedtuple: too many positional arguments");
-                return error.TypeError;
+                try interp.raisePy("TypeError", "namedtuple: too many positional arguments");
+                return error.PyException;
             }
             for (positional, 0..) |v, i| {
                 items[i] = v;
@@ -3537,8 +3577,8 @@ fn invokeKw(
                 for (f.fields, 0..) |fname, i| {
                     if (std.mem.eql(u8, fname, kn.str.bytes)) {
                         if (filled[i]) {
-                            try interp.typeError("namedtuple: multiple values for field");
-                            return error.TypeError;
+                            try interp.raisePy("TypeError", "namedtuple: multiple values for field");
+                            return error.PyException;
                         }
                         items[i] = kv;
                         filled[i] = true;
@@ -3547,14 +3587,26 @@ fn invokeKw(
                     }
                 }
                 if (!matched) {
-                    try interp.typeError("namedtuple: unexpected field");
-                    return error.TypeError;
+                    try interp.raisePy("TypeError", "namedtuple: unexpected field");
+                    return error.PyException;
+                }
+            }
+            // Defaults align with the trailing fields. CPython:
+            // `defaults` of length D applies to the last D fields.
+            if (f.defaults.len > 0) {
+                const start = f.fields.len - f.defaults.len;
+                for (f.defaults, 0..) |dv, k| {
+                    const i = start + k;
+                    if (!filled[i]) {
+                        items[i] = dv;
+                        filled[i] = true;
+                    }
                 }
             }
             for (filled) |b| {
                 if (!b) {
-                    try interp.typeError("namedtuple: missing field");
-                    return error.TypeError;
+                    try interp.raisePy("TypeError", "namedtuple: missing field");
+                    return error.PyException;
                 }
             }
             const nt = try NamedTuple.init(interp.allocator, f, items);

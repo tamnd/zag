@@ -117,6 +117,15 @@ fn counterKw(
 }
 
 pub fn counterUpdate(interp: *Interp, c: *Counter, v: Value) !void {
+    if (counterMappingPairs(v)) |pairs| {
+        for (pairs) |p| {
+            if (p.key != .str or p.value != .small_int) continue;
+            const cur = c.data.getStr(p.key.str.bytes) orelse Value{ .small_int = 0 };
+            const cur_n: i64 = if (cur == .small_int) cur.small_int else 0;
+            try c.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = cur_n + p.value.small_int });
+        }
+        return;
+    }
     const lst = try builtins.materialize(interp, v);
     for (lst.items.items) |x| {
         const key_str = try valueAsKey(interp, x);
@@ -127,6 +136,15 @@ pub fn counterUpdate(interp: *Interp, c: *Counter, v: Value) !void {
 }
 
 pub fn counterSubtract(interp: *Interp, c: *Counter, v: Value) !void {
+    if (counterMappingPairs(v)) |pairs| {
+        for (pairs) |p| {
+            if (p.key != .str or p.value != .small_int) continue;
+            const cur = c.data.getStr(p.key.str.bytes) orelse Value{ .small_int = 0 };
+            const cur_n: i64 = if (cur == .small_int) cur.small_int else 0;
+            try c.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = cur_n - p.value.small_int });
+        }
+        return;
+    }
     const lst = try builtins.materialize(interp, v);
     for (lst.items.items) |x| {
         const key_str = try valueAsKey(interp, x);
@@ -134,6 +152,16 @@ pub fn counterSubtract(interp: *Interp, c: *Counter, v: Value) !void {
         const cur_n: i64 = if (cur == .small_int) cur.small_int else 0;
         try c.data.setStr(interp.allocator, key_str, Value{ .small_int = cur_n - 1 });
     }
+}
+
+fn counterMappingPairs(v: Value) ?[]const @import("../object/dict.zig").Dict.Pair {
+    return switch (v) {
+        .dict => |d| d.pairs.items,
+        .counter => |c| c.data.pairs.items,
+        .defaultdict => |dd| dd.data.pairs.items,
+        .ordered_dict => |od| od.data.pairs.items,
+        else => null,
+    };
 }
 
 fn valueAsKey(interp: *Interp, v: Value) ![]const u8 {
@@ -189,8 +217,6 @@ fn namedtupleKw(
     kw_names: []const Value,
     kw_values: []const Value,
 ) anyerror!Value {
-    _ = kw_names;
-    _ = kw_values;
     const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
     if (args.len < 2 or args[0] != .str) {
         try interp.typeError("namedtuple expects (typename, fields)");
@@ -216,8 +242,19 @@ fn namedtupleKw(
             try fields.append(interp.allocator, dup);
         }
     }
+    var defaults: []const Value = &.{};
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "defaults")) {
+            if (kv == .none) continue;
+            const lst = try builtins.materialize(interp, kv);
+            const buf = try interp.allocator.alloc(Value, lst.items.items.len);
+            @memcpy(buf, lst.items.items);
+            defaults = buf;
+        }
+    }
     const owned = try fields.toOwnedSlice(interp.allocator);
     const owned_name = try interp.allocator.dupe(u8, type_name);
-    const factory = try NamedTupleFactory.init(interp.allocator, owned_name, owned);
+    const factory = try NamedTupleFactory.initWithDefaults(interp.allocator, owned_name, owned, defaults);
     return Value{ .named_tuple_factory = factory };
 }

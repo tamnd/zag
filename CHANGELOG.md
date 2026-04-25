@@ -9,6 +9,42 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.63] - 2026-04-25
+
+### Added
+
+- `62_collections_operator_stress` fixture, byte-equal against
+  CPython 3.14. Exercises the corners of m62: deque overflow
+  rules, `Counter` from a dict (preserve values, not just keys),
+  `defaultdict.default_factory`, nested defaultdicts,
+  `OrderedDict.move_to_end` / `popitem` errors, and `namedtuple`
+  with `defaults=`.
+- `namedtuple(..., defaults=[...])`. Defaults align with the
+  trailing fields, fill in unset positions on construction, and
+  raising required fields still raises a Python-level
+  `TypeError` (catchable via `except`).
+- `Counter.update` / `.subtract` accept a dict-shaped argument
+  (`dict`, `Counter`, `defaultdict`, `OrderedDict`) and merge
+  the values directly, instead of iterating keys and counting
+  them.
+- `default_factory` attribute on `defaultdict`.
+- `set.add` / `set.discard` / `set.remove`. The fixture builds
+  values into a `defaultdict(set)`.
+- `BINARY_SUBSCR` membership (`in`) for `deque`, `Counter`,
+  `defaultdict`, `OrderedDict`, `named_tuple`, and iteration
+  (`GET_ITER`) for the same set.
+- `operator.index` (passes ints / bools through, raises
+  `TypeError` otherwise) and a kw-aware `methodcaller` so
+  `methodcaller("greet", "world", excited=True)` works.
+- `sorted(iterable, key=..., reverse=...)`. Computes keys
+  upfront, sorts indices, rebuilds the slice in order.
+- `KeyError` formats `args[0]` via repr (`'x'`, with quotes) to
+  match CPython's `str(KeyError("x"))`. Other exceptions still
+  go through `writeStr`.
+- `print` uses an interp-aware deep-repr writer so user-defined
+  `__repr__` shows up inside `[...]` / `(...)` / `{...}` when
+  printing containers of instances.
+
 ## [0.0.62] - 2026-04-25
 
 ### Added

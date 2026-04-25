@@ -45,15 +45,28 @@ pub fn build(interp: *Interp) !*Module {
     try register(interp, m, "setitem", setitemFn);
     try register(interp, m, "delitem", delitemFn);
     try register(interp, m, "contains", containsFn);
+    try register(interp, m, "index", indexFn);
     try register(interp, m, "attrgetter", attrgetterFn);
     try register(interp, m, "itemgetter", itemgetterFn);
-    try register(interp, m, "methodcaller", methodcallerFn);
+    try registerKw(interp, m, "methodcaller", methodcallerFn, methodcallerKw);
     return m;
 }
 
 fn register(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {
     const f = try interp.allocator.create(BuiltinFn);
     f.* = .{ .name = name, .func = func };
+    try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
+}
+
+fn registerKw(
+    interp: *Interp,
+    m: *Module,
+    name: []const u8,
+    func: BuiltinFnPtr,
+    kw_func: value_mod.BuiltinKwFnPtr,
+) !void {
+    const f = try interp.allocator.create(BuiltinFn);
+    f.* = .{ .name = name, .func = func, .kw_func = kw_func };
     try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
 }
 
@@ -161,6 +174,22 @@ fn notFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
     _ = opaque_interp;
     if (args.len != 1) return error.TypeError;
     return Value{ .boolean = !args[0].isTruthy() };
+}
+fn indexFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    if (args.len != 1) {
+        try interp.typeError("index expects 1 argument");
+        return error.TypeError;
+    }
+    return switch (args[0]) {
+        .small_int => args[0],
+        .boolean => |b| Value{ .small_int = @intFromBool(b) },
+        .big_int => args[0],
+        else => {
+            try interp.typeError("'object' object cannot be interpreted as an integer");
+            return error.TypeError;
+        },
+    };
 }
 fn truthFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
     _ = opaque_interp;
@@ -349,25 +378,43 @@ fn itemgetterCall(opaque_interp: *anyopaque, args: []const Value) anyerror!Value
 }
 
 fn methodcallerFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    return methodcallerKw(opaque_interp, args, &.{}, &.{});
+}
+
+fn methodcallerKw(
+    opaque_interp: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
     if (args.len < 1 or args[0] != .str) {
         try interp.typeError("methodcaller expects a method name");
         return error.TypeError;
     }
     const tramp = try interp.allocator.create(BuiltinFn);
-    tramp.* = .{ .name = "methodcaller", .func = methodcallerCall };
+    tramp.* = .{ .name = "methodcaller", .func = methodcallerCall, .kw_func = methodcallerCallKw };
     const Partial = @import("../object/partial.zig").Partial;
     const p = try Partial.init(
         interp.allocator,
         Value{ .builtin_fn = tramp },
         args,
-        &.{},
-        &.{},
+        kw_names,
+        kw_values,
     );
     return Value{ .partial = p };
 }
 
 fn methodcallerCall(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    return methodcallerCallKw(opaque_interp, args, &.{}, &.{});
+}
+
+fn methodcallerCallKw(
+    opaque_interp: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
     // args = [name, *bound_args, target]
     if (args.len < 2) {
@@ -378,5 +425,5 @@ fn methodcallerCall(opaque_interp: *anyopaque, args: []const Value) anyerror!Val
     const target = args[args.len - 1];
     const bound = args[1 .. args.len - 1];
     const method = try dispatch.loadAttrValue(interp, target, name);
-    return dispatch.invoke(interp, method, bound);
+    return dispatch.invokeKwPub(interp, method, bound, kw_names, kw_values);
 }
