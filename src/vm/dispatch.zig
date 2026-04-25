@@ -33,6 +33,7 @@ const bytearraymethods = @import("bytearraymethods.zig");
 const bytesmethods = @import("bytesmethods.zig");
 const intmethods = @import("intmethods.zig");
 const floatmethods = @import("floatmethods.zig");
+const rangemethods = @import("rangemethods.zig");
 const memoryviewmethods = @import("memoryviewmethods.zig");
 const dictmethods = @import("dictmethods.zig");
 const collmethods = @import("collections_methods.zig");
@@ -3002,6 +3003,14 @@ pub fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
         .bytes => |b| return bytesContains(b.data, item),
         .bytearray => |b| return bytesContains(b.data.items, item),
         .memoryview => |m| return bytesContains(m.data(), item),
+        .iter => |it| switch (it.kind) {
+            .range => |r| {
+                if (item != .small_int and item != .boolean) return false;
+                const n: i64 = if (item == .small_int) item.small_int else if (item.boolean) @as(i64, 1) else @as(i64, 0);
+                return @import("../object/iter.zig").Iter.rangeContains(r, n);
+            },
+            else => return false,
+        },
         .instance => {
             if (try @import("dunder.zig").call(interp, container, "__contains__", &.{item})) |r| {
                 return r.isTruthy();
@@ -3192,6 +3201,10 @@ pub fn loadAttrValue(interp: *Interp, obj: Value, name: []const u8) !Value {
         .memoryview => memoryviewmethods.lookup(name),
         .small_int, .boolean => intmethods.lookup(name),
         .float => floatmethods.lookup(name),
+        .iter => |it| switch (it.kind) {
+            .range => rangemethods.lookup(name),
+            else => null,
+        },
         else => null,
     };
     if (method) |m| {
@@ -3588,6 +3601,10 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             .memoryview => memoryviewmethods.lookup(name),
             .small_int, .boolean => intmethods.lookup(name),
             .float => floatmethods.lookup(name),
+            .iter => |it| switch (it.kind) {
+                .range => rangemethods.lookup(name),
+                else => null,
+            },
             .deque => collmethods.dequeLookup(name),
             .counter => |c| blk: {
                 if (collmethods.counterLookup(name)) |m| break :blk m;
@@ -3679,6 +3696,28 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
                 frame.push(Value.null_sentinel);
             } else frame.push(vv);
             return;
+        }
+    }
+    if (obj == .iter) {
+        switch (obj.iter.kind) {
+            .range => |r| {
+                const v: ?Value = if (std.mem.eql(u8, name, "start"))
+                    Value{ .small_int = r.start }
+                else if (std.mem.eql(u8, name, "stop"))
+                    Value{ .small_int = r.stop }
+                else if (std.mem.eql(u8, name, "step"))
+                    Value{ .small_int = r.step }
+                else
+                    null;
+                if (v) |vv| {
+                    if (is_method) {
+                        frame.push(vv);
+                        frame.push(Value.null_sentinel);
+                    } else frame.push(vv);
+                    return;
+                }
+            },
+            else => {},
         }
     }
     try interp.attributeError(obj.typeName(), name);

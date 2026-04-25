@@ -20,10 +20,35 @@ pub const Iter = struct {
     /// `range` sequence object aren't in scope until a fixture forces
     /// them.
     pub const Range = struct {
+        start: i64 = 0,
         current: i64,
         stop: i64,
         step: i64,
     };
+
+    pub fn rangeLen(r: Range) i64 {
+        if (r.step > 0) {
+            if (r.start >= r.stop) return 0;
+            return @divTrunc(r.stop - r.start - 1, r.step) + 1;
+        }
+        if (r.step < 0) {
+            if (r.start <= r.stop) return 0;
+            return @divTrunc(r.start - r.stop - 1, -r.step) + 1;
+        }
+        return 0;
+    }
+
+    pub fn rangeContains(r: Range, n: i64) bool {
+        if (r.step > 0) {
+            if (n < r.start or n >= r.stop) return false;
+            return @mod(n - r.start, r.step) == 0;
+        }
+        if (r.step < 0) {
+            if (n > r.start or n <= r.stop) return false;
+            return @mod(r.start - n, -r.step) == 0;
+        }
+        return false;
+    }
 
     pub fn init(allocator: std.mem.Allocator, kind: Kind) !*Iter {
         const self = try allocator.create(Iter);
@@ -46,7 +71,11 @@ pub const Iter = struct {
                 return v;
             },
             .range => |*r| {
-                if (r.current >= r.stop) return null;
+                if (r.step > 0) {
+                    if (r.current >= r.stop) return null;
+                } else if (r.step < 0) {
+                    if (r.current <= r.stop) return null;
+                } else return null;
                 const v = r.current;
                 r.current += r.step;
                 return Value{ .small_int = v };

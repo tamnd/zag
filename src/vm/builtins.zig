@@ -227,6 +227,14 @@ pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         .defaultdict => |d| Value{ .small_int = @intCast(d.data.count()) },
         .ordered_dict => |od| Value{ .small_int = @intCast(od.data.count()) },
         .named_tuple => |nt| Value{ .small_int = @intCast(nt.items.len) },
+        .iter => |it| switch (it.kind) {
+            .range => |r| Value{ .small_int = @import("../object/iter.zig").Iter.rangeLen(r) },
+            else => blk2: {
+                try interp.stderr.print("TypeError: object of type 'iter' has no len()\n", .{});
+                try interp.stderr.flush();
+                break :blk2 error.TypeError;
+            },
+        },
         .instance => blk: {
             if (try @import("dunder.zig").call(interp, args[0], "__len__", &.{})) |r| break :blk r;
             try interp.stderr.print(
@@ -443,19 +451,29 @@ pub fn rangeBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Val
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     var start: i64 = 0;
     var stop: i64 = 0;
+    var step: i64 = 1;
     if (args.len == 1) {
         stop = try intArg(interp, args[0]);
     } else if (args.len == 2) {
         start = try intArg(interp, args[0]);
         stop = try intArg(interp, args[1]);
+    } else if (args.len == 3) {
+        start = try intArg(interp, args[0]);
+        stop = try intArg(interp, args[1]);
+        step = try intArg(interp, args[2]);
+        if (step == 0) {
+            try interp.raisePy("ValueError", "range() arg 3 must not be zero");
+            return error.PyException;
+        }
     } else {
-        try interp.typeError("range expected 1 or 2 arguments");
+        try interp.typeError("range expected 1 to 3 arguments");
         return error.TypeError;
     }
     const it = try Iter.init(interp.allocator, .{ .range = .{
+        .start = start,
         .current = start,
         .stop = stop,
-        .step = 1,
+        .step = step,
     } });
     return Value{ .iter = it };
 }
