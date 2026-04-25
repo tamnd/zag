@@ -10,9 +10,11 @@ const Code = @import("../object/code.zig").Code;
 const Tuple = @import("../object/tuple.zig").Tuple;
 const Str = @import("../object/string.zig").Str;
 const Instance = @import("../object/instance.zig").Instance;
+const Module = @import("../object/module.zig").Module;
 const Frame = @import("frame.zig").Frame;
 const dispatch = @import("dispatch.zig");
 const builtins = @import("builtins.zig");
+const asyncio_mod = @import("asyncio.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -27,6 +29,10 @@ pub const Interp = struct {
     /// The value produced by the most recent YIELD_VALUE. Read by the
     /// generator-send wrapper after `error.GenYield` escapes dispatch.
     gen_yielded: ?Value = null,
+    /// Cached builtin modules. Today only `asyncio`; lazily built on
+    /// first IMPORT_NAME so a script that doesn't import it pays
+    /// nothing.
+    asyncio_module: ?*Module = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -131,6 +137,24 @@ pub const Interp = struct {
         t.items[0] = val;
         try inst.dict.setStr(self.allocator, "args", Value{ .tuple = t });
         self.current_exc = Value{ .instance = inst };
+    }
+
+    pub fn importError(self: *Interp, name: []const u8) !void {
+        try self.stderr.print("ImportError: no module named '{s}'\n", .{name});
+        try self.stderr.flush();
+    }
+
+    /// Hand back the builtin module of the given name (today: just
+    /// `asyncio`). Cached on first access so identity holds across
+    /// re-imports.
+    pub fn getBuiltinModule(self: *Interp, name: []const u8) ?*Module {
+        if (std.mem.eql(u8, name, "asyncio")) {
+            if (self.asyncio_module) |m| return m;
+            const m = asyncio_mod.build(self) catch return null;
+            self.asyncio_module = m;
+            return m;
+        }
+        return null;
     }
 
     pub fn unsupportedOpcode(self: *Interp, opcode: u8, ip: u32) !void {

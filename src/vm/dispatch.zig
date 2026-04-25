@@ -113,6 +113,39 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             continue :sw advance(frame, &ext_arg, 0);
         },
 
+        .IMPORT_NAME => {
+            const arg = oparg(frame, ext_arg);
+            // Stack: [..., level, fromlist]. Pop both — we don't model
+            // relative imports or `from x import a, b` yet, just plain
+            // `import name` for the small set of builtin modules.
+            _ = frame.pop();
+            _ = frame.pop();
+            const name = frame.code.names[arg];
+            const m = interp.getBuiltinModule(name) orelse {
+                try interp.importError(name);
+                return error.PyException;
+            };
+            frame.push(Value{ .module = m });
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
+        .GET_AWAITABLE => {
+            // The fixtures only ever await coroutines (which we model
+            // as generators) and the no-op done-coroutines that
+            // asyncio.sleep(0) returns. Both are already iterators
+            // from the SEND opcode's point of view, so this is a
+            // pass-through.
+            const v = frame.pop();
+            switch (v) {
+                .generator => frame.push(v),
+                else => {
+                    try interp.typeError("object can't be used in 'await' expression");
+                    return error.TypeError;
+                },
+            }
+            continue :sw advance(frame, &ext_arg, 0);
+        },
+
         .EXTENDED_ARG => {
             const arg = oparg(frame, ext_arg);
             ext_arg = arg << 8;
@@ -1972,6 +2005,17 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
         try interp.attributeError(obj.typeName(), name);
         return error.AttributeError;
     }
+    if (obj == .module) {
+        if (obj.module.attrs.getStr(name)) |v| {
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        try interp.attributeError(obj.typeName(), name);
+        return error.AttributeError;
+    }
     if (obj == .generator) {
         const m: ?*value_mod.BuiltinFn = if (std.mem.eql(u8, name, "send"))
             &gen_send_method
@@ -2092,6 +2136,7 @@ fn invokeKw(
 const CO_VARARGS: i32 = 0x04;
 const CO_VARKEYWORDS: i32 = 0x08;
 const CO_GENERATOR: i32 = 0x20;
+const CO_COROUTINE: i32 = 0x80;
 
 /// Resume a generator's suspended frame with `sent_value`. Returns the
 /// next yielded value, or null on natural completion (RETURN_VALUE).
@@ -2309,7 +2354,7 @@ fn callPyFunction(
         }
     }
 
-    if (code.flags & CO_GENERATOR != 0) {
+    if (code.flags & (CO_GENERATOR | CO_COROUTINE) != 0) {
         // CPython prologue is [COPY_FREE_VARS?] RETURN_GENERATOR
         // POP_TOP RESUME. Apply COPY_FREE_VARS now (the body's
         // LOAD_DEREF needs the free cells in fast slots) and skip
