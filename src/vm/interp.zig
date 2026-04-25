@@ -7,6 +7,9 @@ const BuiltinFnPtr = value_mod.BuiltinFnPtr;
 
 const Dict = @import("../object/dict.zig").Dict;
 const Code = @import("../object/code.zig").Code;
+const Tuple = @import("../object/tuple.zig").Tuple;
+const Str = @import("../object/string.zig").Str;
+const Instance = @import("../object/instance.zig").Instance;
 const Frame = @import("frame.zig").Frame;
 const dispatch = @import("dispatch.zig");
 const builtins = @import("builtins.zig");
@@ -17,6 +20,10 @@ pub const Interp = struct {
     stderr: *std.Io.Writer,
     globals: *Dict,
     builtins: *Dict,
+    /// The live Python exception, or null. Set by `raisePy` (or
+    /// directly by RAISE_VARARGS) before the dispatch loop sees
+    /// `error.PyException`; the exception-table catch loop reads it.
+    current_exc: ?Value = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -76,6 +83,24 @@ pub const Interp = struct {
     pub fn typeError(self: *Interp, msg: []const u8) !void {
         try self.stderr.print("TypeError: {s}\n", .{msg});
         try self.stderr.flush();
+    }
+
+    /// Build an exception instance of `cls_name` with `args = (msg,)`
+    /// and stash it as `current_exc`. The caller still has to return
+    /// `error.PyException` to kick the dispatch unwind.
+    pub fn raisePy(self: *Interp, cls_name: []const u8, msg: []const u8) !void {
+        const cls_val = self.builtins.getStr(cls_name) orelse {
+            try self.stderr.print("zag: missing exception class '{s}'\n", .{cls_name});
+            try self.stderr.flush();
+            return error.NameError;
+        };
+        if (cls_val != .class) return error.TypeError;
+        const inst = try Instance.init(self.allocator, cls_val.class);
+        const t = try Tuple.init(self.allocator, 1);
+        const s = try Str.init(self.allocator, msg);
+        t.items[0] = Value{ .str = s };
+        try inst.dict.setStr(self.allocator, "args", Value{ .tuple = t });
+        self.current_exc = Value{ .instance = inst };
     }
 
     pub fn unsupportedOpcode(self: *Interp, opcode: u8, ip: u32) !void {

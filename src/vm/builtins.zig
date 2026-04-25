@@ -7,6 +7,8 @@ const BuiltinFn = value_mod.BuiltinFn;
 const Interp = @import("interp.zig").Interp;
 const List = @import("../object/list.zig").List;
 const Iter = @import("../object/iter.zig").Iter;
+const Class = @import("../object/class.zig").Class;
+const Dict = @import("../object/dict.zig").Dict;
 
 pub const BuiltinError = error{
     BadArgument,
@@ -170,4 +172,56 @@ pub fn install(interp: *Interp) !void {
     const dispatch = @import("dispatch.zig");
     try interp.registerBuiltin("__build_class__", dispatch.buildClass);
     try interp.registerBuiltin("isinstance", dispatch.isInstanceBuiltin);
+    try installExceptions(interp);
+}
+
+/// Build the exception-class hierarchy and register each as a
+/// builtin. Order matters -- a class needs its bases built first so
+/// MRO computation can walk them. The shape mirrors CPython's
+/// `Exception.__mro__` for the classes the fixtures touch; subclassing
+/// these from Python would work without further plumbing.
+fn installExceptions(interp: *Interp) !void {
+    const a = interp.allocator;
+    const base_exc = try Class.init(a, "BaseException", &.{}, try Dict.init(a));
+    const exception = try Class.init(a, "Exception", &.{base_exc}, try Dict.init(a));
+    const arith = try Class.init(a, "ArithmeticError", &.{exception}, try Dict.init(a));
+    const lookup = try Class.init(a, "LookupError", &.{exception}, try Dict.init(a));
+    const zero_div = try Class.init(a, "ZeroDivisionError", &.{arith}, try Dict.init(a));
+    const value_err = try Class.init(a, "ValueError", &.{exception}, try Dict.init(a));
+    const index_err = try Class.init(a, "IndexError", &.{lookup}, try Dict.init(a));
+    const key_err = try Class.init(a, "KeyError", &.{lookup}, try Dict.init(a));
+    const runtime_err = try Class.init(a, "RuntimeError", &.{exception}, try Dict.init(a));
+    const attr_err = try Class.init(a, "AttributeError", &.{exception}, try Dict.init(a));
+    const type_err = try Class.init(a, "TypeError", &.{exception}, try Dict.init(a));
+    const name_err = try Class.init(a, "NameError", &.{exception}, try Dict.init(a));
+    const stop_iter = try Class.init(a, "StopIteration", &.{exception}, try Dict.init(a));
+
+    const pairs = [_]struct { name: []const u8, cls: *Class }{
+        .{ .name = "BaseException", .cls = base_exc },
+        .{ .name = "Exception", .cls = exception },
+        .{ .name = "ArithmeticError", .cls = arith },
+        .{ .name = "LookupError", .cls = lookup },
+        .{ .name = "ZeroDivisionError", .cls = zero_div },
+        .{ .name = "ValueError", .cls = value_err },
+        .{ .name = "IndexError", .cls = index_err },
+        .{ .name = "KeyError", .cls = key_err },
+        .{ .name = "RuntimeError", .cls = runtime_err },
+        .{ .name = "AttributeError", .cls = attr_err },
+        .{ .name = "TypeError", .cls = type_err },
+        .{ .name = "NameError", .cls = name_err },
+        .{ .name = "StopIteration", .cls = stop_iter },
+    };
+    for (pairs) |p| {
+        try interp.builtins.setStr(a, p.name, Value{ .class = p.cls });
+    }
+}
+
+/// True if `cls`'s MRO contains the builtin BaseException -- we use
+/// this in `instantiate` to decide whether a no-`__init__` class
+/// should default-bind `args`.
+pub fn isExceptionClass(interp: *Interp, cls: *Class) bool {
+    const base_val = interp.builtins.getStr("BaseException") orelse return false;
+    if (base_val != .class) return false;
+    for (cls.mro) |c| if (c == base_val.class) return true;
+    return false;
 }
