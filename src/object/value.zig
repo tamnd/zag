@@ -80,7 +80,7 @@ pub const Value = union(Tag) {
             .null_sentinel => try w.writeAll("<NULL>"),
             .boolean => |b| try w.writeAll(if (b) "True" else "False"),
             .small_int => |i| try w.print("{d}", .{i}),
-            .float => |f| try w.print("{d}", .{f}),
+            .float => |f| try writeFloat(w, f),
             .str => |s| {
                 try w.writeByte('\'');
                 try w.writeAll(s.bytes);
@@ -116,6 +116,20 @@ pub const Value = union(Tag) {
         switch (self) {
             .str => |s| try w.writeAll(s.bytes),
             else => try self.writeRepr(w),
+        }
+    }
+
+    /// Python's float repr appends a trailing `.0` to whole-valued
+    /// floats so they're distinguishable from ints at the REPL:
+    /// `print(10/4)` -> `2.5`, but `print(1.0)` -> `1.0`, not `1`.
+    /// Zig's {d} already does shortest-round-trip, so we only need to
+    /// fix up the "no decimal, no exponent" case.
+    fn writeFloat(w: *std.Io.Writer, f: f64) !void {
+        var buf: [64]u8 = undefined;
+        const s = try std.fmt.bufPrint(&buf, "{d}", .{f});
+        try w.writeAll(s);
+        if (std.mem.indexOfAny(u8, s, ".eEnN") == null) {
+            try w.writeAll(".0");
         }
     }
 
