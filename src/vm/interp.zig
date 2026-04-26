@@ -200,6 +200,8 @@ pub const Interp = struct {
     decimal_invalid_op_class: ?*@import("../object/class.zig").Class = null,
     decimal_overflow_class: ?*@import("../object/class.zig").Class = null,
     decimal_active_context: ?Value = null,
+    fractions_module: ?*Module = null,
+    fractions_class: ?*@import("../object/class.zig").Class = null,
     html_module: ?*Module = null,
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
@@ -796,6 +798,12 @@ pub const Interp = struct {
             if (self.decimal_module) |m| return m;
             const m = @import("decimal_mod.zig").build(self) catch return null;
             self.decimal_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "fractions")) {
+            if (self.fractions_module) |m| return m;
+            const m = @import("fractions_mod.zig").build(self) catch return null;
+            self.fractions_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "html")) {
