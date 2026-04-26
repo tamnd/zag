@@ -9,6 +9,12 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.157] - 2026-04-26
+
+### Added
+
+- `gzip` module: `BadGzipFile` (subclass of `OSError`), `compress`/`decompress` (multi-member streams), `GzipFile` class (read/write/seek/tell/readline/peek, context manager), `gzip.open` with binary and text modes. Constants: `READ`, `WRITE`, `READ_BUFFER_SIZE`, `FTEXT`, `FHCRC`, `FEXTRA`, `FNAME`, `FCOMMENT`.
+
 ## [0.0.156] - 2026-04-26
 
 ### Added
