@@ -14,6 +14,9 @@ pub fn build(interp: *Interp) !*Module {
     const m = try Module.init(a, "os");
     try reg(interp, m, "remove", removeFn);
     try reg(interp, m, "unlink", removeFn);
+    const path = try Module.init(a, "os.path");
+    try reg(interp, path, "join", pathJoinFn);
+    try m.attrs.setStr(a, "path", Value{ .module = path });
     return m;
 }
 
@@ -21,6 +24,29 @@ fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void 
     const f = try interp.allocator.create(BuiltinFn);
     f.* = .{ .name = name, .func = func };
     try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
+}
+
+fn pathJoinFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(a);
+    for (args) |arg| {
+        if (arg != .str) continue;
+        const s = arg.str.bytes;
+        if (s.len > 0 and s[0] == '/') {
+            out.clearRetainingCapacity();
+            try out.appendSlice(a, s);
+        } else if (out.items.len > 0 and out.items[out.items.len - 1] != '/') {
+            try out.append(a, '/');
+            try out.appendSlice(a, s);
+        } else {
+            try out.appendSlice(a, s);
+        }
+    }
+    const Str = @import("../object/string.zig").Str;
+    const s = try Str.init(a, out.items);
+    return Value{ .str = s };
 }
 
 fn removeFn(p: *anyopaque, args: []const Value) anyerror!Value {

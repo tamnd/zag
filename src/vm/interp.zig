@@ -34,6 +34,7 @@ const textwrap_mod = @import("textwrap_mod.zig");
 const unicodedata_mod = @import("unicodedata_mod.zig");
 const stringprep_mod = @import("stringprep_mod.zig");
 const readline_mod = @import("readline_mod.zig");
+const rlcompleter_mod = @import("rlcompleter_mod.zig");
 const re_mod = @import("re_mod.zig");
 const struct_mod = @import("struct_mod.zig");
 const csv_mod = @import("csv_mod.zig");
@@ -89,6 +90,8 @@ pub const Interp = struct {
     unicodedata_module: ?*Module = null,
     stringprep_module: ?*Module = null,
     readline_module: ?*Module = null,
+    rlcompleter_module: ?*Module = null,
+    rlcompleter_class: ?*@import("../object/class.zig").Class = null,
     re_module: ?*Module = null,
     struct_module: ?*Module = null,
     csv_module: ?*Module = null,
@@ -511,6 +514,12 @@ pub const Interp = struct {
             if (self.readline_module) |m| return m;
             const m = readline_mod.build(self) catch return null;
             self.readline_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "rlcompleter")) {
+            if (self.rlcompleter_module) |m| return m;
+            const m = rlcompleter_mod.build(self) catch return null;
+            self.rlcompleter_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "struct")) {
