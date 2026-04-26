@@ -3293,6 +3293,9 @@ fn isAtomicSelfMatch(cls: Value) bool {
 /// ...) are matched by Value tag; user `Class` walks the MRO.
 fn matchClassCheck(subject: Value, cls: Value) bool {
     if (cls == .class) {
+        if (cls.class.value_tag) |tag| {
+            return @as(value_mod.Tag, subject) == tag;
+        }
         if (subject != .instance) return false;
         for (subject.instance.cls.mro) |c| {
             if (c == cls.class) return true;
@@ -3447,8 +3450,14 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             } else frame.push(r);
             return;
         }
-        try interp.attributeError(obj.typeName(), name);
-        return error.AttributeError;
+        const msg = try std.fmt.allocPrint(
+            interp.allocator,
+            "'{s}' object has no attribute '{s}'",
+            .{ obj.instance.cls.name, name },
+        );
+        defer interp.allocator.free(msg);
+        try interp.raisePy("AttributeError", msg);
+        return error.PyException;
     }
     if (obj == .class) {
         if (std.mem.eql(u8, name, "__name__")) {
@@ -4614,6 +4623,14 @@ fn instantiate(
             if (try weakref_mod.cachedRefInstantiate(interp, positional)) |v| return v;
         }
     }
+    // types.ModuleType is a class for isinstance, but calling it produces
+    // a real .module Value, not an Instance.
+    if (interp.types_module_class) |mt_cls| {
+        if (cls == mt_cls) {
+            const types_mod = @import("types_mod.zig");
+            return try types_mod.moduleTypeCall(interp, positional, kw_names, kw_values);
+        }
+    }
     const inst = try Instance.init(interp.allocator, cls);
     const inst_val = Value{ .instance = inst };
     if (cls.lookup("__init__") == null and builtins_mod.isExceptionClass(interp, cls)) {
@@ -4741,6 +4758,9 @@ pub fn isInstanceBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerro
     }
     if (args[1] == .class) {
         const target = args[1].class;
+        if (target.value_tag) |tag| {
+            return Value{ .boolean = @as(value_mod.Tag, args[0]) == tag };
+        }
         if (target.abc_kind != null) {
             const isInstanceOfAbc = @import("collections_abc_mod.zig").isInstanceOfAbc;
             return Value{ .boolean = isInstanceOfAbc(target, args[0]) };

@@ -1,5 +1,6 @@
 const std = @import("std");
-const Value = @import("value.zig").Value;
+const value_mod = @import("value.zig");
+const Value = value_mod.Value;
 const Dict = @import("dict.zig").Dict;
 
 /// `collections.abc` ABC kinds. A non-null `abc_kind` on a class
@@ -49,6 +50,12 @@ pub const Class = struct {
     mro: []*Class,
     abc_kind: ?AbcKind = null,
     abc_registered: std.ArrayList(*Class) = .empty,
+    /// When set, `isinstance(obj, cls)` returns true iff `obj`'s
+    /// Value tag equals this. Used by the `types` module to expose
+    /// builtin-value types (NoneType, FunctionType, ModuleType, ...)
+    /// as proper `Class` objects without inventing a fake instance
+    /// representation.
+    value_tag: ?value_mod.Tag = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -65,6 +72,7 @@ pub const Class = struct {
             .bases = bases_buf,
             .dict = dict,
             .mro = undefined,
+            .value_tag = null,
         };
         // Single-inheritance MRO: self, then bases[0]'s MRO, ...
         // For multi-inheritance the day a fixture needs it.
