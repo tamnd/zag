@@ -20,6 +20,7 @@ const functools_mod = @import("functools_mod.zig");
 const itertools_mod = @import("itertools_mod.zig");
 const operator_mod = @import("operator_mod.zig");
 const collections_mod = @import("collections_mod.zig");
+const collections_abc_mod = @import("collections_abc_mod.zig");
 const math_mod = @import("math_mod.zig");
 const heapq_mod = @import("heapq_mod.zig");
 const bisect_mod = @import("bisect_mod.zig");
@@ -79,6 +80,7 @@ pub const Interp = struct {
     itertools_module: ?*Module = null,
     operator_module: ?*Module = null,
     collections_module: ?*Module = null,
+    collections_abc_module: ?*Module = null,
     collections_chainmap_class: ?*@import("../object/class.zig").Class = null,
     collections_userdict_class: ?*@import("../object/class.zig").Class = null,
     collections_userlist_class: ?*@import("../object/class.zig").Class = null,
@@ -452,6 +454,12 @@ pub const Interp = struct {
             if (self.collections_module) |m| return m;
             const m = collections_mod.build(self) catch return null;
             self.collections_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "collections.abc")) {
+            if (self.collections_abc_module) |m| return m;
+            const m = collections_abc_mod.build(self) catch return null;
+            self.collections_abc_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "math")) {

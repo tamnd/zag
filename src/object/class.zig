@@ -2,6 +2,37 @@ const std = @import("std");
 const Value = @import("value.zig").Value;
 const Dict = @import("dict.zig").Dict;
 
+/// `collections.abc` ABC kinds. A non-null `abc_kind` on a class
+/// turns `isinstance(obj, cls)` into a structural check rather
+/// than the usual mro walk.
+pub const AbcKind = enum {
+    hashable,
+    callable,
+    iterable,
+    iterator,
+    generator,
+    reversible,
+    sized,
+    container,
+    collection,
+    sequence,
+    mutable_sequence,
+    set_,
+    mutable_set,
+    mapping,
+    mutable_mapping,
+    mapping_view,
+    keys_view,
+    items_view,
+    values_view,
+    awaitable,
+    coroutine,
+    async_iterable,
+    async_iterator,
+    async_generator,
+    buffer,
+};
+
 /// A user-defined Python class. `mro` is the linearized parent
 /// chain starting with `self` -- single-inheritance for now (the
 /// fixtures don't yet force C3). `dict` is the class namespace
@@ -12,6 +43,8 @@ pub const Class = struct {
     bases: []*Class,
     dict: *Dict,
     mro: []*Class,
+    abc_kind: ?AbcKind = null,
+    abc_registered: std.ArrayList(*Class) = .empty,
 
     pub fn init(
         allocator: std.mem.Allocator,
