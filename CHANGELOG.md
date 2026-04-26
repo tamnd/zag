@@ -9,6 +9,19 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.114] - 2026-04-26
+
+### Added
+
+- `114_struct` fixture, byte-equal. The `struct` module gains a real
+  `struct.error` Exception subclass (raised on bad format chars, short
+  buffers, and integer overflow), the `Struct` class with
+  `pack`/`unpack`/`unpack_from`/`pack_into`/`iter_unpack` plus
+  `format` and `size` attributes, module-level `pack_into` and
+  `iter_unpack`, the `'p'` Pascal-string code, and the `'e'` IEEE 754
+  binary16 half-float code. Integer codes now range-check rather than
+  silently truncating.
+
 ## [0.0.113] - 2026-04-26
 
 ### Added
