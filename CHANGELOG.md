@@ -9,6 +9,16 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.121] - 2026-04-26
+
+### Fixed
+
+- `heapq.merge` now performs a stable merge that honors the `key=`
+  callable. The previous implementation concatenated the inputs and
+  sorted on raw value, so callers passing pre-sorted-by-key sources
+  (`heapq.merge(words1, words2, key=len)`) ended up with output
+  reordered by string content.
+
 ## [0.0.120] - 2026-04-26
 
 ### Added

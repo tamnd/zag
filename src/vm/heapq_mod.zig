@@ -199,15 +199,45 @@ fn mergeFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn mergeKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const reverse = extractReverse(kw_names, kw_values);
-    const out = try List.init(interp.allocator);
+    const key = extractKey(kw_names, kw_values);
+
+    // Materialize each source, building parallel arrays of (key, src_idx,
+    // item_idx) so a stable sort respects both the key ordering and the
+    // original source/item order on ties.
+    var total: usize = 0;
+    var lists: std.ArrayList(*List) = .empty;
+    defer lists.deinit(interp.allocator);
     for (args) |a| {
         const lst = try builtins_mod.materialize(interp, a);
-        for (lst.items.items) |x| try out.append(interp.allocator, x);
+        try lists.append(interp.allocator, lst);
+        total += lst.items.items.len;
     }
-    if (reverse) {
-        std.sort.block(Value, out.items.items, {}, greaterThan);
-    } else {
-        std.sort.block(Value, out.items.items, {}, lessThan);
+    const Entry = struct { key: Value, src: u32, idx: u32, value: Value };
+    const buf = try interp.allocator.alloc(Entry, total);
+    defer interp.allocator.free(buf);
+    var i: usize = 0;
+    for (lists.items, 0..) |lst, src| {
+        for (lst.items.items, 0..) |v, idx| {
+            buf[i] = .{
+                .key = if (key) |k| try dispatch.invoke(interp, k, &.{v}) else v,
+                .src = @intCast(src),
+                .idx = @intCast(idx),
+                .value = v,
+            };
+            i += 1;
+        }
     }
+    const Ctx = struct { rev: bool };
+    const ctx = Ctx{ .rev = reverse };
+    std.sort.block(Entry, buf, ctx, struct {
+        fn lt(c: Ctx, a: Entry, b: Entry) bool {
+            const ord = Value.order(a.key, b.key) orelse .eq;
+            if (ord != .eq) return if (c.rev) ord == .gt else ord == .lt;
+            if (a.src != b.src) return a.src < b.src;
+            return a.idx < b.idx;
+        }
+    }.lt);
+    const out = try List.init(interp.allocator);
+    for (buf) |e| try out.append(interp.allocator, e.value);
     return Value{ .list = out };
 }
