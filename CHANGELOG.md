@@ -9,6 +9,12 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.156] - 2026-04-26
+
+### Added
+
+- `zlib` module: real deflate/inflate via `std.compress.flate`. Supports zlib (wbits 9-15), raw (-15 to -9), and gzip (25-31) containers. `compress`/`decompress` with level and wbits kwargs; `compressobj`/`decompressobj` with `compress`, `flush` (Z_SYNC_FLUSH defers to Z_FINISH for continuous streams), `unused_data`, `unconsumed_tail`; `crc32` and `adler32` with optional seed chaining; all Z_* constants.
+
 ## [0.0.155] - 2026-04-26
 
 ### Added
