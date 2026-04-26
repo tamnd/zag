@@ -40,6 +40,7 @@ pub fn build(interp: *Interp) !*Module {
     try register(interp, m, "islice", isliceFn, null);
     try register(interp, m, "groupby", groupbyFn, groupbyKw);
     try register(interp, m, "tee", teeFn, null);
+    try register(interp, m, "batched", batchedFn, batchedKw);
 
     // `chain` is callable AND carries `from_iterable` -- LOAD_ATTR on
     // the chain builtin needs to find that sibling. Sleight of hand:
@@ -153,7 +154,8 @@ fn countKw(
     }
     const start = try intArg(interp, start_v);
     const step = try intArg(interp, step_v);
-    const it = try Iter.init(interp.allocator, .{ .range = .{ .current = start, .stop = std.math.maxInt(i64), .step = step } });
+    const stop: i64 = if (step >= 0) std.math.maxInt(i64) else std.math.minInt(i64);
+    const it = try Iter.init(interp.allocator, .{ .range = .{ .current = start, .stop = stop, .step = step } });
     return Value{ .iter = it };
 }
 
@@ -668,6 +670,53 @@ fn teeFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
         out.items[i] = try iterFromList(interp, cp);
     }
     return Value{ .tuple = out };
+}
+
+/// `batched(iter, n, *, strict=False)` -- fixed-size chunks; final
+/// chunk is short unless strict=True (then ValueError).
+fn batchedFn(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return batchedKw(interp_opaque, args, &.{}, &.{});
+}
+
+fn batchedKw(
+    interp_opaque: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 2) {
+        try interp.typeError("batched expects (iter, n)");
+        return error.TypeError;
+    }
+    const n_signed = try intArg(interp, args[1]);
+    if (n_signed < 1) {
+        try interp.raisePy("ValueError","n must be at least one");
+        return error.PyException;
+    }
+    const n: usize = @intCast(n_signed);
+    var strict: bool = false;
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "strict")) strict = kv.isTruthy();
+    }
+    const lst = try iterToList(interp, args[0]);
+    const out = try List.init(interp.allocator);
+    var i: usize = 0;
+    while (i < lst.items.items.len) {
+        const remain = lst.items.items.len - i;
+        const take = @min(n, remain);
+        if (take < n and strict) {
+            try interp.raisePy("ValueError","batched(): incomplete batch");
+            return error.PyException;
+        }
+        const t = try Tuple.init(interp.allocator, take);
+        var j: usize = 0;
+        while (j < take) : (j += 1) t.items[j] = lst.items.items[i + j];
+        try out.append(interp.allocator, Value{ .tuple = t });
+        i += take;
+    }
+    return iterFromList(interp, out);
 }
 
 /// `islice(iter, stop)` / `islice(iter, start, stop[, step])`.
