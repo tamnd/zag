@@ -192,6 +192,14 @@ pub const Interp = struct {
     graphlib_cycle_error_class: ?*@import("../object/class.zig").Class = null,
     numbers_module: ?*Module = null,
     cmath_module: ?*Module = null,
+    decimal_module: ?*Module = null,
+    decimal_class: ?*@import("../object/class.zig").Class = null,
+    decimal_context_class: ?*@import("../object/class.zig").Class = null,
+    decimal_tuple_class: ?*@import("../object/class.zig").Class = null,
+    decimal_div_zero_class: ?*@import("../object/class.zig").Class = null,
+    decimal_invalid_op_class: ?*@import("../object/class.zig").Class = null,
+    decimal_overflow_class: ?*@import("../object/class.zig").Class = null,
+    decimal_active_context: ?Value = null,
     html_module: ?*Module = null,
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
@@ -382,6 +390,17 @@ pub const Interp = struct {
         const inst = try Instance.init(self.allocator, cls_val.class);
         const t = try Tuple.init(self.allocator, 1);
         t.items[0] = val;
+        try inst.dict.setStr(self.allocator, "args", Value{ .tuple = t });
+        self.current_exc = Value{ .instance = inst };
+    }
+
+    /// Like `raisePy`, but the caller already has a `*Class` (handy
+    /// for module-private exception classes like `decimal.DivisionByZero`).
+    pub fn raiseDecimal(self: *Interp, cls: *@import("../object/class.zig").Class, msg: []const u8) !void {
+        const inst = try Instance.init(self.allocator, cls);
+        const t = try Tuple.init(self.allocator, 1);
+        const s = try Str.init(self.allocator, msg);
+        t.items[0] = Value{ .str = s };
         try inst.dict.setStr(self.allocator, "args", Value{ .tuple = t });
         self.current_exc = Value{ .instance = inst };
     }
@@ -771,6 +790,12 @@ pub const Interp = struct {
             if (self.cmath_module) |m| return m;
             const m = @import("cmath_mod.zig").build(self) catch return null;
             self.cmath_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "decimal")) {
+            if (self.decimal_module) |m| return m;
+            const m = @import("decimal_mod.zig").build(self) catch return null;
+            self.decimal_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "html")) {
