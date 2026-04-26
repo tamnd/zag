@@ -9,7 +9,21 @@ changes.
 
 ## [Unreleased]
 
-## [0.0.125] - 2026-04-26
+## [0.0.126] - 2026-04-26
+
+### Added
+
+- `copy` module gains the protocols and surface fixtures rely on:
+  `__copy__` short-circuits `copy.copy(obj)`; `__deepcopy__(memo)`
+  short-circuits `copy.deepcopy(obj)`. Default deepcopy of a user
+  instance now clones the instance and deep-copies its attribute
+  dict. `copy.deepcopy` threads a Zig-side memo keyed by pointer
+  identity so cyclic structures terminate (`lst.append(lst)` round-
+  trips with `lst2[2] is lst2`). `copy.replace(obj, **changes)`
+  delegates to `__replace__`. `copy.error` and `copy.Error` are
+  exposed as the same class.
+
+
 
 ### Added
 
