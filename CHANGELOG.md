@@ -9,6 +9,19 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.105] - 2026-04-26
+
+### Added
+
+- `105_re_functions` fixture, byte-equal. `re.purge()` (no-op since
+  the runtime keeps no compile cache), the missing `VERBOSE`/`X`,
+  `ASCII`/`A`, `UNICODE`/`U`, and `NOFLAG` constants, an `re.error`
+  exception class (subclassed from `ValueError` so existing call
+  sites that already raise `ValueError` stay catchable), and
+  `VERBOSE` flag handling in `compile` — strips ASCII whitespace and
+  `#` comments outside character classes, honoring backslash escapes
+  so `\ ` keeps the literal space.
+
 ## [0.0.104] - 2026-04-26
 
 ### Added
