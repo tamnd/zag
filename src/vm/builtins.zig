@@ -1094,6 +1094,20 @@ pub fn memoryviewBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerro
     };
 }
 
+pub fn callableBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1) {
+        try interp.typeError("callable() takes exactly one argument");
+        return error.TypeError;
+    }
+    const ok = switch (args[0]) {
+        .builtin_fn, .function, .bound_method, .partial, .cached_fn, .class, .named_tuple_factory => true,
+        .instance => |inst| inst.cls.dict.getStr("__call__") != null,
+        else => false,
+    };
+    return Value{ .boolean = ok };
+}
+
 pub fn boolBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     if (args.len == 0) return Value{ .boolean = false };
@@ -1772,6 +1786,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("complex", complexBuiltin);
     try interp.registerBuiltin("repr", reprBuiltin);
     try interp.registerBuiltin("bool", boolBuiltin);
+    try interp.registerBuiltin("callable", callableBuiltin);
     try interp.registerBuiltin("round", roundBuiltin);
     try interp.registerBuiltin("str", strBuiltin);
     try interp.registerBuiltin("bytes", bytesBuiltin);
