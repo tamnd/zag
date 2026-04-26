@@ -9,6 +9,19 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.103] - 2026-04-26
+
+### Added
+
+- `103_string_template` fixture, byte-equal. `string.Template` class
+  with `substitute`, `safe_substitute`, `is_valid`, `get_identifiers`,
+  and a `.template` attribute. `substitute` raises `KeyError` on a
+  missing key; `safe_substitute` leaves the original placeholder text
+  in place (and tolerates a trailing `$` or one followed by a
+  non-identifier). Both forms accept a mapping arg, kwargs, or both,
+  with kwargs winning on conflict. `get_identifiers` preserves
+  first-seen order and dedupes.
+
 ## [0.0.102] - 2026-04-26
 
 ### Added
