@@ -187,6 +187,9 @@ pub const Interp = struct {
     enum_flag_class: ?*@import("../object/class.zig").Class = null,
     enum_int_flag_class: ?*@import("../object/class.zig").Class = null,
     enum_auto_class: ?*@import("../object/class.zig").Class = null,
+    graphlib_module: ?*Module = null,
+    graphlib_sorter_class: ?*@import("../object/class.zig").Class = null,
+    graphlib_cycle_error_class: ?*@import("../object/class.zig").Class = null,
     html_module: ?*Module = null,
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
@@ -748,6 +751,12 @@ pub const Interp = struct {
             if (self.enum_module) |m| return m;
             const m = @import("enum_mod.zig").build(self) catch return null;
             self.enum_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "graphlib")) {
+            if (self.graphlib_module) |m| return m;
+            const m = @import("graphlib_mod.zig").build(self) catch return null;
+            self.graphlib_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "html")) {
