@@ -161,6 +161,18 @@ fn builtinAbcMember(v: Value, kind: AbcKind) bool {
         },
         .mapping_view, .keys_view, .items_view, .values_view => false,
         .awaitable, .coroutine, .async_iterable, .async_iterator, .async_generator => false,
+        .number, .complex_ => switch (v) {
+            .small_int, .big_int, .float, .complex_num, .boolean => true,
+            else => false,
+        },
+        .real => switch (v) {
+            .small_int, .big_int, .float, .boolean => true,
+            else => false,
+        },
+        .rational, .integral => switch (v) {
+            .small_int, .big_int, .boolean => true,
+            else => false,
+        },
     };
 }
 

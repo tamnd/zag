@@ -190,6 +190,7 @@ pub const Interp = struct {
     graphlib_module: ?*Module = null,
     graphlib_sorter_class: ?*@import("../object/class.zig").Class = null,
     graphlib_cycle_error_class: ?*@import("../object/class.zig").Class = null,
+    numbers_module: ?*Module = null,
     html_module: ?*Module = null,
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
@@ -757,6 +758,12 @@ pub const Interp = struct {
             if (self.graphlib_module) |m| return m;
             const m = @import("graphlib_mod.zig").build(self) catch return null;
             self.graphlib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "numbers")) {
+            if (self.numbers_module) |m| return m;
+            const m = @import("numbers_mod.zig").build(self) catch return null;
+            self.numbers_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "html")) {
