@@ -9,6 +9,17 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.110] - 2026-04-26
+
+### Added
+
+- `110_unicodedata` fixture, byte-equal. New `unicodedata` module with
+  `name`/`lookup` (small named-char table plus CJK ideograph
+  synthesis), `decimal`/`digit`/`numeric` value lookups, `category`,
+  `bidirectional`, `combining`, `east_asian_width`, `mirrored`,
+  `decomposition`, plus `normalize` and `is_normalized` for NFC, NFD,
+  NFKC, NFKD.
+
 ## [0.0.109] - 2026-04-26
 
 ### Added
