@@ -9,6 +9,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.144] - 2026-04-26
+
+### Added
+
+- `filecmp` module: `BUFSIZE`, `DEFAULT_IGNORES`, `cmp(f1, f2,
+  shallow=True)` with size+mtime fast path and full content
+  fallback, `cmpfiles(a, b, common, shallow=True)` returning the
+  `(matches, mismatches, errors)` 3-tuple, and `clear_cache()`.
+  The `dircmp(left, right, ignore=, hide=, shallow=)` class
+  eagerly fills `left_list`/`right_list`/`common`/`left_only`/
+  `right_only`/`common_files`/`common_dirs`/`common_funny`/
+  `same_files`/`diff_files`/`funny_files` and a `subdirs` dict of
+  recursive child dircmp instances. `report()`, `report_partial_closure()`,
+  and `report_full_closure()` print the CPython-format diff layout.
+- `os.makedirs`, `os.chdir`, `os.listdir`.
+
 ## [0.0.143] - 2026-04-26
 
 ### Added
