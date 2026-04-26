@@ -9,6 +9,44 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.124] - 2026-04-26
+
+### Added
+
+- `weakref` module covering the API surface fixtures rely on:
+  `ref` / `ReferenceType` (calling a ref returns the target,
+  no-callback refs to the same object share identity), `proxy` with
+  `ProxyType` / `CallableProxyType` distinguished by whether the
+  target is callable, `getweakrefcount` / `getweakrefs` over the
+  per-target registry, `WeakValueDictionary` and `WeakKeyDictionary`
+  with the full mapping surface (`__getitem__` / `__setitem__` /
+  `__delitem__` / `__contains__` / `__len__` / `__iter__` / `get`
+  / `pop` / `setdefault` / `update` / `clear` / `keys` / `values`
+  / `items`), `WeakSet` with `add` / `discard` / `remove` / `pop` /
+  `clear`, `finalize` with `alive` / `atexit` and one-shot `__call__`
+  semantics, and `WeakMethod` returning the bound method. We don't
+  run a GC, so all "weak" references are strong; everything else
+  matches CPython byte-for-byte on the fixture.
+- `__getattr__` fallback for instances. The lookup chain (instance
+  dict, class MRO, descriptor protocol) now consults a class-level
+  `__getattr__` before raising `AttributeError`. Required for
+  `weakref.proxy`'s attribute delegation and matches CPython.
+- `Class.qualname` for module-qualified `repr(cls)` output (e.g.
+  `<class 'weakref.ReferenceType'>`) while `cls.__name__` keeps
+  returning the bare class name.
+
+### Changed
+
+- Bare `obj.method` access on built-in types (list, dict, str, set,
+  bytes, ...) and on user-class methods now returns a bound method,
+  matching CPython. Previously the LOAD_ATTR path returned the raw
+  function so `WeakMethod(calc.add)` and
+  `finalize(obj, log.append, ...)` couldn't carry their `self`.
+- `Value.equals` now compares user-class instances by identity when
+  no `__eq__` override is in play. Dict/set keying on instances
+  (e.g. `WeakKeyDictionary`) used to silently miss because the
+  fallback `order(a, b)` returns null for instances.
+
 ## [0.0.123] - 2026-04-26
 
 ### Added
