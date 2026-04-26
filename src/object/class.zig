@@ -6,6 +6,8 @@ const Dict = @import("dict.zig").Dict;
 /// `collections.abc` ABC kinds. A non-null `abc_kind` on a class
 /// turns `isinstance(obj, cls)` into a structural check rather
 /// than the usual mro walk.
+pub const EnumKind = enum { plain, int_enum, str_enum, flag, int_flag };
+
 pub const AbcKind = enum {
     hashable,
     callable,
@@ -56,6 +58,18 @@ pub const Class = struct {
     /// as proper `Class` objects without inventing a fake instance
     /// representation.
     value_tag: ?value_mod.Tag = null,
+    /// `enum.EnumKind` marker on a class subclassing `Enum`. Members
+    /// are populated by `enum_mod.processClass` after `__build_class__`
+    /// finishes the namespace. The value is then read by `instantiate`,
+    /// `len`, `containsOp`, and `makeIter` to swap class-level calls
+    /// for member lookups.
+    enum_kind: ?EnumKind = null,
+    /// Insertion-ordered canonical members (no aliases). Used by
+    /// `iter(cls)` and `len(cls)`.
+    enum_canonical_members: std.ArrayList(Value) = .empty,
+    /// Maps `_value_` -> canonical member, for `Cls(value)` lookup.
+    /// `null` for Flag/IntFlag whose lookup is composite.
+    enum_value_to_member: ?*Dict = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -73,6 +87,9 @@ pub const Class = struct {
             .dict = dict,
             .mro = undefined,
             .value_tag = null,
+            .enum_kind = null,
+            .enum_canonical_members = .empty,
+            .enum_value_to_member = null,
         };
         // Single-inheritance MRO: self, then bases[0]'s MRO, ...
         // For multi-inheritance the day a fixture needs it.

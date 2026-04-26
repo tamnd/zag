@@ -213,6 +213,9 @@ pub fn lenBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
         try interp.stderr.flush();
         return error.TypeError;
     }
+    if (args[0] == .class and args[0].class.enum_kind != null) {
+        return Value{ .small_int = @import("enum_mod.zig").lenClass(args[0].class) };
+    }
     return switch (args[0]) {
         .str => |s| Value{ .small_int = @intCast(s.len()) },
         .bytes => |b| Value{ .small_int = @intCast(b.data.len) },
@@ -286,6 +289,10 @@ pub fn sumBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
 /// `Str` values, matching CPython's `list("abc") == ['a','b','c']`.
 pub fn materialize(interp: *Interp, v: Value) !*List {
     const a = interp.allocator;
+    if (v == .class and v.class.enum_kind != null) {
+        const lv = try @import("enum_mod.zig").iterClass(interp, v.class);
+        return lv.list;
+    }
     const out = try List.init(a);
     switch (v) {
         .list => |l| for (l.items.items) |x| try out.append(a, x),

@@ -180,6 +180,13 @@ pub const Interp = struct {
     reprlib_repr_class: ?*@import("../object/class.zig").Class = null,
     reprlib_recursive_wrapper_class: ?*@import("../object/class.zig").Class = null,
     reprlib_arepr: ?Value = null,
+    enum_module: ?*Module = null,
+    enum_enum_class: ?*@import("../object/class.zig").Class = null,
+    enum_int_enum_class: ?*@import("../object/class.zig").Class = null,
+    enum_str_enum_class: ?*@import("../object/class.zig").Class = null,
+    enum_flag_class: ?*@import("../object/class.zig").Class = null,
+    enum_int_flag_class: ?*@import("../object/class.zig").Class = null,
+    enum_auto_class: ?*@import("../object/class.zig").Class = null,
     html_module: ?*Module = null,
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
@@ -735,6 +742,12 @@ pub const Interp = struct {
             if (self.reprlib_module) |m| return m;
             const m = @import("reprlib_mod.zig").build(self) catch return null;
             self.reprlib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "enum")) {
+            if (self.enum_module) |m| return m;
+            const m = @import("enum_mod.zig").build(self) catch return null;
+            self.enum_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "html")) {
