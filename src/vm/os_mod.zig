@@ -168,6 +168,16 @@ fn chmodFn(p: *anyopaque, args: []const Value) anyerror!Value {
         try interp.typeError("os.chmod expects (path, mode)");
         return error.TypeError;
     }
+    if (@import("builtin").os.tag == .windows) {
+        _ = std.Io.Dir.cwd().statFile(interp.io, args[0].str.bytes, .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                try interp.raisePy("FileNotFoundError", args[0].str.bytes);
+                return error.PyException;
+            },
+            else => return err,
+        };
+        return Value.none;
+    }
     const mode_i: i64 = args[1].small_int;
     const mode: std.posix.mode_t = @intCast(mode_i & 0o7777);
     const perms = std.Io.File.Permissions.fromMode(mode);
@@ -260,7 +270,7 @@ fn doStat(p: *anyopaque, args: []const Value, follow: bool) !Value {
     };
     try ensureStatResultClass(interp);
     const inst = try Instance.init(a, interp.os_stat_result_class.?);
-    var mode: i64 = @intCast(st.permissions.toMode() & 0o7777);
+    var mode: i64 = if (@import("builtin").os.tag == .windows) 0o644 else @intCast(st.permissions.toMode() & 0o7777);
     switch (st.kind) {
         .directory => mode |= 0o040000,
         .sym_link => mode |= 0o120000,
