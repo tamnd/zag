@@ -9,6 +9,16 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.101] - 2026-04-26
+
+### Changed
+
+- `str.format` rewritten to handle the full Python mini-language:
+  dotted/bracketed field paths, `!s`/`!r`/`!a` conversions, fill+align
+  (`< > = ^`), sign, `#` alt form, `0` zero-pad, width, `,`/`_`
+  grouping, `.precision`, types `b c d e E f F g G o s x X %`, and
+  nested specs (`{0:{1}}`).
+
 ## [0.0.100] - 2026-04-26
 
 ### Added
