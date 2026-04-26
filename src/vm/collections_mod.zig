@@ -34,6 +34,11 @@ pub fn build(interp: *Interp) !*Module {
     try registerKw(interp, m, "defaultdict", defaultdictFn, null);
     try registerKw(interp, m, "OrderedDict", orderedDictFn, null);
     try registerKw(interp, m, "namedtuple", namedtupleFn, namedtupleKw);
+    try @import("collections_classes.zig").ensureClasses(interp);
+    try m.attrs.setStr(interp.allocator, "ChainMap", Value{ .class = interp.collections_chainmap_class.? });
+    try m.attrs.setStr(interp.allocator, "UserDict", Value{ .class = interp.collections_userdict_class.? });
+    try m.attrs.setStr(interp.allocator, "UserList", Value{ .class = interp.collections_userlist_class.? });
+    try m.attrs.setStr(interp.allocator, "UserString", Value{ .class = interp.collections_userstring_class.? });
     return m;
 }
 
@@ -177,6 +182,23 @@ fn defaultdictFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value 
     const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
     const factory: Value = if (args.len >= 1) args[0] else Value.none;
     const d = try DefaultDict.init(interp.allocator, factory);
+    if (args.len >= 2) {
+        switch (args[1]) {
+            .dict => |sd| for (sd.pairs.items) |p| try d.data.setKey(interp.allocator, p.key, p.value),
+            .ordered_dict => |od| for (od.data.pairs.items) |p| try d.data.setKey(interp.allocator, p.key, p.value),
+            .defaultdict => |dd| for (dd.data.pairs.items) |p| try d.data.setKey(interp.allocator, p.key, p.value),
+            else => {
+                const lst = try builtins.materialize(interp, args[1]);
+                for (lst.items.items) |x| {
+                    if (x != .tuple or x.tuple.items.len != 2) {
+                        try interp.typeError("defaultdict update sequence element is not a 2-tuple");
+                        return error.TypeError;
+                    }
+                    try d.data.setKey(interp.allocator, x.tuple.items[0], x.tuple.items[1]);
+                }
+            },
+        }
+    }
     return Value{ .defaultdict = d };
 }
 

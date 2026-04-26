@@ -592,6 +592,15 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 .float => |f| Value{ .float = -f },
                 .complex_num => |c| Value{ .complex_num = .{ .re = -c.re, .im = -c.im } },
                 .boolean => |b| Value{ .small_int = -@as(i64, @intFromBool(b)) },
+                .counter => |c| blk: {
+                    const Counter = @import("../object/counter.zig").Counter;
+                    const out = try Counter.init(interp.allocator);
+                    for (c.data.pairs.items) |p| {
+                        const cv: i64 = if (p.value == .small_int) p.value.small_int else 0;
+                        if (cv < 0) try out.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = -cv });
+                    }
+                    break :blk Value{ .counter = out };
+                },
                 .instance => blk: {
                     if (try @import("dunder.zig").call(interp, v, "__neg__", &.{})) |x| break :blk x;
                     try interp.typeError("bad operand type for unary -");
@@ -1107,6 +1116,22 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                         return error.TypeError;
                     },
                 },
+                .deque => |dq| switch (key) {
+                    .small_int => |i| {
+                        const n: i64 = @intCast(dq.items.items.items.len);
+                        var idx = i;
+                        if (idx < 0) idx += n;
+                        if (idx < 0 or idx >= n) {
+                            try interp.indexError("deque index out of range");
+                            return error.IndexError;
+                        }
+                        _ = dq.items.items.orderedRemove(@intCast(idx));
+                    },
+                    else => {
+                        try interp.typeError("deque indices must be integers");
+                        return error.TypeError;
+                    },
+                },
                 .instance => {
                     if (try @import("dunder.zig").call(interp, container, "__delitem__", &.{key})) |_| {} else {
                         try interp.typeError("object does not support item deletion");
@@ -1501,6 +1526,15 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                     const r: Value = switch (v) {
                         .small_int, .float, .complex_num => v,
                         .boolean => |b| Value{ .small_int = @intFromBool(b) },
+                        .counter => |c| blk: {
+                            const Counter = @import("../object/counter.zig").Counter;
+                            const out = try Counter.init(interp.allocator);
+                            for (c.data.pairs.items) |p| {
+                                const cv: i64 = if (p.value == .small_int) p.value.small_int else 0;
+                                if (cv > 0) try out.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = cv });
+                            }
+                            break :blk Value{ .counter = out };
+                        },
                         .instance => blk: {
                             if (try @import("dunder.zig").call(interp, v, "__pos__", &.{})) |x| break :blk x;
                             try interp.typeError("bad operand type for unary +");
@@ -1990,6 +2024,23 @@ fn add(interp: *Interp, a: Value, b: Value) !Value {
         }
         return Value{ .tuple = out };
     }
+    if (a == .counter and b == .counter) {
+        const Counter = @import("../object/counter.zig").Counter;
+        const out = try Counter.init(interp.allocator);
+        for (a.counter.data.pairs.items) |p| {
+            const av: i64 = if (p.value == .small_int) p.value.small_int else 0;
+            const bv_v = b.counter.data.getStr(p.key.str.bytes) orelse Value{ .small_int = 0 };
+            const bv: i64 = if (bv_v == .small_int) bv_v.small_int else 0;
+            const sum = av + bv;
+            if (sum > 0) try out.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = sum });
+        }
+        for (b.counter.data.pairs.items) |p| {
+            if (a.counter.data.getStr(p.key.str.bytes) != null) continue;
+            const bv: i64 = if (p.value == .small_int) p.value.small_int else 0;
+            if (bv > 0) try out.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = bv });
+        }
+        return Value{ .counter = out };
+    }
     try interp.raisePy("TypeError", "unsupported operand type(s) for +");
     return error.PyException;
 }
@@ -2018,6 +2069,18 @@ fn subtract(interp: *Interp, a: Value, b: Value) !Value {
         }
         return Value{ .set = out };
     }
+    if (a == .counter and b == .counter) {
+        const Counter = @import("../object/counter.zig").Counter;
+        const out = try Counter.init(interp.allocator);
+        for (a.counter.data.pairs.items) |p| {
+            const av: i64 = if (p.value == .small_int) p.value.small_int else 0;
+            const bv_v = b.counter.data.getStr(p.key.str.bytes) orelse Value{ .small_int = 0 };
+            const bv: i64 = if (bv_v == .small_int) bv_v.small_int else 0;
+            const diff = av - bv;
+            if (diff > 0) try out.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = diff });
+        }
+        return Value{ .counter = out };
+    }
     try interp.typeError("unsupported operand type(s) for -");
     return error.TypeError;
 }
@@ -2045,6 +2108,31 @@ fn bitwiseOr(interp: *Interp, a: Value, b: Value) !Value {
         for (b.dict.pairs.items) |p| try out.setKey(interp.allocator, p.key, p.value);
         return Value{ .dict = out };
     }
+    if (a == .ordered_dict and (b == .ordered_dict or b == .dict)) {
+        const OrderedDict = @import("../object/ordered_dict.zig").OrderedDict;
+        const out = try OrderedDict.init(interp.allocator);
+        for (a.ordered_dict.data.pairs.items) |p| try out.data.setKey(interp.allocator, p.key, p.value);
+        const other_pairs = if (b == .ordered_dict) b.ordered_dict.data.pairs.items else b.dict.pairs.items;
+        for (other_pairs) |p| try out.data.setKey(interp.allocator, p.key, p.value);
+        return Value{ .ordered_dict = out };
+    }
+    if (a == .counter and b == .counter) {
+        const Counter = @import("../object/counter.zig").Counter;
+        const out = try Counter.init(interp.allocator);
+        for (a.counter.data.pairs.items) |p| {
+            const av: i64 = if (p.value == .small_int) p.value.small_int else 0;
+            const bv_v = b.counter.data.getStr(p.key.str.bytes) orelse Value{ .small_int = 0 };
+            const bv: i64 = if (bv_v == .small_int) bv_v.small_int else 0;
+            const m = if (av >= bv) av else bv;
+            if (m > 0) try out.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = m });
+        }
+        for (b.counter.data.pairs.items) |p| {
+            if (a.counter.data.getStr(p.key.str.bytes) != null) continue;
+            const bv: i64 = if (p.value == .small_int) p.value.small_int else 0;
+            if (bv > 0) try out.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = bv });
+        }
+        return Value{ .counter = out };
+    }
     try interp.typeError("unsupported operand type(s) for |");
     return error.TypeError;
 }
@@ -2062,6 +2150,18 @@ fn bitwiseAnd(interp: *Interp, a: Value, b: Value) !Value {
             };
         }
         return Value{ .set = out };
+    }
+    if (a == .counter and b == .counter) {
+        const Counter = @import("../object/counter.zig").Counter;
+        const out = try Counter.init(interp.allocator);
+        for (a.counter.data.pairs.items) |p| {
+            const av: i64 = if (p.value == .small_int) p.value.small_int else 0;
+            const bv_v = b.counter.data.getStr(p.key.str.bytes) orelse Value{ .small_int = 0 };
+            const bv: i64 = if (bv_v == .small_int) bv_v.small_int else 0;
+            const m = if (av <= bv) av else bv;
+            if (m > 0) try out.data.setStr(interp.allocator, p.key.str.bytes, Value{ .small_int = m });
+        }
+        return Value{ .counter = out };
     }
     try interp.typeError("unsupported operand type(s) for &");
     return error.TypeError;
@@ -3682,19 +3782,44 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
     }
-    if (obj == .named_tuple_factory and std.mem.eql(u8, name, "_fields")) {
+    if (obj == .named_tuple_factory) {
         const f = obj.named_tuple_factory;
-        const t = try Tuple.init(interp.allocator, f.fields.len);
-        for (f.fields, 0..) |fname, i| {
-            const s = try Str.init(interp.allocator, fname);
-            t.items[i] = Value{ .str = s };
+        if (std.mem.eql(u8, name, "_fields")) {
+            const t = try Tuple.init(interp.allocator, f.fields.len);
+            for (f.fields, 0..) |fname, i| {
+                const s = try Str.init(interp.allocator, fname);
+                t.items[i] = Value{ .str = s };
+            }
+            const v = Value{ .tuple = t };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
         }
-        const v = Value{ .tuple = t };
-        if (is_method) {
-            frame.push(v);
-            frame.push(Value.null_sentinel);
-        } else frame.push(v);
-        return;
+        if (std.mem.eql(u8, name, "_field_defaults")) {
+            const d = try Dict.init(interp.allocator);
+            const start = f.fields.len - f.defaults.len;
+            for (f.defaults, 0..) |dv, k| {
+                try d.setStr(interp.allocator, f.fields[start + k], dv);
+            }
+            const v = Value{ .dict = d };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "_make")) {
+            const BoundMethod = @import("../object/bound_method.zig").BoundMethod;
+            const bm = try BoundMethod.init(interp.allocator, Value{ .builtin_fn = &collmethods.nt_make_entry }, obj);
+            const v = Value{ .bound_method = bm };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
     }
 
     // Built-in methods on str/list/dict and collections types.
@@ -3732,6 +3857,7 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
                 break :blk null;
             },
             .defaultdict => |dd| blk: {
+                if (collmethods.defaultDictLookup(name)) |m| break :blk m;
                 if (dictmethods.lookup(name)) |m| {
                     self_for_method = Value{ .dict = dd.data };
                     break :blk m;
@@ -3775,6 +3901,22 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
     }
     if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "dict") and std.mem.eql(u8, name, "fromkeys")) {
         const v = Value{ .builtin_fn = &dictmethods.fromkeys_entry };
+        if (is_method) {
+            frame.push(v);
+            frame.push(Value.null_sentinel);
+        } else frame.push(v);
+        return;
+    }
+    if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "Counter") and std.mem.eql(u8, name, "fromkeys")) {
+        const v = Value{ .builtin_fn = &collmethods.counter_fromkeys_entry };
+        if (is_method) {
+            frame.push(v);
+            frame.push(Value.null_sentinel);
+        } else frame.push(v);
+        return;
+    }
+    if (obj == .builtin_fn and std.mem.eql(u8, obj.builtin_fn.name, "OrderedDict") and std.mem.eql(u8, name, "fromkeys")) {
+        const v = Value{ .builtin_fn = &collmethods.od_fromkeys_entry };
         if (is_method) {
             frame.push(v);
             frame.push(Value.null_sentinel);

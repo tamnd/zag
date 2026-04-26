@@ -39,6 +39,9 @@ var deque_methods = [_]BuiltinFn{
     .{ .name = "count", .func = dequeCount },
     .{ .name = "index", .func = dequeIndex },
     .{ .name = "clear", .func = dequeClear },
+    .{ .name = "copy", .func = dequeCopy },
+    .{ .name = "insert", .func = dequeInsert },
+    .{ .name = "remove", .func = dequeRemove },
 };
 
 fn dequeSelf(opaque_interp: *anyopaque, args: []const Value) !*@import("../object/deque.zig").Deque {
@@ -132,9 +135,26 @@ fn dequeCount(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
 fn dequeIndex(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
     const d = try dequeSelf(opaque_interp, args);
-    if (args.len != 2) return error.TypeError;
-    for (d.items.items.items, 0..) |x, i| {
-        if (Value.equals(x, args[1])) return Value{ .small_int = @intCast(i) };
+    if (args.len < 2 or args.len > 4) return error.TypeError;
+    const buf = d.items.items.items;
+    const n: i64 = @intCast(buf.len);
+    var start: i64 = 0;
+    var stop: i64 = n;
+    if (args.len >= 3) {
+        if (args[2] != .small_int) return error.TypeError;
+        start = args[2].small_int;
+    }
+    if (args.len >= 4) {
+        if (args[3] != .small_int) return error.TypeError;
+        stop = args[3].small_int;
+    }
+    if (start < 0) start += n;
+    if (start < 0) start = 0;
+    if (stop < 0) stop += n;
+    if (stop > n) stop = n;
+    var i: i64 = start;
+    while (i < stop) : (i += 1) {
+        if (Value.equals(buf[@intCast(i)], args[1])) return Value{ .small_int = i };
     }
     try interp.raisePy("ValueError", "deque.index(x): x not in deque");
     return error.PyException;
@@ -144,6 +164,46 @@ fn dequeClear(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
     const d = try dequeSelf(opaque_interp, args);
     d.items.items.clearRetainingCapacity();
     return Value.none;
+}
+
+fn dequeCopy(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    const d = try dequeSelf(opaque_interp, args);
+    const new_items = try List.init(interp.allocator);
+    for (d.items.items.items) |x| try new_items.append(interp.allocator, x);
+    const Deque = @import("../object/deque.zig").Deque;
+    const nd = try Deque.init(interp.allocator, new_items, d.maxlen);
+    return Value{ .deque = nd };
+}
+
+fn dequeInsert(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    const d = try dequeSelf(opaque_interp, args);
+    if (args.len != 3 or args[1] != .small_int) return error.TypeError;
+    var idx = args[1].small_int;
+    const n: i64 = @intCast(d.items.items.items.len);
+    if (idx < 0) idx += n;
+    if (idx < 0) idx = 0;
+    if (idx > n) idx = n;
+    try d.items.items.insert(interp.allocator, @intCast(idx), args[2]);
+    if (d.maxlen) |ml| {
+        while (d.items.items.items.len > ml) _ = d.items.items.pop();
+    }
+    return Value.none;
+}
+
+fn dequeRemove(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    const d = try dequeSelf(opaque_interp, args);
+    if (args.len != 2) return error.TypeError;
+    for (d.items.items.items, 0..) |x, i| {
+        if (Value.equals(x, args[1])) {
+            _ = d.items.items.orderedRemove(i);
+            return Value.none;
+        }
+    }
+    try interp.raisePy("ValueError", "deque.remove(x): x not in deque");
+    return error.PyException;
 }
 
 // --- Counter ---
@@ -161,7 +221,18 @@ var counter_methods = [_]BuiltinFn{
     .{ .name = "update", .func = counterUpdateMethod },
     .{ .name = "subtract", .func = counterSubtractMethod },
     .{ .name = "total", .func = counterTotalMethod },
+    .{ .name = "copy", .func = counterCopy },
 };
+
+fn counterCopy(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    const c = try counterSelf(opaque_interp, args);
+    const nc = try Counter.init(interp.allocator);
+    for (c.data.pairs.items) |p| {
+        try nc.data.setStr(interp.allocator, p.key.str.bytes, p.value);
+    }
+    return Value{ .counter = nc };
+}
 
 fn counterSelf(opaque_interp: *anyopaque, args: []const Value) !*Counter {
     const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
@@ -253,7 +324,33 @@ var od_methods = [_]BuiltinFn{
     .{ .name = "keys", .func = odKeys },
     .{ .name = "items", .func = odItems },
     .{ .name = "values", .func = odValues },
+    .{ .name = "copy", .func = odCopy },
 };
+
+pub var od_fromkeys_entry: BuiltinFn = .{ .name = "fromkeys", .func = odFromkeys };
+
+fn odCopy(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    const od = try odSelf(opaque_interp, args);
+    const OrderedDict = @import("../object/ordered_dict.zig").OrderedDict;
+    const out = try OrderedDict.init(interp.allocator);
+    for (od.data.pairs.items) |p| try out.data.setKey(interp.allocator, p.key, p.value);
+    return Value{ .ordered_dict = out };
+}
+
+fn odFromkeys(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    if (args.len < 1 or args.len > 2) {
+        try interp.typeError("OrderedDict.fromkeys takes 1 or 2 args");
+        return error.TypeError;
+    }
+    const default_v: Value = if (args.len == 2) args[1] else Value.none;
+    const lst = try builtins.materialize(interp, args[0]);
+    const OrderedDict = @import("../object/ordered_dict.zig").OrderedDict;
+    const out = try OrderedDict.init(interp.allocator);
+    for (lst.items.items) |k| try out.data.setKey(interp.allocator, k, default_v);
+    return Value{ .ordered_dict = out };
+}
 
 fn odSelf(opaque_interp: *anyopaque, args: []const Value) !*@import("../object/ordered_dict.zig").OrderedDict {
     const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
@@ -376,7 +473,59 @@ pub fn ntLookup(name: []const u8) ?*BuiltinFn {
 var nt_methods = [_]BuiltinFn{
     .{ .name = "_asdict", .func = ntAsDict },
     .{ .name = "_replace", .func = ntReplace, .kw_func = ntReplaceKw },
+    .{ .name = "count", .func = ntCount },
+    .{ .name = "index", .func = ntIndex },
 };
+
+pub var nt_make_entry: BuiltinFn = .{ .name = "_make", .func = ntMake };
+
+pub var counter_fromkeys_entry: BuiltinFn = .{ .name = "fromkeys", .func = counterFromkeys };
+
+fn counterFromkeys(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    _ = args;
+    try interp.raisePy("NotImplementedError", "Counter.fromkeys() is undefined.  Use Counter(iterable) instead.");
+    return error.PyException;
+}
+
+fn ntMake(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    if (args.len != 2 or args[0] != .named_tuple_factory) {
+        try interp.typeError("_make: expected (factory, iterable)");
+        return error.TypeError;
+    }
+    const factory = args[0].named_tuple_factory;
+    const lst = try builtins.materialize(interp, args[1]);
+    if (lst.items.items.len != factory.fields.len) {
+        try interp.raisePy("TypeError", "_make: wrong number of items");
+        return error.PyException;
+    }
+    const items = try interp.allocator.alloc(Value, factory.fields.len);
+    @memcpy(items, lst.items.items);
+    const nt = try NamedTuple.init(interp.allocator, factory, items);
+    return Value{ .named_tuple = nt };
+}
+
+fn ntCount(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const nt = try ntSelf(opaque_interp, args);
+    if (args.len != 2) return error.TypeError;
+    var n: i64 = 0;
+    for (nt.items) |x| if (Value.equals(x, args[1])) {
+        n += 1;
+    };
+    return Value{ .small_int = n };
+}
+
+fn ntIndex(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    const nt = try ntSelf(opaque_interp, args);
+    if (args.len != 2) return error.TypeError;
+    for (nt.items, 0..) |x, i| {
+        if (Value.equals(x, args[1])) return Value{ .small_int = @intCast(i) };
+    }
+    try interp.raisePy("ValueError", "tuple.index(x): x not in tuple");
+    return error.PyException;
+}
 
 fn ntSelf(opaque_interp: *anyopaque, args: []const Value) !*NamedTuple {
     const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
@@ -437,4 +586,28 @@ pub fn ntFieldIndex(nt: *NamedTuple, name: []const u8) ?usize {
     return null;
 }
 
-// --- defaultdict has no special methods beyond dict ones ---
+// --- defaultdict ---
+
+pub fn defaultDictLookup(name: []const u8) ?*BuiltinFn {
+    inline for (&dd_methods) |*m| {
+        if (std.mem.eql(u8, m.name, name)) return @constCast(m);
+    }
+    return null;
+}
+
+var dd_methods = [_]BuiltinFn{
+    .{ .name = "copy", .func = ddCopy },
+};
+
+fn ddCopy(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    if (args.len < 1 or args[0] != .defaultdict) {
+        try interp.typeError("expected defaultdict self");
+        return error.TypeError;
+    }
+    const DefaultDict = @import("../object/defaultdict.zig").DefaultDict;
+    const dd = args[0].defaultdict;
+    const nd = try DefaultDict.init(interp.allocator, dd.factory);
+    for (dd.data.pairs.items) |p| try nd.data.setKey(interp.allocator, p.key, p.value);
+    return Value{ .defaultdict = nd };
+}

@@ -784,10 +784,10 @@ pub const Value = union(Tag) {
             .module => "module",
             .ellipsis => "ellipsis",
             .not_implemented => "NotImplementedType",
-            .deque => "collections.deque",
+            .deque => "deque",
             .counter => "Counter",
-            .defaultdict => "collections.defaultdict",
-            .ordered_dict => "collections.OrderedDict",
+            .defaultdict => "defaultdict",
+            .ordered_dict => "OrderedDict",
             .named_tuple => |nt| nt.factory.type_name,
             .named_tuple_factory => "type",
         };
