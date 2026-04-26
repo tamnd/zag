@@ -39,6 +39,7 @@ const re_mod = @import("re_mod.zig");
 const struct_mod = @import("struct_mod.zig");
 const codecs_mod = @import("codecs_mod.zig");
 const datetime_mod = @import("datetime_mod.zig");
+const zoneinfo_mod = @import("zoneinfo_mod.zig");
 const csv_mod = @import("csv_mod.zig");
 const urlparse_mod = @import("urlparse_mod.zig");
 const zlib_mod = @import("zlib_mod.zig");
@@ -109,6 +110,10 @@ pub const Interp = struct {
     dt_time_class: ?*@import("../object/class.zig").Class = null,
     dt_datetime_class: ?*@import("../object/class.zig").Class = null,
     dt_timezone_class: ?*@import("../object/class.zig").Class = null,
+    zoneinfo_module: ?*Module = null,
+    zoneinfo_class: ?*@import("../object/class.zig").Class = null,
+    zoneinfo_not_found_class: ?*@import("../object/class.zig").Class = null,
+    zoneinfo_cache: ?*@import("../object/dict.zig").Dict = null,
     csv_module: ?*Module = null,
     urlparse_module: ?*Module = null,
     urllib_module: ?*Module = null,
@@ -553,6 +558,12 @@ pub const Interp = struct {
             if (self.datetime_module) |m| return m;
             const m = datetime_mod.build(self) catch return null;
             self.datetime_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "zoneinfo")) {
+            if (self.zoneinfo_module) |m| return m;
+            const m = zoneinfo_mod.build(self) catch return null;
+            self.zoneinfo_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "csv")) {

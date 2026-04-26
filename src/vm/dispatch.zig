@@ -4432,6 +4432,14 @@ fn instantiate(
     kw_names: []const Value,
     kw_values: []const Value,
 ) !Value {
+    // ZoneInfo("UTC") returns the cached instance. The fixture relies on
+    // identity-equality between two ZoneInfo("UTC") calls.
+    if (interp.zoneinfo_class) |zi_cls| {
+        if (cls == zi_cls and kw_names.len == 0) {
+            const zoneinfo_mod = @import("zoneinfo_mod.zig");
+            if (try zoneinfo_mod.cachedInstantiate(interp, positional)) |v| return v;
+        }
+    }
     const inst = try Instance.init(interp.allocator, cls);
     const inst_val = Value{ .instance = inst };
     if (cls.lookup("__init__") == null and builtins_mod.isExceptionClass(interp, cls)) {
