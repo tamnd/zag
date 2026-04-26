@@ -263,6 +263,10 @@ pub const Interp = struct {
     shutil_same_file_error: ?*@import("../object/class.zig").Class = null,
     shutil_error: ?*@import("../object/class.zig").Class = null,
     shutil_ignore_patterns_class: ?*@import("../object/class.zig").Class = null,
+    pickle_module: ?*Module = null,
+    pickle_error_class: ?*@import("../object/class.zig").Class = null,
+    pickling_error_class: ?*@import("../object/class.zig").Class = null,
+    unpickling_error_class: ?*@import("../object/class.zig").Class = null,
     linecache_cache: std.StringHashMapUnmanaged(@import("linecache_mod.zig").Entry) = .empty,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
@@ -900,6 +904,12 @@ pub const Interp = struct {
             if (self.shutil_module) |m| return m;
             const m = @import("shutil_mod.zig").build(self) catch return null;
             self.shutil_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "pickle")) {
+            if (self.pickle_module) |m| return m;
+            const m = @import("pickle_mod.zig").build(self) catch return null;
+            self.pickle_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "pathlib")) {
