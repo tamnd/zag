@@ -9,6 +9,14 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.107] - 2026-04-26
+
+### Added
+
+- `107_re_syntax` fixture, byte-equal. `\A` and `\Z` anchors via new
+  `bos`/`eos` opcodes. `\A` matches strict start of string and `\Z`
+  matches strict end of string; multiline does not loosen them.
+
 ## [0.0.106] - 2026-04-26
 
 ### Added
