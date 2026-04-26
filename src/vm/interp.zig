@@ -176,6 +176,10 @@ pub const Interp = struct {
     calendar_illegal_weekday_class: ?*@import("../object/class.zig").Class = null,
     pprint_module: ?*Module = null,
     pprint_pp_class: ?*@import("../object/class.zig").Class = null,
+    reprlib_module: ?*Module = null,
+    reprlib_repr_class: ?*@import("../object/class.zig").Class = null,
+    reprlib_recursive_wrapper_class: ?*@import("../object/class.zig").Class = null,
+    reprlib_arepr: ?Value = null,
     html_module: ?*Module = null,
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
@@ -725,6 +729,12 @@ pub const Interp = struct {
             if (self.pprint_module) |m| return m;
             const m = pprint_mod.build(self) catch return null;
             self.pprint_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "reprlib")) {
+            if (self.reprlib_module) |m| return m;
+            const m = @import("reprlib_mod.zig").build(self) catch return null;
+            self.reprlib_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "html")) {
