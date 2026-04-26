@@ -254,6 +254,8 @@ pub const Interp = struct {
     env_map: ?*const std.process.Environ.Map = null,
     os_path_module: ?*Module = null,
     os_stat_result_class: ?*@import("../object/class.zig").Class = null,
+    filecmp_module: ?*Module = null,
+    filecmp_dircmp_class: ?*@import("../object/class.zig").Class = null,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
@@ -867,6 +869,12 @@ pub const Interp = struct {
             // path submodule on the interp.
             _ = self.getBuiltinModule("os") orelse return null;
             return self.os_path_module;
+        }
+        if (std.mem.eql(u8, name, "filecmp")) {
+            if (self.filecmp_module) |m| return m;
+            const m = @import("filecmp_mod.zig").build(self) catch return null;
+            self.filecmp_module = m;
+            return m;
         }
         if (std.mem.eql(u8, name, "pathlib")) {
             if (self.pathlib_module) |m| return m;

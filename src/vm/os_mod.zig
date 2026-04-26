@@ -29,6 +29,9 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "fspath", fspathFn);
     try reg(interp, m, "mkdir", mkdirFn);
     try reg(interp, m, "rmdir", rmdirFn);
+    try reg(interp, m, "makedirs", makedirsFn);
+    try reg(interp, m, "chdir", chdirFn);
+    try reg(interp, m, "listdir", listdirFn);
 
     // os.environ: a regular dict, seeded from the host env once.
     const env = try Dict.init(a);
@@ -95,6 +98,55 @@ fn mkdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
         else => return err,
     };
     return Value.none;
+}
+
+fn makedirsFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args[0] != .str) {
+        try interp.typeError("os.makedirs expects a path");
+        return error.TypeError;
+    }
+    std.Io.Dir.cwd().createDirPath(interp.io, args[0].str.bytes) catch |err| switch (err) {
+        error.PathAlreadyExists => {
+            // Match os.makedirs default: raise unless exist_ok=True.
+            try interp.raisePy("FileExistsError", args[0].str.bytes);
+            return error.PyException;
+        },
+        else => return err,
+    };
+    return Value.none;
+}
+
+fn chdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args[0] != .str) {
+        try interp.typeError("os.chdir expects a path");
+        return error.TypeError;
+    }
+    try std.process.setCurrentPath(interp.io, args[0].str.bytes);
+    return Value.none;
+}
+
+fn listdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const path: []const u8 = if (args.len >= 1 and args[0] == .str) args[0].str.bytes else ".";
+    var dir = std.Io.Dir.cwd().openDir(interp.io, path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => {
+            try interp.raisePy("FileNotFoundError", path);
+            return error.PyException;
+        },
+        else => return err,
+    };
+    defer dir.close(interp.io);
+    const list_mod = @import("../object/list.zig");
+    const list = try list_mod.List.init(a);
+    var it = dir.iterate();
+    while (try it.next(interp.io)) |entry| {
+        const name = try a.dupe(u8, entry.name);
+        try list.items.append(a, Value{ .str = try Str.fromOwnedSlice(a, name) });
+    }
+    return Value{ .list = list };
 }
 
 fn rmdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
