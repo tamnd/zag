@@ -9,6 +9,18 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.146] - 2026-04-26
+
+### Added
+
+- `glob` module: `escape` wraps `*`, `?`, `[` in `[...]` form;
+  `translate` emits a regex string that round-trips through the
+  existing `re` engine without using lookahead; `glob` and `iglob`
+  walk the filesystem with `*`, `?`, `[...]` (with `!` negation
+  and ranges) and recursive `**`. Supports `recursive`,
+  `include_hidden`, and `root_dir` keyword args, plus absolute
+  patterns and trailing-slash directory-only mode.
+
 ## [0.0.145] - 2026-04-26
 
 ### Added
