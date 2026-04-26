@@ -267,6 +267,9 @@ pub const Interp = struct {
     pickle_error_class: ?*@import("../object/class.zig").Class = null,
     pickling_error_class: ?*@import("../object/class.zig").Class = null,
     unpickling_error_class: ?*@import("../object/class.zig").Class = null,
+    copyreg_module: ?*Module = null,
+    copyreg_dispatch_table: ?*@import("../object/dict.zig").Dict = null,
+    copyreg_extensions: std.ArrayListUnmanaged(@import("copyreg_mod.zig").Extension) = .empty,
     linecache_cache: std.StringHashMapUnmanaged(@import("linecache_mod.zig").Entry) = .empty,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
@@ -910,6 +913,12 @@ pub const Interp = struct {
             if (self.pickle_module) |m| return m;
             const m = @import("pickle_mod.zig").build(self) catch return null;
             self.pickle_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "copyreg")) {
+            if (self.copyreg_module) |m| return m;
+            const m = @import("copyreg_mod.zig").build(self) catch return null;
+            self.copyreg_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "pathlib")) {

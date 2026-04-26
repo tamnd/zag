@@ -671,6 +671,12 @@ pub const Value = union(Tag) {
             return std.mem.eql(u8, a_bytes.?, b_bytes.?);
         }
         if (order(a, b)) |o| return o == .eq;
+        // Functions, classes, modules, and other heap-allocated
+        // singletons compare by identity when the data-shaped paths
+        // above don't match. This is what CPython's default `__eq__`
+        // returns for these types, and dicts keyed by them (like
+        // copyreg.dispatch_table[tuple]) need it to look up.
+        if (@as(Tag, a) == @as(Tag, b)) return identityEq(a, b);
         return false;
     }
 
