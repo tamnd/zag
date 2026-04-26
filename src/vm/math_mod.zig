@@ -380,6 +380,9 @@ fn sqrtFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn ceilFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     if (args[0] == .small_int) return args[0];
+    if (args[0] == .instance) {
+        if (try @import("dunder.zig").call(interp, args[0], "__ceil__", &.{})) |r| return r;
+    }
     const f = try asFloat(interp, args[0]);
     return intResult(@as(i64, @intFromFloat(@ceil(f))));
 }
@@ -387,6 +390,9 @@ fn ceilFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn floorFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     if (args[0] == .small_int) return args[0];
+    if (args[0] == .instance) {
+        if (try @import("dunder.zig").call(interp, args[0], "__floor__", &.{})) |r| return r;
+    }
     const f = try asFloat(interp, args[0]);
     return intResult(@as(i64, @intFromFloat(@floor(f))));
 }
@@ -394,6 +400,9 @@ fn floorFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn truncFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     if (args[0] == .small_int) return args[0];
+    if (args[0] == .instance) {
+        if (try @import("dunder.zig").call(interp, args[0], "__trunc__", &.{})) |r| return r;
+    }
     const f = try asFloat(interp, args[0]);
     return intResult(@as(i64, @intFromFloat(@trunc(f))));
 }
