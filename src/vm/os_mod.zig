@@ -123,7 +123,7 @@ fn doStat(p: *anyopaque, args: []const Value, follow: bool) !Value {
     }
     try inst.dict.setStr(a, "st_mode", Value{ .small_int = mode });
     try inst.dict.setStr(a, "st_size", Value{ .small_int = @intCast(st.size) });
-    try inst.dict.setStr(a, "st_ino", Value{ .small_int = @intCast(@as(i128, @bitCast(@as(u128, st.inode))) & ((@as(i128, 1) << 60) - 1)) });
+    try inst.dict.setStr(a, "st_ino", Value{ .small_int = inodeToInt(st.inode) });
     try inst.dict.setStr(a, "st_nlink", Value{ .small_int = @intCast(st.nlink) });
     try inst.dict.setStr(a, "st_uid", Value{ .small_int = 0 });
     try inst.dict.setStr(a, "st_gid", Value{ .small_int = 0 });
@@ -135,6 +135,19 @@ fn doStat(p: *anyopaque, args: []const Value, follow: bool) !Value {
     try inst.dict.setStr(a, "st_mtime", Value{ .float = mtime_s });
     try inst.dict.setStr(a, "st_ctime", Value{ .float = ctime_s });
     return Value{ .instance = inst };
+}
+
+fn inodeToInt(ino: anytype) i64 {
+    // INode varies by platform (u64 on Linux, signed on Windows).
+    // Mask to small_int's positive range so the value round-trips.
+    const T = @TypeOf(ino);
+    if (@typeInfo(T).int.signedness == .unsigned) {
+        const u: u64 = @intCast(ino);
+        return @intCast(u & ((@as(u64, 1) << 62) - 1));
+    } else {
+        const i: i64 = @intCast(ino);
+        return if (i < 0) -i else i;
+    }
 }
 
 fn ensureStatResultClass(interp: *Interp) !void {
