@@ -38,6 +38,7 @@ const rlcompleter_mod = @import("rlcompleter_mod.zig");
 const re_mod = @import("re_mod.zig");
 const struct_mod = @import("struct_mod.zig");
 const codecs_mod = @import("codecs_mod.zig");
+const datetime_mod = @import("datetime_mod.zig");
 const csv_mod = @import("csv_mod.zig");
 const urlparse_mod = @import("urlparse_mod.zig");
 const zlib_mod = @import("zlib_mod.zig");
@@ -101,6 +102,13 @@ pub const Interp = struct {
     codecs_codecinfo_class: ?*@import("../object/class.zig").Class = null,
     codecs_encoder_class: ?*@import("../object/class.zig").Class = null,
     codecs_decoder_class: ?*@import("../object/class.zig").Class = null,
+    datetime_module: ?*Module = null,
+    dt_tzinfo_class: ?*@import("../object/class.zig").Class = null,
+    dt_timedelta_class: ?*@import("../object/class.zig").Class = null,
+    dt_date_class: ?*@import("../object/class.zig").Class = null,
+    dt_time_class: ?*@import("../object/class.zig").Class = null,
+    dt_datetime_class: ?*@import("../object/class.zig").Class = null,
+    dt_timezone_class: ?*@import("../object/class.zig").Class = null,
     csv_module: ?*Module = null,
     urlparse_module: ?*Module = null,
     urllib_module: ?*Module = null,
@@ -539,6 +547,12 @@ pub const Interp = struct {
             if (self.codecs_module) |m| return m;
             const m = codecs_mod.build(self) catch return null;
             self.codecs_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "datetime")) {
+            if (self.datetime_module) |m| return m;
+            const m = datetime_mod.build(self) catch return null;
+            self.datetime_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "csv")) {
