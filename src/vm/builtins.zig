@@ -1749,6 +1749,10 @@ fn lookupAttr(obj: Value, name: []const u8) ?Value {
 
 pub fn dirBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len == 0) {
+        // dir() with no args returns local names — return empty list
+        return Value{ .list = try List.init(interp.allocator) };
+    }
     if (args.len != 1) {
         try interp.typeError("dir() takes exactly one argument in zag");
         return error.TypeError;
