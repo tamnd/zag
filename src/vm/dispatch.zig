@@ -4444,10 +4444,6 @@ fn instantiate(
         return inst_val;
     }
     if (cls.lookup("__init__")) |init_v| {
-        if (init_v != .function) {
-            try interp.typeError("__init__ is not a Python function");
-            return error.TypeError;
-        }
         // Bind self as args[0].
         var stack_buf: [64]Value = undefined;
         const total = positional.len + 1;
@@ -4457,7 +4453,21 @@ fn instantiate(
         }
         stack_buf[0] = inst_val;
         @memcpy(stack_buf[1..total], positional);
-        const ret = try callPyFunction(interp, init_v.function, stack_buf[0..total], kw_names, kw_values, null);
+        const ret = switch (init_v) {
+            .function => |fn_v| try callPyFunction(interp, fn_v, stack_buf[0..total], kw_names, kw_values, null),
+            .builtin_fn => |bf| blk: {
+                if (bf.kw_func) |kw_fn| break :blk try kw_fn(interp, stack_buf[0..total], kw_names, kw_values);
+                if (kw_names.len != 0) {
+                    try interp.typeError("__init__ does not accept keyword arguments");
+                    return error.TypeError;
+                }
+                break :blk try bf.func(interp, stack_buf[0..total]);
+            },
+            else => {
+                try interp.typeError("__init__ is not callable");
+                return error.TypeError;
+            },
+        };
         // EXIT_INIT_CHECK: __init__ must return None.
         if (ret != .none) {
             try interp.raisePy("TypeError", "__init__() should return None");
