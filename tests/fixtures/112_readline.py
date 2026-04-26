@@ -1,7 +1,7 @@
 import readline
 
 # --- backend ---
-print(readline.backend)
+print(readline.backend in ('readline', 'editline'))
 
 # --- history management ---
 readline.clear_history()
