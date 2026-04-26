@@ -26,7 +26,7 @@ fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void 
     try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
 }
 
-fn matchOne(s: []const u8, pat: []const u8) bool {
+pub fn matchOne(s: []const u8, pat: []const u8) bool {
     var i: usize = 0;
     var j: usize = 0;
     var star_i: ?usize = null;

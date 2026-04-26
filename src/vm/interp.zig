@@ -215,6 +215,12 @@ pub const Interp = struct {
     warnings_module: ?*Module = null,
     os_module: ?*Module = null,
     threading_module: ?*Module = null,
+    pathlib_module: ?*Module = null,
+    pathlib_pure_posix_class: ?*@import("../object/class.zig").Class = null,
+    pathlib_posix_class: ?*@import("../object/class.zig").Class = null,
+    pathlib_stat_result_class: ?*@import("../object/class.zig").Class = null,
+    tempfile_module: ?*Module = null,
+    tempfile_temp_dir_class: ?*@import("../object/class.zig").Class = null,
     templatelib_module: ?*Module = null,
     threading_lock_class: ?*@import("../object/class.zig").Class = null,
     threading_rlock_class: ?*@import("../object/class.zig").Class = null,
@@ -237,6 +243,10 @@ pub const Interp = struct {
     /// by POP_EXCEPT. Powers `sys.exc_info()` and the implicit
     /// `__context__` attached to exceptions raised inside an except.
     handling_exc: ?Value = null,
+    /// Environment passed in by the host. Pathlib/tempfile peek at
+    /// HOME and TMPDIR; everything else gets the defaults.
+    home: []const u8 = "/",
+    tmp_dir: []const u8 = "/tmp",
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
@@ -836,6 +846,18 @@ pub const Interp = struct {
             if (self.os_module) |m| return m;
             const m = @import("os_mod.zig").build(self) catch return null;
             self.os_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "pathlib")) {
+            if (self.pathlib_module) |m| return m;
+            const m = @import("pathlib_mod.zig").build(self) catch return null;
+            self.pathlib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "tempfile")) {
+            if (self.tempfile_module) |m| return m;
+            const m = @import("tempfile_mod.zig").build(self) catch return null;
+            self.tempfile_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "threading")) {
