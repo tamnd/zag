@@ -1,5 +1,6 @@
-//! Pinhole `difflib`: get_close_matches, SequenceMatcher.ratio,
-//! ndiff, unified_diff. Just enough to satisfy the fixture probes.
+//! Pinhole `difflib`: get_close_matches, SequenceMatcher (str+list),
+//! ndiff, unified_diff, context_diff, restore, Differ. Just enough
+//! to satisfy the fixture probes.
 
 const std = @import("std");
 
@@ -22,8 +23,33 @@ pub fn build(interp: *Interp) !*Module {
     try regKw(interp, m, "get_close_matches", getCloseMatchesFn, getCloseMatchesKw);
     try reg(interp, m, "ndiff", ndiffFn);
     try regKw(interp, m, "unified_diff", unifiedDiffFn, unifiedDiffKw);
+    try regKw(interp, m, "context_diff", contextDiffFn, contextDiffKw);
     try reg(interp, m, "SequenceMatcher", seqMatcherFn);
+    try reg(interp, m, "Differ", differCtorFn);
+    try reg(interp, m, "IS_LINE_JUNK", isLineJunkFn);
+    try reg(interp, m, "IS_CHARACTER_JUNK", isCharJunkFn);
+    try reg(interp, m, "restore", restoreFn);
     return m;
+}
+
+fn isLineJunkFn(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (args.len < 1 or args[0] != .str) return Value{ .boolean = false };
+    const s = args[0].str.bytes;
+    var i: usize = 0;
+    while (i < s.len and (s[i] == ' ' or s[i] == '\t')) i += 1;
+    if (i < s.len and s[i] == '#') {
+        i += 1;
+        while (i < s.len and (s[i] == ' ' or s[i] == '\t')) i += 1;
+    }
+    if (i < s.len and s[i] == '\n') i += 1;
+    return Value{ .boolean = i == s.len };
+}
+
+fn isCharJunkFn(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (args.len < 1 or args[0] != .str) return Value{ .boolean = false };
+    const s = args[0].str.bytes;
+    if (s.len == 0) return Value{ .boolean = false };
+    return Value{ .boolean = s[0] == ' ' or s[0] == '\t' };
 }
 
 fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {
@@ -65,7 +91,69 @@ fn seqOfStr(a: std.mem.Allocator, v: Value) ![][]const u8 {
     return out;
 }
 
-// Ratcliff-Obershelp matching count.
+// --- token sequences (works for str and list-of-str) ---
+
+fn toTokens(a: std.mem.Allocator, v: Value) ![][]const u8 {
+    switch (v) {
+        .str => |s| {
+            const out = try a.alloc([]const u8, s.bytes.len);
+            var i: usize = 0;
+            while (i < s.bytes.len) : (i += 1) out[i] = s.bytes[i .. i + 1];
+            return out;
+        },
+        .list => |l| {
+            const out = try a.alloc([]const u8, l.items.items.len);
+            for (l.items.items, 0..) |it, i| {
+                if (it != .str) return error.TypeError;
+                out[i] = it.str.bytes;
+            }
+            return out;
+        },
+        .tuple => |t| {
+            const out = try a.alloc([]const u8, t.items.len);
+            for (t.items, 0..) |it, i| {
+                if (it != .str) return error.TypeError;
+                out[i] = it.str.bytes;
+            }
+            return out;
+        },
+        else => return error.TypeError,
+    }
+}
+
+fn matchCountTokens(a: [][]const u8, b: [][]const u8) usize {
+    if (a.len == 0 or b.len == 0) return 0;
+    var best_i: usize = 0;
+    var best_j: usize = 0;
+    var best_len: usize = 0;
+    var i: usize = 0;
+    while (i < a.len) : (i += 1) {
+        var j: usize = 0;
+        while (j < b.len) : (j += 1) {
+            var k: usize = 0;
+            while (i + k < a.len and j + k < b.len and std.mem.eql(u8, a[i + k], b[j + k])) : (k += 1) {}
+            if (k > best_len) {
+                best_len = k;
+                best_i = i;
+                best_j = j;
+            }
+        }
+    }
+    if (best_len == 0) return 0;
+    return best_len +
+        matchCountTokens(a[0..best_i], b[0..best_j]) +
+        matchCountTokens(a[best_i + best_len ..], b[best_j + best_len ..]);
+}
+
+fn ratioTokens(a: [][]const u8, b: [][]const u8) f64 {
+    const total = a.len + b.len;
+    if (total == 0) return 1.0;
+    const m: f64 = @floatFromInt(matchCountTokens(a, b));
+    const t: f64 = @floatFromInt(total);
+    return 2.0 * m / t;
+}
+
+// Byte-level helpers retained for get_close_matches.
 fn matchCount(a: []const u8, b: []const u8) usize {
     if (a.len == 0 or b.len == 0) return 0;
     var best_i: usize = 0;
@@ -245,7 +333,6 @@ fn unifiedDiffKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw
         else if (std.mem.eql(u8, kn.str.bytes, "tofile")) tofile = kv.str.bytes;
     }
     const list = try List.init(a);
-    // Skip entirely when sequences are identical.
     if (aa.len == bb.len) {
         var same = true;
         for (aa, bb) |x, y| if (!std.mem.eql(u8, x, y)) {
@@ -282,73 +369,439 @@ fn unifiedDiffKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw
     return Value{ .list = list };
 }
 
-// --- SequenceMatcher: a callable that returns a small instance
-// holding `_a`/`_b`, exposing a `ratio` method ---
+// --- context_diff ---
 
-fn ensureClass(interp: *Interp) !void {
-    if (interp.difflib_seqmatch_class != null) return;
+fn contextDiffFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    return contextDiffKw(p, args, &.{}, &.{});
+}
+
+fn contextDiffKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    const d = try Dict.init(a);
-    try methodReg(a, d, "ratio", smRatio);
-    try methodReg(a, d, "quick_ratio", smRatio);
-    try methodReg(a, d, "real_quick_ratio", smRatio);
-    try methodReg(a, d, "set_seq1", smSetSeq1);
-    try methodReg(a, d, "set_seq2", smSetSeq2);
-    try methodReg(a, d, "set_seqs", smSetSeqs);
-    interp.difflib_seqmatch_class = try Class.init(a, "SequenceMatcher", &.{}, d);
+    if (args.len < 2) return error.TypeError;
+    const aa = try seqOfStr(a, args[0]);
+    defer a.free(aa);
+    const bb = try seqOfStr(a, args[1]);
+    defer a.free(bb);
+    var fromfile: []const u8 = "";
+    var tofile: []const u8 = "";
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn != .str or kv != .str) continue;
+        if (std.mem.eql(u8, kn.str.bytes, "fromfile")) fromfile = kv.str.bytes
+        else if (std.mem.eql(u8, kn.str.bytes, "tofile")) tofile = kv.str.bytes;
+    }
+    const list = try List.init(a);
+    if (aa.len == bb.len) {
+        var same = true;
+        for (aa, bb) |x, y| if (!std.mem.eql(u8, x, y)) {
+            same = false;
+            break;
+        };
+        if (same) return Value{ .list = list };
+    }
+
+    // Compute opcodes on full sequences (no context grouping; one hunk).
+    const opcodes = try computeOpcodesForLines(a, aa, bb);
+    defer a.free(opcodes);
+
+    {
+        const h = try std.fmt.allocPrint(a, "*** {s}\n", .{fromfile});
+        const s = try Str.init(a, h);
+        a.free(h);
+        try list.append(a, Value{ .str = s });
+    }
+    {
+        const h = try std.fmt.allocPrint(a, "--- {s}\n", .{tofile});
+        const s = try Str.init(a, h);
+        a.free(h);
+        try list.append(a, Value{ .str = s });
+    }
+
+    {
+        const s = try Str.init(a, "***************\n");
+        try list.append(a, Value{ .str = s });
+    }
+
+    // a-side header.
+    const a_range = try formatContextRange(a, 0, aa.len);
+    defer a.free(a_range);
+    {
+        const h = try std.fmt.allocPrint(a, "*** {s} ****\n", .{a_range});
+        const s = try Str.init(a, h);
+        a.free(h);
+        try list.append(a, Value{ .str = s });
+    }
+
+    // a-side body: walk opcodes, emit each a-line with prefix.
+    var has_replace_or_delete = false;
+    for (opcodes) |op| {
+        if (op.tag == .replace or op.tag == .delete) {
+            has_replace_or_delete = true;
+            break;
+        }
+    }
+    if (has_replace_or_delete) {
+        for (opcodes) |op| {
+            const pfx: []const u8 = switch (op.tag) {
+                .equal => "  ",
+                .replace => "! ",
+                .delete => "- ",
+                .insert => continue,
+            };
+            var k: usize = op.i1;
+            while (k < op.i2) : (k += 1) {
+                const h = try std.fmt.allocPrint(a, "{s}{s}", .{ pfx, aa[k] });
+                const s = try Str.init(a, h);
+                a.free(h);
+                try list.append(a, Value{ .str = s });
+            }
+        }
+    }
+
+    // b-side header.
+    const b_range = try formatContextRange(a, 0, bb.len);
+    defer a.free(b_range);
+    {
+        const h = try std.fmt.allocPrint(a, "--- {s} ----\n", .{b_range});
+        const s = try Str.init(a, h);
+        a.free(h);
+        try list.append(a, Value{ .str = s });
+    }
+
+    var has_replace_or_insert = false;
+    for (opcodes) |op| {
+        if (op.tag == .replace or op.tag == .insert) {
+            has_replace_or_insert = true;
+            break;
+        }
+    }
+    if (has_replace_or_insert) {
+        for (opcodes) |op| {
+            const pfx: []const u8 = switch (op.tag) {
+                .equal => "  ",
+                .replace => "! ",
+                .insert => "+ ",
+                .delete => continue,
+            };
+            var k: usize = op.j1;
+            while (k < op.j2) : (k += 1) {
+                const h = try std.fmt.allocPrint(a, "{s}{s}", .{ pfx, bb[k] });
+                const s = try Str.init(a, h);
+                a.free(h);
+                try list.append(a, Value{ .str = s });
+            }
+        }
+    }
+
+    return Value{ .list = list };
+}
+
+fn formatContextRange(a: std.mem.Allocator, start: usize, stop: usize) ![]u8 {
+    var beginning = start + 1;
+    const length = stop - start;
+    if (length == 0) beginning -= 1;
+    if (length <= 1) return std.fmt.allocPrint(a, "{d}", .{beginning});
+    return std.fmt.allocPrint(a, "{d},{d}", .{ beginning, beginning + length - 1 });
+}
+
+// --- restore ---
+
+fn restoreFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 2) return error.TypeError;
+    const items: []const Value = switch (args[0]) {
+        .list => |l| l.items.items,
+        .tuple => |t| t.items,
+        else => return error.TypeError,
+    };
+    if (args[1] != .small_int) return error.TypeError;
+    const which = args[1].small_int;
+    const tag: u8 = if (which == 1) '-' else if (which == 2) '+' else return error.ValueError;
+
+    const list = try List.init(a);
+    for (items) |v| {
+        if (v != .str) continue;
+        const line = v.str.bytes;
+        if (line.len < 2) continue;
+        const c = line[0];
+        if (c == tag or c == ' ') {
+            const s = try Str.init(a, line[2..]);
+            try list.append(a, Value{ .str = s });
+        }
+    }
+    return Value{ .list = list };
+}
+
+// --- SequenceMatcher ---
+
+const Tag = enum { equal, replace, delete, insert };
+const Opcode = struct { tag: Tag, i1: usize, i2: usize, j1: usize, j2: usize };
+const MatchTriple = struct { a: usize, b: usize, size: usize };
+
+fn ensureClasses(interp: *Interp) !void {
+    const a = interp.allocator;
+    if (interp.difflib_match_class == null) {
+        const md = try Dict.init(a);
+        interp.difflib_match_class = try Class.init(a, "Match", &.{}, md);
+    }
+    if (interp.difflib_seqmatch_class == null) {
+        const d = try Dict.init(a);
+        try methodReg(a, d, "ratio", smRatio);
+        try methodReg(a, d, "quick_ratio", smRatio);
+        try methodReg(a, d, "real_quick_ratio", smRatio);
+        try methodReg(a, d, "set_seq1", smSetSeq1);
+        try methodReg(a, d, "set_seq2", smSetSeq2);
+        try methodReg(a, d, "set_seqs", smSetSeqs);
+        try methodReg(a, d, "find_longest_match", smFindLongestMatch);
+        try methodReg(a, d, "get_matching_blocks", smGetMatchingBlocks);
+        try methodReg(a, d, "get_opcodes", smGetOpcodes);
+        interp.difflib_seqmatch_class = try Class.init(a, "SequenceMatcher", &.{}, d);
+    }
+    if (interp.difflib_differ_class == null) {
+        const d = try Dict.init(a);
+        try methodReg(a, d, "compare", differCompare);
+        interp.difflib_differ_class = try Class.init(a, "Differ", &.{}, d);
+    }
+}
+
+fn newMatch(a: std.mem.Allocator, cls: *Class, ai: usize, bj: usize, size: usize) !Value {
+    const inst = try Instance.init(a, cls);
+    try inst.dict.setStr(a, "a", Value{ .small_int = @intCast(ai) });
+    try inst.dict.setStr(a, "b", Value{ .small_int = @intCast(bj) });
+    try inst.dict.setStr(a, "size", Value{ .small_int = @intCast(size) });
+    return Value{ .instance = inst };
 }
 
 fn seqMatcherFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    try ensureClass(interp);
+    try ensureClasses(interp);
     const inst = try Instance.init(a, interp.difflib_seqmatch_class.?);
-    if (args.len >= 2 and args[1] == .str) {
-        const s = try Str.init(a, args[1].str.bytes);
-        try inst.dict.setStr(a, "a", Value{ .str = s });
-    }
-    if (args.len >= 3 and args[2] == .str) {
-        const s = try Str.init(a, args[2].str.bytes);
-        try inst.dict.setStr(a, "b", Value{ .str = s });
-    }
+    if (args.len >= 2) try inst.dict.setStr(a, "a", args[1]);
+    if (args.len >= 3) try inst.dict.setStr(a, "b", args[2]);
     return Value{ .instance = inst };
 }
 
 fn smSetSeq1(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    if (args.len < 2 or args[0] != .instance or args[1] != .str) return error.TypeError;
-    const s = try Str.init(a, args[1].str.bytes);
-    try args[0].instance.dict.setStr(a, "a", Value{ .str = s });
+    if (args.len < 2 or args[0] != .instance) return error.TypeError;
+    try args[0].instance.dict.setStr(a, "a", args[1]);
     return Value.none;
 }
 
 fn smSetSeq2(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    if (args.len < 2 or args[0] != .instance or args[1] != .str) return error.TypeError;
-    const s = try Str.init(a, args[1].str.bytes);
-    try args[0].instance.dict.setStr(a, "b", Value{ .str = s });
+    if (args.len < 2 or args[0] != .instance) return error.TypeError;
+    try args[0].instance.dict.setStr(a, "b", args[1]);
     return Value.none;
 }
 
 fn smSetSeqs(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    if (args.len < 3 or args[0] != .instance or args[1] != .str or args[2] != .str) return error.TypeError;
-    const s1 = try Str.init(a, args[1].str.bytes);
-    const s2 = try Str.init(a, args[2].str.bytes);
-    try args[0].instance.dict.setStr(a, "a", Value{ .str = s1 });
-    try args[0].instance.dict.setStr(a, "b", Value{ .str = s2 });
+    if (args.len < 3 or args[0] != .instance) return error.TypeError;
+    try args[0].instance.dict.setStr(a, "a", args[1]);
+    try args[0].instance.dict.setStr(a, "b", args[2]);
     return Value.none;
 }
 
+fn instanceTokens(a: std.mem.Allocator, inst: *Instance) ![2][][]const u8 {
+    const a_v = inst.dict.getStr("a") orelse return error.TypeError;
+    const b_v = inst.dict.getStr("b") orelse return error.TypeError;
+    const ta = try toTokens(a, a_v);
+    errdefer a.free(ta);
+    const tb = try toTokens(a, b_v);
+    return .{ ta, tb };
+}
+
 fn smRatio(p: *anyopaque, args: []const Value) anyerror!Value {
-    _ = p;
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
     if (args.len < 1 or args[0] != .instance) return error.TypeError;
-    const inst = args[0].instance;
-    const a_v = inst.dict.getStr("a") orelse return Value{ .float = 0.0 };
-    const b_v = inst.dict.getStr("b") orelse return Value{ .float = 0.0 };
-    if (a_v != .str or b_v != .str) return Value{ .float = 0.0 };
-    return Value{ .float = ratio(a_v.str.bytes, b_v.str.bytes) };
+    const ts = instanceTokens(a, args[0].instance) catch return Value{ .float = 0.0 };
+    defer a.free(ts[0]);
+    defer a.free(ts[1]);
+    return Value{ .float = ratioTokens(ts[0], ts[1]) };
+}
+
+fn smFindLongestMatch(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    try ensureClasses(interp);
+    if (args.len < 1 or args[0] != .instance) return error.TypeError;
+    const ts = try instanceTokens(a, args[0].instance);
+    defer a.free(ts[0]);
+    defer a.free(ts[1]);
+    const lm = findLongestMatch(ts[0], ts[1], 0, ts[0].len, 0, ts[1].len);
+    return newMatch(a, interp.difflib_match_class.?, lm.a, lm.b, lm.size);
+}
+
+fn smGetMatchingBlocks(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    try ensureClasses(interp);
+    if (args.len < 1 or args[0] != .instance) return error.TypeError;
+    const ts = try instanceTokens(a, args[0].instance);
+    defer a.free(ts[0]);
+    defer a.free(ts[1]);
+    const blocks = try computeMatchingBlocks(a, ts[0], ts[1]);
+    defer a.free(blocks);
+    const list = try List.init(a);
+    for (blocks) |bl| {
+        const v = try newMatch(a, interp.difflib_match_class.?, bl.a, bl.b, bl.size);
+        try list.append(a, v);
+    }
+    return Value{ .list = list };
+}
+
+fn smGetOpcodes(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    try ensureClasses(interp);
+    if (args.len < 1 or args[0] != .instance) return error.TypeError;
+    const ts = try instanceTokens(a, args[0].instance);
+    defer a.free(ts[0]);
+    defer a.free(ts[1]);
+    const ops = try computeOpcodes(a, ts[0], ts[1]);
+    defer a.free(ops);
+    const list = try List.init(a);
+    for (ops) |op| {
+        const t = try Tuple.init(a, 5);
+        const tag_str = try Str.init(a, switch (op.tag) {
+            .equal => "equal",
+            .replace => "replace",
+            .delete => "delete",
+            .insert => "insert",
+        });
+        t.items[0] = Value{ .str = tag_str };
+        t.items[1] = Value{ .small_int = @intCast(op.i1) };
+        t.items[2] = Value{ .small_int = @intCast(op.i2) };
+        t.items[3] = Value{ .small_int = @intCast(op.j1) };
+        t.items[4] = Value{ .small_int = @intCast(op.j2) };
+        try list.append(a, Value{ .tuple = t });
+    }
+    return Value{ .list = list };
+}
+
+fn findLongestMatch(a: [][]const u8, b: [][]const u8, alo: usize, ahi: usize, blo: usize, bhi: usize) MatchTriple {
+    var best_i: usize = alo;
+    var best_j: usize = blo;
+    var best_k: usize = 0;
+    var i: usize = alo;
+    while (i < ahi) : (i += 1) {
+        var j: usize = blo;
+        while (j < bhi) : (j += 1) {
+            var k: usize = 0;
+            while (i + k < ahi and j + k < bhi and std.mem.eql(u8, a[i + k], b[j + k])) : (k += 1) {}
+            if (k > best_k) {
+                best_i = i;
+                best_j = j;
+                best_k = k;
+            }
+        }
+    }
+    return .{ .a = best_i, .b = best_j, .size = best_k };
+}
+
+fn matchingBlocksRecurse(a: std.mem.Allocator, aa: [][]const u8, bb: [][]const u8, alo: usize, ahi: usize, blo: usize, bhi: usize, out: *std.ArrayList(MatchTriple)) !void {
+    const m = findLongestMatch(aa, bb, alo, ahi, blo, bhi);
+    if (m.size == 0) return;
+    if (alo < m.a and blo < m.b) {
+        try matchingBlocksRecurse(a, aa, bb, alo, m.a, blo, m.b, out);
+    }
+    try out.append(a, m);
+    if (m.a + m.size < ahi and m.b + m.size < bhi) {
+        try matchingBlocksRecurse(a, aa, bb, m.a + m.size, ahi, m.b + m.size, bhi, out);
+    }
+}
+
+fn computeMatchingBlocks(a: std.mem.Allocator, aa: [][]const u8, bb: [][]const u8) ![]MatchTriple {
+    var raw: std.ArrayList(MatchTriple) = .empty;
+    defer raw.deinit(a);
+    try matchingBlocksRecurse(a, aa, bb, 0, aa.len, 0, bb.len, &raw);
+
+    // Collapse adjacent matches.
+    var collapsed: std.ArrayList(MatchTriple) = .empty;
+    defer collapsed.deinit(a);
+    var cur_i: usize = 0;
+    var cur_j: usize = 0;
+    var cur_k: usize = 0;
+    for (raw.items) |m| {
+        if (cur_k != 0 and cur_i + cur_k == m.a and cur_j + cur_k == m.b) {
+            cur_k += m.size;
+        } else {
+            if (cur_k != 0) try collapsed.append(a, .{ .a = cur_i, .b = cur_j, .size = cur_k });
+            cur_i = m.a;
+            cur_j = m.b;
+            cur_k = m.size;
+        }
+    }
+    if (cur_k != 0) try collapsed.append(a, .{ .a = cur_i, .b = cur_j, .size = cur_k });
+    try collapsed.append(a, .{ .a = aa.len, .b = bb.len, .size = 0 });
+
+    const out = try a.alloc(MatchTriple, collapsed.items.len);
+    @memcpy(out, collapsed.items);
+    return out;
+}
+
+fn computeOpcodes(a: std.mem.Allocator, aa: [][]const u8, bb: [][]const u8) ![]Opcode {
+    const blocks = try computeMatchingBlocks(a, aa, bb);
+    defer a.free(blocks);
+    var out: std.ArrayList(Opcode) = .empty;
+    defer out.deinit(a);
+    var i: usize = 0;
+    var j: usize = 0;
+    for (blocks) |bl| {
+        const ai = bl.a;
+        const bj = bl.b;
+        const sz = bl.size;
+        var tag: ?Tag = null;
+        if (i < ai and j < bj) tag = .replace
+        else if (i < ai) tag = .delete
+        else if (j < bj) tag = .insert;
+        if (tag) |t| try out.append(a, .{ .tag = t, .i1 = i, .i2 = ai, .j1 = j, .j2 = bj });
+        i = ai + sz;
+        j = bj + sz;
+        if (sz != 0) try out.append(a, .{ .tag = .equal, .i1 = ai, .i2 = ai + sz, .j1 = bj, .j2 = bj + sz });
+    }
+    const r = try a.alloc(Opcode, out.items.len);
+    @memcpy(r, out.items);
+    return r;
+}
+
+fn computeOpcodesForLines(a: std.mem.Allocator, aa: [][]const u8, bb: [][]const u8) ![]Opcode {
+    return computeOpcodes(a, aa, bb);
+}
+
+// --- Differ ---
+
+fn differCtorFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = args;
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    try ensureClasses(interp);
+    const inst = try Instance.init(a, interp.difflib_differ_class.?);
+    return Value{ .instance = inst };
+}
+
+fn differCompare(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 3) return error.TypeError;
+    const aa = try seqOfStr(a, args[1]);
+    defer a.free(aa);
+    const bb = try seqOfStr(a, args[2]);
+    defer a.free(bb);
+    const lines = try diffLines(a, aa, bb, "  ", "- ", "+ ");
+    defer a.free(lines);
+    const list = try List.init(a);
+    for (lines) |line| {
+        const s = try Str.init(a, line);
+        a.free(line);
+        try list.append(a, Value{ .str = s });
+    }
+    return Value{ .list = list };
 }
