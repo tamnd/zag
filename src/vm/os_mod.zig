@@ -32,6 +32,7 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "makedirs", makedirsFn);
     try reg(interp, m, "chdir", chdirFn);
     try reg(interp, m, "listdir", listdirFn);
+    try reg(interp, m, "close", closeFn);
 
     // os.environ: a regular dict, seeded from the host env once.
     const env = try Dict.init(a);
@@ -147,6 +148,15 @@ fn listdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
         try list.items.append(a, Value{ .str = try Str.fromOwnedSlice(a, name) });
     }
     return Value{ .list = list };
+}
+
+fn closeFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    _ = args;
+    // Pinhole `os.close`: tempfile's mkstemp returns synthetic fds, and
+    // the host's real fds aren't tracked, so close is a no-op. Callers
+    // pair this with `os.unlink` to remove the file from disk.
+    return Value.none;
 }
 
 fn rmdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
