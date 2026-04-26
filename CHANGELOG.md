@@ -9,6 +9,18 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.118] - 2026-04-26
+
+### Added
+
+- `118_calendar` fixture, byte-equal. The pinhole `calendar` module now
+  carries the full month-constant / Day / Month enum surface, the
+  `firstweekday`/`setfirstweekday` pair, `weekheader`, `month`, and the
+  `Calendar`/`TextCalendar`/`HTMLCalendar`/`LocaleTextCalendar`/
+  `LocaleHTMLCalendar` class hierarchy. `monthrange` and
+  `setfirstweekday` raise `IllegalMonthError`/`IllegalWeekdayError`
+  (both `ValueError` subclasses) on out-of-range arguments.
+
 ## [0.0.117] - 2026-04-26
 
 ### Added
