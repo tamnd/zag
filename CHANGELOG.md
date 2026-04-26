@@ -9,6 +9,34 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.125] - 2026-04-26
+
+### Added
+
+- `types` module. The builtin-value types (`NoneType`, `EllipsisType`,
+  `NotImplementedType`, `FunctionType` / `LambdaType`,
+  `BuiltinFunctionType` / `BuiltinMethodType`, `MethodType`,
+  `GeneratorType`, `ModuleType`) are exposed as proper `Class` objects
+  carrying a `value_tag`, so `isinstance(x, types.NoneType)` reduces
+  to a Value-tag check on `x` and `print(types.NoneType)` shows
+  `<class 'NoneType'>`. `SimpleNamespace` and `MappingProxyType` are
+  regular Class+Instance classes (kwargs-only ctor, attribute set/del,
+  insertion-ordered `repr` / `__eq__` for the former; the read-only
+  mapping surface for the latter). `types.new_class(name, bases,
+  kwds, exec_body)` returns a fresh class after running `exec_body`
+  against the namespace. `types.ModuleType('name', doc)` produces a
+  real `.module` Value rather than going through `__init__`.
+- `Class.value_tag` for the type-marker pattern above. When set,
+  `isinstance` / class-pattern matching consult the tag instead of
+  walking the MRO.
+
+### Changed
+
+- `LOAD_ATTR` on an instance miss now raises a real Python
+  `AttributeError` (catchable by `try / except`) instead of bailing
+  out with a Zig-level error. Previously the `del ns.x; ns.x` pattern
+  bypassed the exception table.
+
 ## [0.0.124] - 2026-04-26
 
 ### Added

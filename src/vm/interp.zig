@@ -25,6 +25,7 @@ const math_mod = @import("math_mod.zig");
 const heapq_mod = @import("heapq_mod.zig");
 const bisect_mod = @import("bisect_mod.zig");
 const array_mod = @import("array_mod.zig");
+const types_mod = @import("types_mod.zig");
 const weakref_mod = @import("weakref_mod.zig");
 const random_mod = @import("random_mod.zig");
 const json_mod = @import("json_mod.zig");
@@ -92,6 +93,17 @@ pub const Interp = struct {
     bisect_module: ?*Module = null,
     array_module: ?*Module = null,
     array_class: ?*@import("../object/class.zig").Class = null,
+    types_module: ?*Module = null,
+    types_none_class: ?*@import("../object/class.zig").Class = null,
+    types_ellipsis_class: ?*@import("../object/class.zig").Class = null,
+    types_not_implemented_class: ?*@import("../object/class.zig").Class = null,
+    types_function_class: ?*@import("../object/class.zig").Class = null,
+    types_builtin_function_class: ?*@import("../object/class.zig").Class = null,
+    types_method_class: ?*@import("../object/class.zig").Class = null,
+    types_generator_class: ?*@import("../object/class.zig").Class = null,
+    types_module_class: ?*@import("../object/class.zig").Class = null,
+    types_simple_namespace_class: ?*@import("../object/class.zig").Class = null,
+    types_mapping_proxy_class: ?*@import("../object/class.zig").Class = null,
     weakref_module: ?*Module = null,
     weakref_ref_class: ?*@import("../object/class.zig").Class = null,
     weakref_proxy_class: ?*@import("../object/class.zig").Class = null,
@@ -507,6 +519,12 @@ pub const Interp = struct {
             if (self.weakref_module) |m| return m;
             const m = weakref_mod.build(self) catch return null;
             self.weakref_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "types")) {
+            if (self.types_module) |m| return m;
+            const m = types_mod.build(self) catch return null;
+            self.types_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "random")) {
