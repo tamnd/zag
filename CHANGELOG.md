@@ -9,6 +9,17 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.108] - 2026-04-26
+
+### Added
+
+- `108_difflib` fixture, byte-equal. `SequenceMatcher` now accepts both
+  strings and lists. New methods: `find_longest_match`,
+  `get_matching_blocks`, `get_opcodes` (Ratcliff-Obershelp). New
+  module-level `context_diff` (with the `*** ... ****` /
+  `--- ... ----` two-block format), `restore(diff, 1|2)`, and a
+  minimal `Differ` class with `compare` for non-fancy line diffs.
+
 ## [0.0.107] - 2026-04-26
 
 ### Added
