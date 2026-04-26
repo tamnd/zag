@@ -121,6 +121,7 @@ pub const Interp = struct {
     json_module: ?*Module = null,
     string_module: ?*Module = null,
     copy_module: ?*Module = null,
+    copy_error_class: ?*@import("../object/class.zig").Class = null,
     io_module: ?*Module = null,
     hashlib_module: ?*Module = null,
     base64_module: ?*Module = null,
