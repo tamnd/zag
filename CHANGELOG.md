@@ -9,6 +9,12 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.154] - 2026-04-26
+
+### Added
+
+- `dbm` and `dbm.sqlite3` modules: `open()`, `whichdb()`, `error`. DB class supports flags `c`/`n`/`r`/`w`, context manager, `keys`, `get`, `setdefault`, `clear`, `close`. Keys and values stored as raw bytes; str keys/values auto-encoded.
+
 ## [0.0.153] - 2026-04-26
 
 ### Added
