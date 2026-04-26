@@ -437,3 +437,25 @@ fn callMethod(interp: *Interp, obj: Value, name: []const u8, extra: []const Valu
     }
     return dispatch.invoke(interp, attr, extra);
 }
+
+// ===== Public helpers for shelve =====
+
+/// Encode a single value to a caller-owned slice (no MAGIC prefix).
+pub fn encodeToBytes(a: std.mem.Allocator, v: Value) ![]u8 {
+    var w: Writer = .{ .a = a };
+    errdefer w.deinit();
+    try encodeValue(a, &w, v);
+    return w.buf.toOwnedSlice(a);
+}
+
+/// Decode a single value from bytes produced by encodeToBytes.
+pub fn decodeFromBytes(interp: *Interp, data: []const u8) !Value {
+    var r: Reader = .{ .data = data };
+    return decodeValue(interp, &r) catch |err| switch (err) {
+        error.PickleTruncated, error.PickleBadTag => {
+            try interp.raiseDecimal(interp.unpickling_error_class.?, "corrupt pickle data");
+            return error.PyException;
+        },
+        else => return err,
+    };
+}

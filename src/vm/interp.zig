@@ -270,6 +270,8 @@ pub const Interp = struct {
     copyreg_module: ?*Module = null,
     copyreg_dispatch_table: ?*@import("../object/dict.zig").Dict = null,
     copyreg_extensions: std.ArrayListUnmanaged(@import("copyreg_mod.zig").Extension) = .empty,
+    shelve_module: ?*Module = null,
+    shelve_class: ?*@import("../object/class.zig").Class = null,
     linecache_cache: std.StringHashMapUnmanaged(@import("linecache_mod.zig").Entry) = .empty,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
@@ -919,6 +921,12 @@ pub const Interp = struct {
             if (self.copyreg_module) |m| return m;
             const m = @import("copyreg_mod.zig").build(self) catch return null;
             self.copyreg_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "shelve")) {
+            if (self.shelve_module) |m| return m;
+            const m = @import("shelve_mod.zig").build(self) catch return null;
+            self.shelve_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "pathlib")) {
