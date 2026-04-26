@@ -37,6 +37,7 @@ const readline_mod = @import("readline_mod.zig");
 const rlcompleter_mod = @import("rlcompleter_mod.zig");
 const re_mod = @import("re_mod.zig");
 const struct_mod = @import("struct_mod.zig");
+const codecs_mod = @import("codecs_mod.zig");
 const csv_mod = @import("csv_mod.zig");
 const urlparse_mod = @import("urlparse_mod.zig");
 const zlib_mod = @import("zlib_mod.zig");
@@ -96,6 +97,10 @@ pub const Interp = struct {
     struct_module: ?*Module = null,
     struct_error_class: ?*@import("../object/class.zig").Class = null,
     struct_struct_class: ?*@import("../object/class.zig").Class = null,
+    codecs_module: ?*Module = null,
+    codecs_codecinfo_class: ?*@import("../object/class.zig").Class = null,
+    codecs_encoder_class: ?*@import("../object/class.zig").Class = null,
+    codecs_decoder_class: ?*@import("../object/class.zig").Class = null,
     csv_module: ?*Module = null,
     urlparse_module: ?*Module = null,
     urllib_module: ?*Module = null,
@@ -528,6 +533,12 @@ pub const Interp = struct {
             if (self.struct_module) |m| return m;
             const m = struct_mod.build(self) catch return null;
             self.struct_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "codecs")) {
+            if (self.codecs_module) |m| return m;
+            const m = codecs_mod.build(self) catch return null;
+            self.codecs_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "csv")) {
