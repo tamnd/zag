@@ -85,7 +85,7 @@ readline.parse_and_bind('tab: complete')
 
 # --- read_init_file (no-op stub) ---
 try:
-    readline.read_init_file()
+    readline.read_init_file('/nonexistent/path/.inputrc')
 except OSError:
     print('read_init_file OSError')
 
