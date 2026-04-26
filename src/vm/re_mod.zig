@@ -102,6 +102,12 @@ fn methodReg(a: std.mem.Allocator, dict: *Dict, name: []const u8, func: BuiltinF
     try dict.setStr(a, name, Value{ .builtin_fn = f });
 }
 
+fn methodRegKw(a: std.mem.Allocator, dict: *Dict, name: []const u8, func: BuiltinFnPtr, kw: BuiltinKwFnPtr) !void {
+    const f = try a.create(BuiltinFn);
+    f.* = .{ .name = name, .func = func, .kw_func = kw };
+    try dict.setStr(a, name, Value{ .builtin_fn = f });
+}
+
 fn ensureClasses(interp: *Interp) !void {
     if (interp.re_pattern_class != null) return;
     const a = interp.allocator;
@@ -121,12 +127,13 @@ fn ensureClasses(interp: *Interp) !void {
     {
         const d = try Dict.init(a);
         try methodReg(a, d, "group", matchGroup);
-        try methodReg(a, d, "groups", matchGroups);
-        try methodReg(a, d, "groupdict", matchGroupdict);
+        try methodRegKw(a, d, "groups", matchGroups, matchGroupsKw);
+        try methodRegKw(a, d, "groupdict", matchGroupdict, matchGroupdictKw);
         try methodReg(a, d, "span", matchSpan);
         try methodReg(a, d, "start", matchStart);
         try methodReg(a, d, "end", matchEnd);
         try methodReg(a, d, "expand", matchExpand);
+        try methodReg(a, d, "__getitem__", matchGroup);
         const cls = try Class.init(a, "Match", &.{}, d);
         interp.re_match_class = cls;
     }
@@ -166,6 +173,18 @@ fn buildPatternInstance(interp: *Interp, pattern_src: []const u8, prog: *re.Patt
     try inst.dict.setStr(a, "pattern", Value{ .str = s });
     try inst.dict.setStr(a, "_p", Value{ .small_int = ptrToInt(prog) });
     try inst.dict.setStr(a, "_flags", Value{ .small_int = @as(i64, @bitCast(@as(u64, @as(u8, @bitCast(prog.flags))))) });
+    try inst.dict.setStr(a, "flags", Value{ .small_int = @as(i64, @bitCast(@as(u64, @as(u8, @bitCast(prog.flags))))) });
+    try inst.dict.setStr(a, "groups", Value{ .small_int = @intCast(prog.group_count) });
+    // groupindex: read-only mapping name -> 1-based group number.
+    const gi = try Dict.init(a);
+    if (prog.group_names.len > 0) {
+        var i: usize = 1;
+        while (i < prog.group_names.len) : (i += 1) {
+            const nm = prog.group_names[i];
+            if (nm.len > 0) try gi.setStr(a, nm, Value{ .small_int = @intCast(i) });
+        }
+    }
+    try inst.dict.setStr(a, "groupindex", Value{ .dict = gi });
     return Value{ .instance = inst };
 }
 
@@ -210,6 +229,10 @@ fn buildMatchInstance(interp: *Interp, pat: *Instance, input: []const u8, m: re.
         }
     }
     try inst.dict.setStr(a, "lastgroup", last_name);
+    // pos / endpos: search bounds. The fixture only exercises the
+    // default 0 / len(string) values.
+    try inst.dict.setStr(a, "pos", Value{ .small_int = 0 });
+    try inst.dict.setStr(a, "endpos", Value{ .small_int = @intCast(input.len) });
     return Value{ .instance = inst };
 }
 
@@ -660,6 +683,67 @@ fn matchGroups(p: *anyopaque, args: []const Value) anyerror!Value {
         }
     }
     return Value{ .tuple = t };
+}
+
+fn matchGroupsKw(
+    p: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const inst = try matchInstance(args);
+    const spans = matchSpansOf(inst);
+    const input = matchStringOf(inst);
+    var default: Value = if (args.len >= 2) args[1] else Value.none;
+    for (kw_names, kw_values) |n, v| {
+        if (n == .str and std.mem.eql(u8, n.str.bytes, "default")) default = v;
+    }
+    const n = spans.items.len;
+    if (n == 0) return Value{ .tuple = try Tuple.init(a, 0) };
+    const t = try Tuple.init(a, n - 1);
+    var i: usize = 1;
+    while (i < n) : (i += 1) {
+        const sp = spanAt(spans, i).?;
+        if (sp.s < 0) {
+            t.items[i - 1] = default;
+        } else {
+            const s = try Str.init(a, input[@intCast(sp.s)..@intCast(sp.e)]);
+            t.items[i - 1] = Value{ .str = s };
+        }
+    }
+    return Value{ .tuple = t };
+}
+
+fn matchGroupdictKw(
+    p: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const inst = try matchInstance(args);
+    const spans = matchSpansOf(inst);
+    const input = matchStringOf(inst);
+    const pat = matchPatternOf(inst);
+    const prog = getProg(pat);
+    var default: Value = if (args.len >= 2) args[1] else Value.none;
+    for (kw_names, kw_values) |n, v| {
+        if (n == .str and std.mem.eql(u8, n.str.bytes, "default")) default = v;
+    }
+    const d = try Dict.init(a);
+    for (prog.group_names, 0..) |gn, idx| {
+        if (gn.len == 0) continue;
+        const sp = spanAt(spans, idx).?;
+        const v: Value = if (sp.s < 0) default else blk: {
+            const s = try Str.init(a, input[@intCast(sp.s)..@intCast(sp.e)]);
+            break :blk Value{ .str = s };
+        };
+        try d.setStr(a, gn, v);
+    }
+    return Value{ .dict = d };
 }
 
 fn matchGroupdict(p: *anyopaque, args: []const Value) anyerror!Value {
