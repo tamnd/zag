@@ -9,6 +9,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.133] - 2026-04-26
+
+### Added
+
+- `cmath` module: complex-arg analogues of the `math` functions.
+  `phase`, `polar`, `rect`, `exp`, `log` (with optional base), `log10`,
+  `sqrt`, the trig family (`sin`, `cos`, `tan`, `asin`, `acos`,
+  `atan`), the hyperbolic family (`sinh`, `cosh`, `tanh`, `asinh`,
+  `acosh`, `atanh`), classification (`isfinite`, `isinf`, `isnan`,
+  `isclose`), plus the constants `pi`, `e`, `tau`, `inf`, `nan`,
+  `infj`, `nanj`. Inputs accept `int`, `float`, or `complex`.
+- Signed zeros are preserved across `cos`, `sin`, `acos`, `acosh`, and
+  others by hand-implementing CPython's formulas (with a
+  CPython-style `c_sqrt` that propagates the sign of the imaginary
+  part) instead of going through `std.math.complex`.
+
 ## [0.0.132] - 2026-04-26
 
 ### Added
