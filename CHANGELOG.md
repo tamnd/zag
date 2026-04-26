@@ -9,6 +9,33 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.137] - 2026-04-26
+
+### Added
+
+- `statistics` module: full method surface for descriptive stats,
+  inferential stats, kernel density estimation, and a `NormalDist`
+  class.
+- `StatisticsError` (subclass of `Exception`) raised on empty input,
+  negative geometric mean, single-sample variance, and negative sigma.
+- Central tendency: `mean`, `fmean` (with `weights` kwarg),
+  `geometric_mean`, `harmonic_mean` (with `weights` kwarg),
+  `median`, `median_low`, `median_high`, `median_grouped`,
+  `mode`, `multimode`, `quantiles` (with `n` and `method='inclusive'`).
+- Spread: `pvariance` (with `mu` kwarg), `variance`, `pstdev`, `stdev`.
+- Relations: `covariance`, `correlation` (with `method='ranked'` for
+  Spearman), `linear_regression` (with `proportional=True` for
+  through-origin fits).
+- Density: `kde` (with `h`, `kernel`, `cumulative` kwargs; supports
+  `normal`/`triangular`/`rectangular`/`epanechnikov` kernels),
+  `kde_random` (with `seed` for reproducibility).
+- `NormalDist`: `mean`/`median`/`mode`/`stdev`/`variance` attrs,
+  `pdf`/`cdf`/`inv_cdf`/`zscore`, `quantiles`, `samples` (with
+  `seed`), `from_samples` classmethod, `overlap` (Inman-Bradley
+  1989), arithmetic (`__add__`/`__sub__` over independent normals,
+  `__mul__`/`__rmul__`/`__truediv__` by scalar), `__repr__`,
+  default `(0, 1)` constructor.
+
 ## [0.0.136] - 2026-04-26
 
 ### Added
