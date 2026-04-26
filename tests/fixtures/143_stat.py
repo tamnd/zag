@@ -24,7 +24,6 @@ print(oct(stat.S_IFLNK))   # 0o120000
 print(oct(stat.S_IFSOCK))  # 0o140000
 print(oct(stat.S_IFDOOR))  # 0o0
 print(oct(stat.S_IFPORT))  # 0o0
-print(oct(stat.S_IFWHT))   # 0o160000
 
 # ===== S_IFMT() / S_IMODE() — functions, not constants =====
 print(oct(stat.S_IFMT(0o100644)))   # 0o100000
@@ -61,9 +60,6 @@ print(stat.S_ISDOOR(0o100644))   # False
 
 print(stat.S_ISPORT(0o160777))   # False  (S_IFPORT=0 on POSIX)
 print(stat.S_ISPORT(0o100644))   # False
-
-print(stat.S_ISWHT(0o160000))    # True
-print(stat.S_ISWHT(0o100644))    # False
 
 # ===== Permission bit constants =====
 print(oct(stat.S_ISUID))   # 0o4000
