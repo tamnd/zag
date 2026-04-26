@@ -3580,6 +3580,43 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
     }
+    if (obj == .partial) {
+        const p = obj.partial;
+        if (std.mem.eql(u8, name, "func")) {
+            const v = p.func;
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "args")) {
+            const t = try Tuple.init(interp.allocator, p.args.len);
+            for (p.args, 0..) |a, i| t.items[i] = a;
+            const v = Value{ .tuple = t };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "keywords")) {
+            const d = try Dict.init(interp.allocator);
+            for (p.kw_names, p.kw_values) |kn, kv| {
+                if (kn == .str) {
+                    try d.setStr(interp.allocator, kn.str.bytes, kv);
+                } else {
+                    try d.setKey(interp.allocator, kn, kv);
+                }
+            }
+            const v = Value{ .dict = d };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+    }
     if (obj == .cached_fn) {
         const c = obj.cached_fn;
         if (std.mem.eql(u8, name, "__name__")) {
@@ -3608,9 +3645,11 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             } else frame.push(v);
             return;
         }
-        if (std.mem.eql(u8, name, "cache_info") or std.mem.eql(u8, name, "cache_clear")) {
+        if (std.mem.eql(u8, name, "cache_info") or std.mem.eql(u8, name, "cache_clear") or std.mem.eql(u8, name, "cache_parameters")) {
             const meth: *value_mod.BuiltinFn = if (std.mem.eql(u8, name, "cache_info"))
                 &cache_info_method
+            else if (std.mem.eql(u8, name, "cache_parameters"))
+                &cache_parameters_method
             else
                 &cache_clear_method;
             if (is_method) {
@@ -4151,10 +4190,41 @@ fn invokeKw(
             return invokeKw(interp, bm.func, buf, kw_names, kw_values);
         },
         .partial => |p| {
-            const merged_args = try interp.allocator.alloc(Value, p.args.len + positional.len);
+            // Count placeholder slots in the bound args; those consume
+            // call-time positional args first, the rest tail-append.
+            const ph_cls = interp.functools_placeholder_class;
+            var ph_count: usize = 0;
+            if (ph_cls) |phc| {
+                for (p.args) |a| if (a == .class and a.class == phc) {
+                    ph_count += 1;
+                };
+            }
+            const tail_count = if (positional.len >= ph_count) positional.len - ph_count else 0;
+            const merged_args = try interp.allocator.alloc(Value, p.args.len + tail_count);
             defer interp.allocator.free(merged_args);
-            @memcpy(merged_args[0..p.args.len], p.args);
-            @memcpy(merged_args[p.args.len..], positional);
+            if (ph_count == 0) {
+                @memcpy(merged_args[0..p.args.len], p.args);
+                @memcpy(merged_args[p.args.len..], positional);
+            } else {
+                var pi: usize = 0;
+                for (p.args, 0..) |a, i| {
+                    if (a == .class and ph_cls != null and a.class == ph_cls.?) {
+                        if (pi < positional.len) {
+                            merged_args[i] = positional[pi];
+                            pi += 1;
+                        } else {
+                            merged_args[i] = a; // unfilled placeholder
+                        }
+                    } else {
+                        merged_args[i] = a;
+                    }
+                }
+                var k: usize = p.args.len;
+                while (pi < positional.len) : (pi += 1) {
+                    merged_args[k] = positional[pi];
+                    k += 1;
+                }
+            }
             // Call-time kwargs override bound ones. Walk the bound list,
             // skip any name that the call also provides, then concat the
             // call-side names verbatim.
@@ -4183,7 +4253,10 @@ fn invokeKw(
         },
         .cached_fn => |c| {
             const CachedFn = @import("../object/cached_fn.zig").CachedFn;
-            const key = try CachedFn.compositeKey(interp.allocator, positional, kw_names, kw_values);
+            const key = if (c.typed)
+                try CachedFn.typedCompositeKey(interp.allocator, positional, kw_names, kw_values)
+            else
+                try CachedFn.compositeKey(interp.allocator, positional, kw_names, kw_values);
             // Linear scan -- the cache holds at most `maxsize` entries
             // and the fixture sticks to small N. Found-index lets us
             // touch the LRU order without a second lookup.
@@ -4492,8 +4565,23 @@ fn cacheClearImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
     return Value.none;
 }
 
+fn cacheParametersImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    if (args.len != 1 or args[0] != .cached_fn) {
+        try interp.typeError("cache_parameters expects cached function");
+        return error.TypeError;
+    }
+    const c = args[0].cached_fn;
+    const d = try Dict.init(interp.allocator);
+    const ms_v: Value = if (c.maxsize) |m| Value{ .small_int = @intCast(m) } else Value.none;
+    try d.setStr(interp.allocator, "maxsize", ms_v);
+    try d.setStr(interp.allocator, "typed", Value{ .boolean = c.typed });
+    return Value{ .dict = d };
+}
+
 var cache_info_method: value_mod.BuiltinFn = .{ .name = "cache_info", .func = cacheInfoImpl };
 var cache_clear_method: value_mod.BuiltinFn = .{ .name = "cache_clear", .func = cacheClearImpl };
+var cache_parameters_method: value_mod.BuiltinFn = .{ .name = "cache_parameters", .func = cacheParametersImpl };
 
 fn callPyFunction(
     interp: *Interp,

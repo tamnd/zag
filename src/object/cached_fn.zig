@@ -18,6 +18,8 @@ pub const CachedFn = struct {
     name_override: ?[]const u8 = null,
     hits: usize = 0,
     misses: usize = 0,
+    /// `typed=True` makes `f(1)` and `f(1.0)` separate cache entries.
+    typed: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, func: Value, maxsize: ?usize) !*CachedFn {
         const self = try allocator.create(CachedFn);
@@ -53,6 +55,30 @@ pub const CachedFn = struct {
         for (kw_names, kw_values, 0..) |n, v, i| {
             t.items[args.len + i * 2] = n;
             t.items[args.len + i * 2 + 1] = v;
+        }
+        return Value{ .tuple = t };
+    }
+
+    /// `typed=True` variant: include each argument's runtime type tag
+    /// alongside the value so `f(1)` and `f(1.0)` don't collide.
+    pub fn typedCompositeKey(
+        allocator: std.mem.Allocator,
+        args: []const Value,
+        kw_names: []const Value,
+        kw_values: []const Value,
+    ) !Value {
+        const Tag = @import("value.zig").Tag;
+        const total = args.len * 2 + kw_names.len * 3;
+        const t = try Tuple.init(allocator, total);
+        for (args, 0..) |a, i| {
+            t.items[i * 2] = a;
+            t.items[i * 2 + 1] = Value{ .small_int = @intFromEnum(@as(Tag, a)) };
+        }
+        const off = args.len * 2;
+        for (kw_names, kw_values, 0..) |n, v, i| {
+            t.items[off + i * 3] = n;
+            t.items[off + i * 3 + 1] = v;
+            t.items[off + i * 3 + 2] = Value{ .small_int = @intFromEnum(@as(Tag, v)) };
         }
         return Value{ .tuple = t };
     }

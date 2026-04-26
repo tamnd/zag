@@ -434,7 +434,6 @@ pub fn sortedBuiltinKw(
     }
     const slice = out.items.items;
     if (key_fn) |kf| {
-        // Compute keys, sort indices by key, rebuild slice in order.
         const dispatch = @import("dispatch.zig");
         const idx = try interp.allocator.alloc(usize, slice.len);
         defer interp.allocator.free(idx);
@@ -444,14 +443,43 @@ pub fn sortedBuiltinKw(
             idx[i] = i;
             keys[i] = try dispatch.invoke(interp, kf, &.{x});
         }
-        const Ctx = struct { keys: []const Value };
-        const ctx: Ctx = .{ .keys = keys };
-        std.sort.block(usize, idx, ctx, struct {
-            fn lt(c: Ctx, a: usize, b: usize) bool {
-                if (c.keys[a].order(c.keys[b])) |o| return o == .lt;
-                return false;
+        // When keys are class instances, dispatch through the user's
+        // `__lt__`; otherwise fall back to value-level `order`. We do
+        // a manual insertion sort here so the dunder calls can return
+        // errors (`std.sort` predicates can't).
+        if (keys.len > 1 and keys[0] == .instance) {
+            var i: usize = 1;
+            while (i < idx.len) : (i += 1) {
+                var j: usize = i;
+                while (j > 0) : (j -= 1) {
+                    const a = keys[idx[j]];
+                    const b = keys[idx[j - 1]];
+                    var a_lt_b: bool = false;
+                    if (a == .instance) {
+                        const m = a.instance.cls.lookup("__lt__");
+                        if (m) |mm| {
+                            const r = try dispatch.invoke(interp, mm, &.{ a, b });
+                            a_lt_b = r.isTruthy();
+                        }
+                    } else if (a.order(b)) |o| {
+                        a_lt_b = o == .lt;
+                    }
+                    if (!a_lt_b) break;
+                    const tmp = idx[j];
+                    idx[j] = idx[j - 1];
+                    idx[j - 1] = tmp;
+                }
             }
-        }.lt);
+        } else {
+            const Ctx = struct { keys: []const Value };
+            const ctx: Ctx = .{ .keys = keys };
+            std.sort.block(usize, idx, ctx, struct {
+                fn lt(c: Ctx, a: usize, b: usize) bool {
+                    if (c.keys[a].order(c.keys[b])) |o| return o == .lt;
+                    return false;
+                }
+            }.lt);
+        }
         const buf = try interp.allocator.alloc(Value, slice.len);
         for (idx, 0..) |src_i, i| buf[i] = slice[src_i];
         @memcpy(slice, buf);
