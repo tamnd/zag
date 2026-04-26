@@ -273,6 +273,8 @@ pub const Interp = struct {
     shelve_module: ?*Module = null,
     shelve_class: ?*@import("../object/class.zig").Class = null,
     marshal_module: ?*Module = null,
+    dbm_module: ?*Module = null,
+    dbm_class: ?*@import("../object/class.zig").Class = null,
     linecache_cache: std.StringHashMapUnmanaged(@import("linecache_mod.zig").Entry) = .empty,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
@@ -934,6 +936,20 @@ pub const Interp = struct {
             if (self.marshal_module) |m| return m;
             const m = @import("marshal_mod.zig").build(self) catch return null;
             self.marshal_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "dbm") or std.mem.eql(u8, name, "dbm.sqlite3")) {
+            if (self.dbm_module) |m| {
+                if (std.mem.eql(u8, name, "dbm.sqlite3")) {
+                    if (m.attrs.getStr("sqlite3")) |sq| if (sq == .module) return sq.module;
+                }
+                return m;
+            }
+            const m = @import("dbm_mod.zig").build(self) catch return null;
+            self.dbm_module = m;
+            if (std.mem.eql(u8, name, "dbm.sqlite3")) {
+                if (m.attrs.getStr("sqlite3")) |sq| if (sq == .module) return sq.module;
+            }
             return m;
         }
         if (std.mem.eql(u8, name, "pathlib")) {
