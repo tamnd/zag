@@ -24,6 +24,9 @@ const re = @import("../lib/re/re.zig");
 const FLAG_IGNORECASE: i64 = 2;
 const FLAG_MULTILINE: i64 = 8;
 const FLAG_DOTALL: i64 = 16;
+const FLAG_UNICODE: i64 = 32;
+const FLAG_VERBOSE: i64 = 64;
+const FLAG_ASCII: i64 = 256;
 
 pub fn build(interp: *Interp) !*Module {
     const m = try Module.init(interp.allocator, "re");
@@ -35,6 +38,13 @@ pub fn build(interp: *Interp) !*Module {
     try m.attrs.setStr(a, "M", Value{ .small_int = FLAG_MULTILINE });
     try m.attrs.setStr(a, "DOTALL", Value{ .small_int = FLAG_DOTALL });
     try m.attrs.setStr(a, "S", Value{ .small_int = FLAG_DOTALL });
+    try m.attrs.setStr(a, "VERBOSE", Value{ .small_int = FLAG_VERBOSE });
+    try m.attrs.setStr(a, "X", Value{ .small_int = FLAG_VERBOSE });
+    try m.attrs.setStr(a, "ASCII", Value{ .small_int = FLAG_ASCII });
+    try m.attrs.setStr(a, "A", Value{ .small_int = FLAG_ASCII });
+    try m.attrs.setStr(a, "UNICODE", Value{ .small_int = FLAG_UNICODE });
+    try m.attrs.setStr(a, "U", Value{ .small_int = FLAG_UNICODE });
+    try m.attrs.setStr(a, "NOFLAG", Value{ .small_int = 0 });
 
     try ensureClasses(interp);
 
@@ -48,8 +58,30 @@ pub fn build(interp: *Interp) !*Module {
     try regKw(interp, m, "subn", reSubnFn, reSubnKw);
     try regKw(interp, m, "compile", reCompileFn, reCompileKw);
     try reg(interp, m, "escape", reEscapeFn);
+    try reg(interp, m, "purge", rePurgeFn);
+
+    // re.error: the exception type that compile() raises on a bad pattern.
+    if (interp.re_error_class == null) {
+        // Subclass ValueError so existing raise sites (which raise
+        // ValueError today) stay catchable, and so `except re.error`
+        // catches them too.
+        const value_err = interp.builtins.getStr("ValueError") orelse Value.none;
+        var bases: []const *Class = &.{};
+        var bases_buf: [1]*Class = undefined;
+        if (value_err == .class) {
+            bases_buf[0] = value_err.class;
+            bases = bases_buf[0..1];
+        }
+        const err_cls = try Class.init(a, "error", bases, try Dict.init(a));
+        interp.re_error_class = err_cls;
+    }
+    try m.attrs.setStr(a, "error", Value{ .class = interp.re_error_class.? });
 
     return m;
+}
+
+fn rePurgeFn(_: *anyopaque, _: []const Value) anyerror!Value {
+    return Value.none;
 }
 
 fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {
@@ -215,15 +247,68 @@ fn argString(v: Value) ![]const u8 {
 
 fn compileFromArgs(interp: *Interp, pattern_v: Value, flags: i64) !Value {
     const a = interp.allocator;
-    const src = try argString(pattern_v);
-    const prog = re.compile(a, src, flagsFromInt(flags)) catch |err| switch (err) {
+    const raw = try argString(pattern_v);
+    const stripped: []const u8 = if ((flags & FLAG_VERBOSE) != 0)
+        try stripVerbose(a, raw)
+    else
+        raw;
+    const prog = re.compile(a, stripped, flagsFromInt(flags)) catch |err| switch (err) {
         error.BadPattern, error.UnsupportedRegex => {
+            // re.error: instantiate directly so the class identity matches.
+            if (interp.re_error_class) |cls| {
+                const inst = try Instance.init(a, cls);
+                const t = try Tuple.init(a, 1);
+                t.items[0] = Value{ .str = try Str.init(a, "invalid regex pattern") };
+                try inst.dict.setStr(a, "args", Value{ .tuple = t });
+                interp.current_exc = Value{ .instance = inst };
+                return error.PyException;
+            }
             try interp.raisePy("ValueError", "invalid regex pattern");
             return error.PyException;
         },
         else => return err,
     };
-    return try buildPatternInstance(interp, src, prog);
+    return try buildPatternInstance(interp, raw, prog);
+}
+
+/// VERBOSE flag (re.X) strips: ASCII whitespace outside character
+/// classes, and `#` comments through end-of-line. Backslash escapes
+/// keep the next character (so `\ ` survives as a literal space).
+fn stripVerbose(a: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(a);
+    var i: usize = 0;
+    var in_class = false;
+    while (i < raw.len) : (i += 1) {
+        const c = raw[i];
+        if (c == '\\') {
+            try out.append(a, c);
+            if (i + 1 < raw.len) {
+                try out.append(a, raw[i + 1]);
+                i += 1;
+            }
+            continue;
+        }
+        if (in_class) {
+            try out.append(a, c);
+            if (c == ']') in_class = false;
+            continue;
+        }
+        if (c == '[') {
+            try out.append(a, c);
+            in_class = true;
+            continue;
+        }
+        if (c == '#') {
+            while (i < raw.len and raw[i] != '\n') i += 1;
+            continue;
+        }
+        switch (c) {
+            ' ', '\t', '\n', '\r', 11, 12 => continue,
+            else => try out.append(a, c),
+        }
+    }
+    return try out.toOwnedSlice(a);
 }
 
 fn reCompileFn(p: *anyopaque, args: []const Value) anyerror!Value {

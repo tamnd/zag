@@ -132,6 +132,7 @@ pub const Interp = struct {
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
     re_pattern_class: ?*@import("../object/class.zig").Class = null,
     re_match_class: ?*@import("../object/class.zig").Class = null,
+    re_error_class: ?*@import("../object/class.zig").Class = null,
     io_stringio_class: ?*@import("../object/class.zig").Class = null,
     io_bytesio_class: ?*@import("../object/class.zig").Class = null,
     file_class: ?*@import("../object/class.zig").Class = null,
