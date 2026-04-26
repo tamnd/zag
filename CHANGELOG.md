@@ -9,6 +9,22 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.150] - 2026-04-26
+
+### Added
+
+- `pickle` module: `dumps`, `loads`, `dump`, `load`, plus
+  `HIGHEST_PROTOCOL`, `DEFAULT_PROTOCOL`, `format_version`, and
+  `compatible_formats`. `PickleError` is an `Exception` subclass;
+  `PicklingError` and `UnpicklingError` extend `PickleError`.
+- Encoder uses a private `ZPKL` framing (one tagged record per
+  Value). The protocol arg is accepted for 0..5 but doesn't change
+  the bytes — the public surface only exercises round-trip
+  identity, not bytes-level interop with CPython's real pickle.
+- `dump`/`load` drive the same encoder over any file-like that
+  implements `read`/`write`/`seek`/`tell`, which covers
+  `io.BytesIO`.
+
 ## [0.0.149] - 2026-04-26
 
 ### Added
