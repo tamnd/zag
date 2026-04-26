@@ -9,6 +9,33 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.116] - 2026-04-26
+
+### Added
+
+- `116_datetime` fixture, byte-equal. New `datetime` module with
+  `timedelta`, `date`, `time`, `datetime`, `timezone`, and a stub
+  `tzinfo`. Covers the surface the fixture exercises: keyword-arg
+  constructors, arithmetic, comparisons, `isoformat`/`strftime`/
+  `ctime`, `isocalendar`/`fromisocalendar`, `fromisoformat`,
+  `fromordinal`/`toordinal`, `replace`, `combine`, `strptime`,
+  `fromtimestamp`/`utcfromtimestamp`, plus `MINYEAR`/`MAXYEAR`/`UTC`
+  module attrs and `min`/`max`/`resolution` class attrs.
+
+### Changed
+
+- `dispatch.instantiate` now accepts a `builtin_fn` `__init__`,
+  routing through `kw_func` when constructor args include keywords.
+  Previously only Python-function `__init__` was allowed, which
+  forced a Python shim for any kw-aware builtin class.
+
+### Fixed
+
+- ISO week numbering for years that start Friday-Sunday. The first
+  Thursday is now located via `mod 7`, fixing `isocalendar()` and
+  `fromisocalendar()` whose results were off by 7 days for those
+  years.
+
 ## [0.0.115] - 2026-04-26
 
 ### Added
