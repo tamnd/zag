@@ -214,6 +214,7 @@ pub const Interp = struct {
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
     os_module: ?*Module = null,
+    stat_module: ?*Module = null,
     threading_module: ?*Module = null,
     pathlib_module: ?*Module = null,
     pathlib_pure_posix_class: ?*@import("../object/class.zig").Class = null,
@@ -852,6 +853,12 @@ pub const Interp = struct {
             if (self.os_module) |m| return m;
             const m = @import("os_mod.zig").build(self) catch return null;
             self.os_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "stat")) {
+            if (self.stat_module) |m| return m;
+            const m = @import("stat_mod.zig").build(self) catch return null;
+            self.stat_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "os.path")) {
