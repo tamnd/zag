@@ -44,17 +44,19 @@ pub fn matchOne(s: []const u8, pat: []const u8) bool {
                 j += 1;
                 continue;
             } else if (pc == '[') {
-                // Find closing bracket.
+                // Find closing bracket. Match CPython fnmatch: `]` as the
+                // first char of the class is literal, not a closer.
                 var k: usize = j + 1;
                 var negate = false;
-                if (k < pat.len and (pat[k] == '!' or pat[k] == '^')) {
+                if (k < pat.len and pat[k] == '!') {
                     negate = true;
                     k += 1;
                 }
                 const class_start = k;
+                if (k < pat.len and pat[k] == ']') k += 1;
                 while (k < pat.len and pat[k] != ']') k += 1;
                 if (k >= pat.len) {
-                    // unclosed, treat as literal
+                    // unclosed, treat `[` as a literal character
                     if (pc == s[i]) {
                         i += 1;
                         j += 1;
@@ -77,6 +79,17 @@ pub fn matchOne(s: []const u8, pat: []const u8) bool {
                         i += 1;
                         j = k + 1;
                         continue;
+                    } else {
+                        // Class found but didn't match this char: don't fall
+                        // through to literal `[` handling — fail and let the
+                        // outer `*` backtracking take over.
+                        if (star_i) |si| {
+                            star_i = si + 1;
+                            i = si + 1;
+                            j = star_j + 1;
+                            continue;
+                        }
+                        return false;
                     }
                 }
             } else if (pc == s[i]) {
@@ -115,7 +128,7 @@ fn translateFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const pat = args[0].str.bytes;
     var out: std.ArrayList(u8) = .empty;
     defer out.deinit(a);
-    try out.appendSlice(a, "(?s:");
+    try out.appendSlice(a, "(?:");
     var i: usize = 0;
     while (i < pat.len) : (i += 1) {
         const c = pat[i];
@@ -123,15 +136,27 @@ fn translateFn(p: *anyopaque, args: []const Value) anyerror!Value {
             '*' => try out.appendSlice(a, ".*"),
             '?' => try out.append(a, '.'),
             '[' => {
-                try out.append(a, '[');
+                // Match CPython: `]` as the first char of the class is
+                // literal. If the bracket is never closed, emit `\[` and
+                // let the rest of the chars fall through.
                 var j = i + 1;
+                var negate = false;
                 if (j < pat.len and pat[j] == '!') {
-                    try out.append(a, '^');
+                    negate = true;
                     j += 1;
                 }
-                while (j < pat.len and pat[j] != ']') : (j += 1) try out.append(a, pat[j]);
-                try out.append(a, ']');
-                i = j;
+                const class_start = j;
+                if (j < pat.len and pat[j] == ']') j += 1;
+                while (j < pat.len and pat[j] != ']') j += 1;
+                if (j >= pat.len) {
+                    try out.appendSlice(a, "\\[");
+                } else {
+                    try out.append(a, '[');
+                    if (negate) try out.append(a, '^');
+                    try out.appendSlice(a, pat[class_start..j]);
+                    try out.append(a, ']');
+                    i = j;
+                }
             },
             else => {
                 if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9') or c == '_') {
