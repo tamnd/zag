@@ -9,6 +9,16 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.106] - 2026-04-26
+
+### Added
+
+- `106_re_pattern` fixture, byte-equal. `Pattern.groups` (count) and
+  `Pattern.groupindex` (read-only name → 1-based index dict).
+  `Match.pos` and `Match.endpos`. `Match.__getitem__` delegating to
+  `.group`. `default=` kwarg on `Match.groups` and `Match.groupdict`,
+  letting callers replace `None` for non-participating groups.
+
 ## [0.0.105] - 2026-04-26
 
 ### Added
