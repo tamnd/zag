@@ -259,6 +259,10 @@ pub const Interp = struct {
     filecmp_dircmp_class: ?*@import("../object/class.zig").Class = null,
     glob_module: ?*Module = null,
     linecache_module: ?*Module = null,
+    shutil_module: ?*Module = null,
+    shutil_same_file_error: ?*@import("../object/class.zig").Class = null,
+    shutil_error: ?*@import("../object/class.zig").Class = null,
+    shutil_ignore_patterns_class: ?*@import("../object/class.zig").Class = null,
     linecache_cache: std.StringHashMapUnmanaged(@import("linecache_mod.zig").Entry) = .empty,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
@@ -890,6 +894,12 @@ pub const Interp = struct {
             if (self.linecache_module) |m| return m;
             const m = @import("linecache_mod.zig").build(self) catch return null;
             self.linecache_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "shutil")) {
+            if (self.shutil_module) |m| return m;
+            const m = @import("shutil_mod.zig").build(self) catch return null;
+            self.shutil_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "pathlib")) {
