@@ -132,6 +132,26 @@ fn run(a: std.mem.Allocator, prog: *const Program, input: []const u8, sp0: usize
                     return null;
                 }
             },
+            .bos => {
+                if (sp == 0) {
+                    cur_pc = pc + 1;
+                } else if (try popThread(a, &stack, &cur_pc, &cur_sp, &saves)) {} else {
+                    a.free(saves);
+                    return null;
+                }
+            },
+            .eos => {
+                // CPython's \Z matches strict end of string. (\z is a
+                // synonym in some flavors but not Python.) Allow a
+                // single trailing newline match? CPython does NOT — \Z
+                // is strict end of string only.
+                if (sp == input.len) {
+                    cur_pc = pc + 1;
+                } else if (try popThread(a, &stack, &cur_pc, &cur_sp, &saves)) {} else {
+                    a.free(saves);
+                    return null;
+                }
+            },
             .wb => {
                 const left = sp > 0 and isWord(input[sp - 1]);
                 const right = sp < input.len and isWord(input[sp]);

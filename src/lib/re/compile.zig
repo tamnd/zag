@@ -75,6 +75,8 @@ const Ctx = struct {
             .any => try self.emit(.{ .op = .any }),
             .bol => try self.emit(.{ .op = .bol }),
             .eol => try self.emit(.{ .op = .eol }),
+            .bos => try self.emit(.{ .op = .bos }),
+            .eos => try self.emit(.{ .op = .eos }),
             .wb => try self.emit(.{ .op = .wb }),
             .nwb => try self.emit(.{ .op = .nwb }),
             .class => |cls| {

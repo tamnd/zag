@@ -12,6 +12,8 @@ pub const Op = enum {
     class,
     bol,
     eol,
+    bos,
+    eos,
     wb,
     nwb,
     backref,
