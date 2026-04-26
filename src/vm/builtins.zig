@@ -269,18 +269,46 @@ fn iterableItems(v: Value) ?[]const Value {
 pub fn sumBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const list = try materialize(interp, args[0]);
-    var acc: i64 = 0;
+    var int_acc: i64 = 0;
+    var float_acc: f64 = 0;
+    var has_float = false;
+    if (args.len >= 2) {
+        switch (args[1]) {
+            .small_int => |i| int_acc = i,
+            .boolean => |b| int_acc = @intFromBool(b),
+            .float => |f| {
+                float_acc = f;
+                has_float = true;
+            },
+            else => {
+                try interp.typeError("unsupported start value for sum");
+                return error.TypeError;
+            },
+        }
+    }
     for (list.items.items) |it| {
         switch (it) {
-            .small_int => |i| acc += i,
-            .boolean => |b| acc += @intFromBool(b),
+            .small_int => |i| {
+                if (has_float) float_acc += @as(f64, @floatFromInt(i)) else int_acc += i;
+            },
+            .boolean => |b| {
+                if (has_float) float_acc += @as(f64, @floatFromInt(@intFromBool(b))) else int_acc += @intFromBool(b);
+            },
+            .float => |f| {
+                if (!has_float) {
+                    float_acc = @floatFromInt(int_acc);
+                    has_float = true;
+                }
+                float_acc += f;
+            },
             else => {
                 try interp.typeError("unsupported operand type for +");
                 return error.TypeError;
             },
         }
     }
-    return Value{ .small_int = acc };
+    if (has_float) return Value{ .float = float_acc };
+    return Value{ .small_int = int_acc };
 }
 
 /// Materialize any iterable into a fresh `List`. Used by builtins

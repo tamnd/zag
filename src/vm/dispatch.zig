@@ -2393,6 +2393,27 @@ fn trueDivide(interp: *Interp, a: Value, b: Value) !Value {
         }
         return Value{ .float = @as(f64, @floatFromInt(ai.?)) / @as(f64, @floatFromInt(bi.?)) };
     }
+    if (a == .float or b == .float) {
+        const af: ?f64 = switch (a) {
+            .float => |f| f,
+            .small_int => |i| @floatFromInt(i),
+            .boolean => |x| if (x) 1.0 else 0.0,
+            else => null,
+        };
+        const bf: ?f64 = switch (b) {
+            .float => |f| f,
+            .small_int => |i| @floatFromInt(i),
+            .boolean => |x| if (x) 1.0 else 0.0,
+            else => null,
+        };
+        if (af != null and bf != null) {
+            if (bf.? == 0.0) {
+                try interp.raisePy("ZeroDivisionError", "float division by zero");
+                return error.PyException;
+            }
+            return Value{ .float = af.? / bf.? };
+        }
+    }
     if (a == .complex_num or b == .complex_num) {
         const ac = Value.asComplex(a) orelse return complexTypeError(interp, "/");
         const bc = Value.asComplex(b) orelse return complexTypeError(interp, "/");
