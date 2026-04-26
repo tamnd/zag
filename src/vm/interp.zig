@@ -258,6 +258,8 @@ pub const Interp = struct {
     filecmp_module: ?*Module = null,
     filecmp_dircmp_class: ?*@import("../object/class.zig").Class = null,
     glob_module: ?*Module = null,
+    linecache_module: ?*Module = null,
+    linecache_cache: std.StringHashMapUnmanaged(@import("linecache_mod.zig").Entry) = .empty,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
@@ -882,6 +884,12 @@ pub const Interp = struct {
             if (self.glob_module) |m| return m;
             const m = @import("glob_mod.zig").build(self) catch return null;
             self.glob_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "linecache")) {
+            if (self.linecache_module) |m| return m;
+            const m = @import("linecache_mod.zig").build(self) catch return null;
+            self.linecache_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "pathlib")) {
