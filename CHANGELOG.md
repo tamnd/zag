@@ -9,6 +9,28 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.141] - 2026-04-26
+
+### Added
+
+- `pathlib.PurePosixPath` and `pathlib.PosixPath` / `pathlib.Path`
+  modeled as `Class`+`Instance` pairs. The pure variant covers
+  `name`, `stem`, `suffix`, `suffixes`, `parent`, `parents`, `parts`,
+  `drive`, `root`, `anchor`, `is_absolute`, `as_posix`, `with_name`,
+  `with_stem`, `with_suffix`, `with_segments`, `joinpath` and `/`,
+  `relative_to`, `is_relative_to`, equality and ordering, `match`.
+- `pathlib.Path` adds the filesystem surface: `exists`, `is_file`,
+  `is_dir`, `is_symlink`, `read_text` / `write_text`, `read_bytes` /
+  `write_bytes`, `touch`, `mkdir` (with `parents=` / `exist_ok=`),
+  `rmdir`, `unlink` (with `missing_ok=`), `rename`, `iterdir`,
+  `glob`, `rglob`, `stat`, `absolute` / `resolve`, `expanduser`,
+  `readlink`, `symlink_to`, `walk`. `Path.cwd()` and `Path.home()`
+  classmethods round it out.
+- `tempfile.TemporaryDirectory`: makes a fresh dir under `$TMPDIR`
+  (or `/tmp`), exposes the path on `__enter__`, walks-and-removes on
+  `__exit__`. `tempfile.gettempdir()` is also wired up.
+- `os.getcwd`.
+
 ## [0.0.140] - 2026-04-26
 
 ### Added
