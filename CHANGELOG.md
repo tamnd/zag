@@ -9,6 +9,16 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.155] - 2026-04-26
+
+### Added
+
+- `sqlite3` module: exception hierarchy (`Error` → `DatabaseError` → `OperationalError`/`IntegrityError`/`ProgrammingError`/`DataError`/`InternalError`/`NotSupportedError`; `Warning` → `Exception`), `sqlite_version`, `sqlite_version_info`, `PARSE_DECLTYPES`, `PARSE_COLNAMES`, `Row` class.
+
+### Fixed
+
+- `dir()` with no arguments now returns an empty list instead of raising `TypeError`.
+
 ## [0.0.154] - 2026-04-26
 
 ### Added
