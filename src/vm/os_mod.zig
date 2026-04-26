@@ -14,6 +14,7 @@ pub fn build(interp: *Interp) !*Module {
     const m = try Module.init(a, "os");
     try reg(interp, m, "remove", removeFn);
     try reg(interp, m, "unlink", removeFn);
+    try reg(interp, m, "getcwd", getcwdFn);
     const path = try Module.init(a, "os.path");
     try reg(interp, path, "join", pathJoinFn);
     try m.attrs.setStr(a, "path", Value{ .module = path });
@@ -47,6 +48,16 @@ fn pathJoinFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const Str = @import("../object/string.zig").Str;
     const s = try Str.init(a, out.items);
     return Value{ .str = s };
+}
+
+fn getcwdFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = args;
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    var buf: [4096]u8 = undefined;
+    const n = try std.process.currentPath(interp.io, &buf);
+    const Str = @import("../object/string.zig").Str;
+    return Value{ .str = try Str.init(a, buf[0..n]) };
 }
 
 fn removeFn(p: *anyopaque, args: []const Value) anyerror!Value {
