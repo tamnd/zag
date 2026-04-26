@@ -27,6 +27,8 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "stat", statFn);
     try reg(interp, m, "lstat", lstatFn);
     try reg(interp, m, "fspath", fspathFn);
+    try reg(interp, m, "mkdir", mkdirFn);
+    try reg(interp, m, "rmdir", rmdirFn);
 
     // os.environ: a regular dict, seeded from the host env once.
     const env = try Dict.init(a);
@@ -77,6 +79,38 @@ fn getcwdFn(p: *anyopaque, args: []const Value) anyerror!Value {
     var buf: [4096]u8 = undefined;
     const n = try std.process.currentPath(interp.io, &buf);
     return Value{ .str = try Str.init(interp.allocator, buf[0..n]) };
+}
+
+fn mkdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args[0] != .str) {
+        try interp.typeError("os.mkdir expects a path");
+        return error.TypeError;
+    }
+    std.Io.Dir.cwd().createDir(interp.io, args[0].str.bytes, .default_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {
+            try interp.raisePy("FileExistsError", args[0].str.bytes);
+            return error.PyException;
+        },
+        else => return err,
+    };
+    return Value.none;
+}
+
+fn rmdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args[0] != .str) {
+        try interp.typeError("os.rmdir expects a path");
+        return error.TypeError;
+    }
+    std.Io.Dir.cwd().deleteDir(interp.io, args[0].str.bytes) catch |err| switch (err) {
+        error.FileNotFound => {
+            try interp.raisePy("FileNotFoundError", args[0].str.bytes);
+            return error.PyException;
+        },
+        else => return err,
+    };
+    return Value.none;
 }
 
 fn symlinkFn(p: *anyopaque, args: []const Value) anyerror!Value {
