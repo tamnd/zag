@@ -28,8 +28,13 @@ pub fn build(interp: *Interp) !*Module {
     try register(interp, m, "pow", powFn);
     try register(interp, m, "neg", negFn);
     try register(interp, m, "pos", posFn);
+    try register(interp, m, "abs", absFn);
+    try register(interp, m, "inv", invFn);
+    try register(interp, m, "invert", invFn);
     try register(interp, m, "not_", notFn);
     try register(interp, m, "truth", truthFn);
+    try register(interp, m, "is_", isFn);
+    try register(interp, m, "is_not", isNotFn);
     try register(interp, m, "lt", ltFn);
     try register(interp, m, "le", leFn);
     try register(interp, m, "eq", eqFn);
@@ -41,14 +46,77 @@ pub fn build(interp: *Interp) !*Module {
     try register(interp, m, "xor", xorFn);
     try register(interp, m, "lshift", lshiftFn);
     try register(interp, m, "rshift", rshiftFn);
+    try register(interp, m, "concat", concatFn);
     try register(interp, m, "getitem", getitemFn);
     try register(interp, m, "setitem", setitemFn);
     try register(interp, m, "delitem", delitemFn);
     try register(interp, m, "contains", containsFn);
     try register(interp, m, "index", indexFn);
+    try register(interp, m, "length_hint", lengthHintFn);
+    try register(interp, m, "countOf", countOfFn);
+    try register(interp, m, "indexOf", indexOfFn);
+    try register(interp, m, "iadd", iaddFn);
+    try register(interp, m, "iconcat", iaddFn);
+    try register(interp, m, "isub", subFn);
+    try register(interp, m, "imul", mulFn);
+    try register(interp, m, "itruediv", truedivFn);
+    try register(interp, m, "ifloordiv", floordivFn);
+    try register(interp, m, "imod", modFn);
+    try register(interp, m, "ipow", powFn);
+    try register(interp, m, "ilshift", lshiftFn);
+    try register(interp, m, "irshift", rshiftFn);
+    try register(interp, m, "iand", andFn);
+    try register(interp, m, "ior", orFn);
+    try register(interp, m, "ixor", xorFn);
     try register(interp, m, "attrgetter", attrgetterFn);
     try register(interp, m, "itemgetter", itemgetterFn);
     try registerKw(interp, m, "methodcaller", methodcallerFn, methodcallerKw);
+
+    // Dunder aliases. Most CPython operator entries have a `__name__`
+    // counterpart; registering both points to the same trampoline.
+    try register(interp, m, "__add__", addFn);
+    try register(interp, m, "__sub__", subFn);
+    try register(interp, m, "__mul__", mulFn);
+    try register(interp, m, "__truediv__", truedivFn);
+    try register(interp, m, "__floordiv__", floordivFn);
+    try register(interp, m, "__mod__", modFn);
+    try register(interp, m, "__pow__", powFn);
+    try register(interp, m, "__neg__", negFn);
+    try register(interp, m, "__pos__", posFn);
+    try register(interp, m, "__abs__", absFn);
+    try register(interp, m, "__inv__", invFn);
+    try register(interp, m, "__invert__", invFn);
+    try register(interp, m, "__not__", notFn);
+    try register(interp, m, "__lt__", ltFn);
+    try register(interp, m, "__le__", leFn);
+    try register(interp, m, "__eq__", eqFn);
+    try register(interp, m, "__ne__", neFn);
+    try register(interp, m, "__gt__", gtFn);
+    try register(interp, m, "__ge__", geFn);
+    try register(interp, m, "__and__", andFn);
+    try register(interp, m, "__or__", orFn);
+    try register(interp, m, "__xor__", xorFn);
+    try register(interp, m, "__lshift__", lshiftFn);
+    try register(interp, m, "__rshift__", rshiftFn);
+    try register(interp, m, "__concat__", concatFn);
+    try register(interp, m, "__contains__", containsFn);
+    try register(interp, m, "__getitem__", getitemFn);
+    try register(interp, m, "__setitem__", setitemFn);
+    try register(interp, m, "__delitem__", delitemFn);
+    try register(interp, m, "__index__", indexFn);
+    try register(interp, m, "__iadd__", iaddFn);
+    try register(interp, m, "__iconcat__", iaddFn);
+    try register(interp, m, "__isub__", subFn);
+    try register(interp, m, "__imul__", mulFn);
+    try register(interp, m, "__itruediv__", truedivFn);
+    try register(interp, m, "__ifloordiv__", floordivFn);
+    try register(interp, m, "__imod__", modFn);
+    try register(interp, m, "__ipow__", powFn);
+    try register(interp, m, "__ilshift__", lshiftFn);
+    try register(interp, m, "__irshift__", rshiftFn);
+    try register(interp, m, "__iand__", andFn);
+    try register(interp, m, "__ior__", orFn);
+    try register(interp, m, "__ixor__", xorFn);
     return m;
 }
 
@@ -195,6 +263,125 @@ fn truthFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
     _ = opaque_interp;
     if (args.len != 1) return error.TypeError;
     return Value{ .boolean = args[0].isTruthy() };
+}
+
+fn absFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    return @import("builtins.zig").absBuiltin(opaque_interp, args);
+}
+
+fn invFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    if (args.len != 1) {
+        try interp.typeError("invert expects 1 argument");
+        return error.TypeError;
+    }
+    return switch (args[0]) {
+        .small_int => |i| Value{ .small_int = ~i },
+        .boolean => |b| Value{ .small_int = ~@as(i64, @intFromBool(b)) },
+        else => {
+            try interp.typeError("invert: bad operand type");
+            return error.TypeError;
+        },
+    };
+}
+
+fn isFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    try binTwo(interp, args, "is_ expects 2 arguments");
+    return Value{ .boolean = args[0].identityEq(args[1]) };
+}
+
+fn isNotFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    try binTwo(interp, args, "is_not expects 2 arguments");
+    return Value{ .boolean = !args[0].identityEq(args[1]) };
+}
+
+fn concatFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    try binTwo(interp, args, "concat expects 2 arguments");
+    return dispatch.binaryAdd(interp, args[0], args[1]);
+}
+
+fn lengthHintFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    if (args.len < 1 or args.len > 2) {
+        try interp.typeError("length_hint expects 1 or 2 arguments");
+        return error.TypeError;
+    }
+    const obj = args[0];
+    const default: i64 = if (args.len == 2) switch (args[1]) {
+        .small_int => |i| i,
+        .boolean => |b| @intFromBool(b),
+        else => 0,
+    } else 0;
+    return switch (obj) {
+        .list => |l| Value{ .small_int = @intCast(l.items.items.len) },
+        .tuple => |t| Value{ .small_int = @intCast(t.items.len) },
+        .str => |s| Value{ .small_int = @intCast(s.len()) },
+        .bytes => |b| Value{ .small_int = @intCast(b.data.len) },
+        .bytearray => |b| Value{ .small_int = @intCast(b.data.items.len) },
+        .dict => |d| Value{ .small_int = @intCast(d.pairs.items.len) },
+        .set => |s| Value{ .small_int = @intCast(s.items.items.len) },
+        else => Value{ .small_int = default },
+    };
+}
+
+fn countOfFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    try binTwo(interp, args, "countOf expects 2 arguments");
+    var count: i64 = 0;
+    switch (args[0]) {
+        .list => |l| for (l.items.items) |it| {
+            if (it.equals(args[1])) count += 1;
+        },
+        .tuple => |t| for (t.items) |it| {
+            if (it.equals(args[1])) count += 1;
+        },
+        else => {
+            try interp.typeError("countOf: argument must be iterable");
+            return error.TypeError;
+        },
+    }
+    return Value{ .small_int = count };
+}
+
+fn indexOfFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    try binTwo(interp, args, "indexOf expects 2 arguments");
+    switch (args[0]) {
+        .list => |l| for (l.items.items, 0..) |it, i| {
+            if (it.equals(args[1])) return Value{ .small_int = @intCast(i) };
+        },
+        .tuple => |t| for (t.items, 0..) |it, i| {
+            if (it.equals(args[1])) return Value{ .small_int = @intCast(i) };
+        },
+        else => {
+            try interp.typeError("indexOf: argument must be iterable");
+            return error.TypeError;
+        },
+    }
+    try interp.raisePy("ValueError", "sequence.index(x): x not in sequence");
+    return error.PyException;
+}
+
+fn iaddFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
+    try binTwo(interp, args, "iadd expects 2 arguments");
+    // Mutate the destination list in place so `is` still holds.
+    if (args[0] == .list) {
+        const dst = args[0].list;
+        switch (args[1]) {
+            .list => |l| for (l.items.items) |it| try dst.append(interp.allocator, it),
+            .tuple => |t| for (t.items) |it| try dst.append(interp.allocator, it),
+            else => {
+                try interp.typeError("iadd: rhs must be a sequence");
+                return error.TypeError;
+            },
+        }
+        return args[0];
+    }
+    return dispatch.binaryAdd(interp, args[0], args[1]);
 }
 
 fn ltFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
