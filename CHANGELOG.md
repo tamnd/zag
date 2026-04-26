@@ -9,6 +9,16 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.111] - 2026-04-26
+
+### Added
+
+- `111_stringprep` fixture, byte-equal. New `stringprep` module covering
+  RFC 3454 lookup tables: A.1 unassigned, B.1 mapped-to-nothing, B.2/B.3
+  case folding, the C.1.1 through C.9 disallowed-character tables, and
+  the D.1/D.2 bidi tables. Codepoint decoding accepts WTF-8 surrogate
+  pairs so the C.5 probe against U+D800 reaches the predicate.
+
 ## [0.0.110] - 2026-04-26
 
 ### Added
