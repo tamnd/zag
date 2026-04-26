@@ -9,6 +9,23 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.104] - 2026-04-26
+
+### Added
+
+- `104_templatelib` fixture, byte-equal. `string.templatelib` module
+  with `Template`, `Interpolation`, and `convert`. The runtime objects
+  already existed (`BUILD_TEMPLATE` / `BUILD_INTERPOLATION` emit them);
+  this round adds a manual `Template` constructor that merges
+  consecutive strings and pads consecutive `Interpolation`s with `''`,
+  a manual `Interpolation(value, expression, conversion=None,
+  format_spec='')` constructor, `__add__` for `Template + Template`
+  concatenation that glues the trailing string to the leading one,
+  `__iter__` that yields strings and `Interpolation`s interleaved
+  (skipping empty strings), `Template` repr matching CPython, and the
+  `convert()` free function. `isinstance(x, Template | Interpolation)`
+  now matches by class name.
+
 ## [0.0.103] - 2026-04-26
 
 ### Added
