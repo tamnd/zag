@@ -314,9 +314,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                 else => null,
             };
             const a = interp.allocator;
-            if (interp.interpolation_class == null) {
-                interp.interpolation_class = try @import("../object/class.zig").Class.init(a, "Interpolation", &.{}, try @import("../object/dict.zig").Dict.init(a));
-            }
+            try @import("templatelib_mod.zig").ensureClasses(interp);
             const inst = try @import("../object/instance.zig").Instance.init(a, interp.interpolation_class.?);
             try inst.dict.setStr(a, "value", value);
             try inst.dict.setStr(a, "expression", expr);
@@ -338,9 +336,7 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const interps = frame.pop();
             const strs = frame.pop();
             const a = interp.allocator;
-            if (interp.template_class == null) {
-                interp.template_class = try @import("../object/class.zig").Class.init(a, "Template", &.{}, try @import("../object/dict.zig").Dict.init(a));
-            }
+            try @import("templatelib_mod.zig").ensureClasses(interp);
             const inst = try @import("../object/instance.zig").Instance.init(a, interp.template_class.?);
             try inst.dict.setStr(a, "strings", strs);
             try inst.dict.setStr(a, "interpolations", interps);
@@ -3218,6 +3214,11 @@ fn matchClassCheck(subject: Value, cls: Value) bool {
     if (std.mem.eql(u8, name, "set")) return subject == .set and !subject.set.frozen;
     if (std.mem.eql(u8, name, "frozenset")) return subject == .set and subject.set.frozen;
     if (std.mem.eql(u8, name, "type")) return subject == .class;
+    // string.templatelib: the ctors are exported as builtin_fns whose
+    // name matches the underlying instance class.
+    if (std.mem.eql(u8, name, "Template") or std.mem.eql(u8, name, "Interpolation")) {
+        return subject == .instance and std.mem.eql(u8, subject.instance.cls.name, name);
+    }
     return false;
 }
 

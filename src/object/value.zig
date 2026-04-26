@@ -279,6 +279,14 @@ pub const Value = union(Tag) {
                     try w.writeAll(", ");
                     try f.writeRepr(w);
                     try w.writeByte(')');
+                } else if (std.mem.eql(u8, obj.cls.name, "Template")) {
+                    const strs = obj.dict.getStr("strings") orelse Value.none;
+                    const interps = obj.dict.getStr("interpolations") orelse Value.none;
+                    try w.writeAll("Template(strings=");
+                    try strs.writeRepr(w);
+                    try w.writeAll(", interpolations=");
+                    try interps.writeRepr(w);
+                    try w.writeByte(')');
                 } else {
                     try w.print("<{s} object>", .{obj.cls.name});
                 }

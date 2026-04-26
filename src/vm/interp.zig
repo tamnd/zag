@@ -105,6 +105,7 @@ pub const Interp = struct {
     warnings_module: ?*Module = null,
     os_module: ?*Module = null,
     threading_module: ?*Module = null,
+    templatelib_module: ?*Module = null,
     threading_lock_class: ?*@import("../object/class.zig").Class = null,
     threading_rlock_class: ?*@import("../object/class.zig").Class = null,
     threading_thread_class: ?*@import("../object/class.zig").Class = null,
@@ -440,6 +441,12 @@ pub const Interp = struct {
             if (self.string_module) |m| return m;
             const m = string_mod.build(self) catch return null;
             self.string_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "string.templatelib")) {
+            if (self.templatelib_module) |m| return m;
+            const m = @import("templatelib_mod.zig").build(self) catch return null;
+            self.templatelib_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "copy")) {
