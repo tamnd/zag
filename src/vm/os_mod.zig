@@ -33,6 +33,9 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "chdir", chdirFn);
     try reg(interp, m, "listdir", listdirFn);
     try reg(interp, m, "close", closeFn);
+    try reg(interp, m, "chmod", chmodFn);
+    try reg(interp, m, "rename", renameFn);
+    try reg(interp, m, "access", accessFn);
 
     // os.environ: a regular dict, seeded from the host env once.
     const env = try Dict.init(a);
@@ -159,6 +162,62 @@ fn closeFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value.none;
 }
 
+fn chmodFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 2 or args[0] != .str or args[1] != .small_int) {
+        try interp.typeError("os.chmod expects (path, mode)");
+        return error.TypeError;
+    }
+    if (@import("builtin").os.tag == .windows) {
+        _ = std.Io.Dir.cwd().statFile(interp.io, args[0].str.bytes, .{}) catch |err| switch (err) {
+            error.FileNotFound => {
+                try interp.raisePy("FileNotFoundError", args[0].str.bytes);
+                return error.PyException;
+            },
+            else => return err,
+        };
+        return Value.none;
+    }
+    const mode_i: i64 = args[1].small_int;
+    const mode: std.posix.mode_t = @intCast(mode_i & 0o7777);
+    const perms = std.Io.File.Permissions.fromMode(mode);
+    std.Io.Dir.cwd().setFilePermissions(interp.io, args[0].str.bytes, perms, .{}) catch |err| switch (err) {
+        error.FileNotFound => {
+            try interp.raisePy("FileNotFoundError", args[0].str.bytes);
+            return error.PyException;
+        },
+        else => return err,
+    };
+    return Value.none;
+}
+
+fn renameFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 2 or args[0] != .str or args[1] != .str) {
+        try interp.typeError("os.rename expects (src, dst)");
+        return error.TypeError;
+    }
+    const cwd = std.Io.Dir.cwd();
+    cwd.rename(args[0].str.bytes, cwd, args[1].str.bytes, interp.io) catch |err| switch (err) {
+        error.FileNotFound => {
+            try interp.raisePy("FileNotFoundError", args[0].str.bytes);
+            return error.PyException;
+        },
+        else => return err,
+    };
+    return Value.none;
+}
+
+fn accessFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args[0] != .str) {
+        try interp.typeError("os.access expects a path");
+        return error.TypeError;
+    }
+    _ = std.Io.Dir.cwd().statFile(interp.io, args[0].str.bytes, .{}) catch return Value{ .boolean = false };
+    return Value{ .boolean = true };
+}
+
 fn rmdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     if (args.len < 1 or args[0] != .str) {
@@ -211,7 +270,7 @@ fn doStat(p: *anyopaque, args: []const Value, follow: bool) !Value {
     };
     try ensureStatResultClass(interp);
     const inst = try Instance.init(a, interp.os_stat_result_class.?);
-    var mode: i64 = 0o644;
+    var mode: i64 = if (@import("builtin").os.tag == .windows) 0o644 else @intCast(st.permissions.toMode() & 0o7777);
     switch (st.kind) {
         .directory => mode |= 0o040000,
         .sym_link => mode |= 0o120000,
