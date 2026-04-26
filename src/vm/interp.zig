@@ -275,6 +275,7 @@ pub const Interp = struct {
     marshal_module: ?*Module = null,
     dbm_module: ?*Module = null,
     dbm_class: ?*@import("../object/class.zig").Class = null,
+    sqlite3_module: ?*Module = null,
     linecache_cache: std.StringHashMapUnmanaged(@import("linecache_mod.zig").Entry) = .empty,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
@@ -936,6 +937,12 @@ pub const Interp = struct {
             if (self.marshal_module) |m| return m;
             const m = @import("marshal_mod.zig").build(self) catch return null;
             self.marshal_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "sqlite3")) {
+            if (self.sqlite3_module) |m| return m;
+            const m = @import("sqlite3_mod.zig").build(self) catch return null;
+            self.sqlite3_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "dbm") or std.mem.eql(u8, name, "dbm.sqlite3")) {
