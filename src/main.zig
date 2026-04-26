@@ -40,6 +40,14 @@ pub fn main(init: std.process.Init) !void {
 
     var interp = try zag.vm.interp.Interp.init(run_alloc, stdout, stderr);
     interp.io = io;
+    if (init.environ_map.get("HOME")) |h| if (h.len > 0) {
+        interp.home = h;
+    };
+    if (init.environ_map.get("TMPDIR")) |t| if (t.len > 0) {
+        var n = t.len;
+        while (n > 1 and t[n - 1] == '/') n -= 1;
+        interp.tmp_dir = t[0..n];
+    };
     try interp.installBuiltins();
 
     // Pre-register every sibling `.cpython-314.pyc` next to the entry

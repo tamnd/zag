@@ -243,6 +243,10 @@ pub const Interp = struct {
     /// by POP_EXCEPT. Powers `sys.exc_info()` and the implicit
     /// `__context__` attached to exceptions raised inside an except.
     handling_exc: ?Value = null,
+    /// Environment passed in by the host. Pathlib/tempfile peek at
+    /// HOME and TMPDIR; everything else gets the defaults.
+    home: []const u8 = "/",
+    tmp_dir: []const u8 = "/tmp",
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,

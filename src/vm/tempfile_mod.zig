@@ -50,26 +50,10 @@ fn methodReg(a: std.mem.Allocator, d: *Dict, name: []const u8, func: BuiltinFnPt
     try d.setStr(a, name, Value{ .builtin_fn = f });
 }
 
-fn tmpRoot(a: std.mem.Allocator) ![]u8 {
-    if (std.c.getenv("TMPDIR")) |c| {
-        const span = std.mem.span(c);
-        if (span.len > 0) {
-            // Strip trailing slash to keep paths predictable.
-            var len = span.len;
-            while (len > 1 and span[len - 1] == '/') len -= 1;
-            return try a.dupe(u8, span[0..len]);
-        }
-    }
-    return try a.dupe(u8, "/tmp");
-}
-
 fn gettempdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = args;
     const interp: *Interp = @ptrCast(@alignCast(p));
-    const a = interp.allocator;
-    const t = try tmpRoot(a);
-    defer a.free(t);
-    return Value{ .str = try Str.init(a, t) };
+    return Value{ .str = try Str.init(interp.allocator, interp.tmp_dir) };
 }
 
 fn initFn(p: *anyopaque, args: []const Value) anyerror!Value {
@@ -78,8 +62,7 @@ fn initFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const self = args[0].instance;
     const a = interp.allocator;
 
-    const root = try tmpRoot(a);
-    defer a.free(root);
+    const root = interp.tmp_dir;
 
     var counter: u32 = 0;
     while (counter < 1000) : (counter += 1) {

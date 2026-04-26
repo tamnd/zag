@@ -1163,17 +1163,11 @@ fn expanduserFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
     if (s.len == 0 or s[0] != '~') {
         return newPath(interp, self.cls, s);
     }
-    const home_env = getHome();
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(a);
-    try buf.appendSlice(a, home_env);
+    try buf.appendSlice(a, interp.home);
     if (s.len > 1) try buf.appendSlice(a, s[1..]);
     return newPath(interp, self.cls, buf.items);
-}
-
-fn getHome() []const u8 {
-    const cstr = std.c.getenv("HOME") orelse return "/";
-    return std.mem.span(cstr);
 }
 
 fn readlinkFn(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
@@ -1271,7 +1265,7 @@ fn cwdCls(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
 fn homeCls(opaque_interp: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(opaque_interp));
     _ = args;
-    return newPath(interp, interp.pathlib_posix_class.?, getHome());
+    return newPath(interp, interp.pathlib_posix_class.?, interp.home);
 }
 
 pub fn getCwdAlloc(interp: *Interp) ![]u8 {
