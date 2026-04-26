@@ -3138,14 +3138,11 @@ pub fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
             return false;
         },
         .dict => |d| {
-            if (item == .instance) {
-                for (d.pairs.items) |p| {
-                    if (try @import("dunder.zig").valuesEqual(interp, p.key, item)) return true;
-                }
-                return false;
+            if (item == .str) return d.contains(item.str.bytes);
+            for (d.pairs.items) |p| {
+                if (try @import("dunder.zig").valuesEqual(interp, p.key, item)) return true;
             }
-            if (item != .str) return false;
-            return d.contains(item.str.bytes);
+            return false;
         },
         .deque => |dq| {
             for (dq.items.items.items) |x| if (x.equals(item)) return true;
