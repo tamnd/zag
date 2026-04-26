@@ -9,6 +9,19 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.102] - 2026-04-26
+
+### Added
+
+- `102_string_formatter` fixture, byte-equal. `string.Formatter` class
+  with `format`, `vformat`, `format_field`, `convert_field`, `parse`,
+  `get_value`, and `check_unused_args`. `parse()` yields the same
+  `(literal, field_name, format_spec, conversion)` quads as CPython,
+  including the trailing `(literal, None, None, None)` on a closed
+  brace; `format_field` reuses the `str.format` mini-language renderer
+  added in 0.0.101; `convert_field` handles `'s'`, `'r'`, `'a'`, and
+  `None` passthrough.
+
 ## [0.0.101] - 2026-04-26
 
 ### Changed
