@@ -9,6 +9,24 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.127] - 2026-04-26
+
+### Added
+
+- `pprint` module is now feature-complete enough for the fixture:
+  `pformat`, `pprint`, and `pp` accept `width`, `indent`, `depth`,
+  `compact`, and `sort_dicts`. The multi-line layout matches CPython
+  byte-for-byte: items align at column `column + indent`, the first
+  item gets the same alignment as the rest when `indent > 1`, and
+  `compact=True` greedily packs items per line within `width`.
+  `depth` collapses nested containers past the cutoff to `{...}`.
+  `saferepr` detects cycles and emits `<Recursion on TYPE with
+  id=N>`. `isreadable` and `isrecursive` walk the value with a seen-
+  set. `PrettyPrinter` is a real class with `__init__` (kwargs),
+  `pformat`, `pprint`, `format` (returning the
+  `(repr, readable, recursive)` triple), `isreadable`, and
+  `isrecursive`.
+
 ## [0.0.126] - 2026-04-26
 
 ### Added

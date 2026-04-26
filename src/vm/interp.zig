@@ -175,6 +175,7 @@ pub const Interp = struct {
     calendar_illegal_month_class: ?*@import("../object/class.zig").Class = null,
     calendar_illegal_weekday_class: ?*@import("../object/class.zig").Class = null,
     pprint_module: ?*Module = null,
+    pprint_pp_class: ?*@import("../object/class.zig").Class = null,
     html_module: ?*Module = null,
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
