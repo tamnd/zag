@@ -25,6 +25,7 @@ const math_mod = @import("math_mod.zig");
 const heapq_mod = @import("heapq_mod.zig");
 const bisect_mod = @import("bisect_mod.zig");
 const array_mod = @import("array_mod.zig");
+const weakref_mod = @import("weakref_mod.zig");
 const random_mod = @import("random_mod.zig");
 const json_mod = @import("json_mod.zig");
 const string_mod = @import("string_mod.zig");
@@ -91,6 +92,19 @@ pub const Interp = struct {
     bisect_module: ?*Module = null,
     array_module: ?*Module = null,
     array_class: ?*@import("../object/class.zig").Class = null,
+    weakref_module: ?*Module = null,
+    weakref_ref_class: ?*@import("../object/class.zig").Class = null,
+    weakref_proxy_class: ?*@import("../object/class.zig").Class = null,
+    weakref_callable_proxy_class: ?*@import("../object/class.zig").Class = null,
+    weakref_finalize_class: ?*@import("../object/class.zig").Class = null,
+    weakref_weakmethod_class: ?*@import("../object/class.zig").Class = null,
+    weakref_wvd_class: ?*@import("../object/class.zig").Class = null,
+    weakref_wkd_class: ?*@import("../object/class.zig").Class = null,
+    weakref_ws_class: ?*@import("../object/class.zig").Class = null,
+    /// Maps a target instance pointer to all `weakref.ref` instances
+    /// created for it. Used for canonical dedup (no-callback refs share
+    /// identity) and for `getweakrefs`/`getweakrefcount`.
+    weakref_registry: std.AutoHashMapUnmanaged(*@import("../object/instance.zig").Instance, std.ArrayListUnmanaged(*@import("../object/instance.zig").Instance)) = .empty,
     random_module: ?*Module = null,
     json_module: ?*Module = null,
     string_module: ?*Module = null,
@@ -487,6 +501,12 @@ pub const Interp = struct {
             if (self.array_module) |m| return m;
             const m = array_mod.build(self) catch return null;
             self.array_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "weakref")) {
+            if (self.weakref_module) |m| return m;
+            const m = weakref_mod.build(self) catch return null;
+            self.weakref_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "random")) {

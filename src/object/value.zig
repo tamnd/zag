@@ -263,7 +263,7 @@ pub const Value = union(Tag) {
             .cached_property => try w.writeAll("<cached_property>"),
             .function => |f| try w.print("<function {s}>", .{f.code.qualname}),
             .cell => try w.writeAll("<cell>"),
-            .class => |c| try w.print("<class '{s}'>", .{c.name}),
+            .class => |c| try w.print("<class '{s}'>", .{c.qualname orelse c.name}),
             .instance => |obj| {
                 if (std.mem.eql(u8, obj.cls.name, "Interpolation")) {
                     const v = obj.dict.getStr("value") orelse Value.none;
@@ -615,6 +615,11 @@ pub const Value = union(Tag) {
         if (a == .not_implemented and b == .not_implemented) return true;
         if (a == .complex_num or b == .complex_num) return complexEquals(a, b);
         if (a == .set and b == .set) return setEquals(a.set, b.set);
+        // Instances default to identity equality unless a custom
+        // `__eq__` overrides it. The dunder dispatch lives at the
+        // call site (see dispatch.compareEq); this fallback covers
+        // bare `Value.equals` callers (dict key lookup, etc).
+        if (a == .instance and b == .instance) return a.instance == b.instance;
         if (a == .named_tuple and b == .named_tuple) {
             const ax = a.named_tuple.items;
             const bx = b.named_tuple.items;

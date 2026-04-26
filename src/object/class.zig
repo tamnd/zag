@@ -40,6 +40,10 @@ pub const AbcKind = enum {
 /// `__build_class__`.
 pub const Class = struct {
     name: []const u8,
+    /// Optional module-qualified display name for `repr(cls)` (e.g.
+    /// `weakref.ReferenceType`). When null, `name` is used. Bare
+    /// `__name__` always uses `name`.
+    qualname: ?[]const u8 = null,
     bases: []*Class,
     dict: *Dict,
     mro: []*Class,
@@ -57,6 +61,7 @@ pub const Class = struct {
         @memcpy(bases_buf, bases);
         self.* = .{
             .name = name,
+            .qualname = null,
             .bases = bases_buf,
             .dict = dict,
             .mro = undefined,

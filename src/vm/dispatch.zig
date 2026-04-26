@@ -3427,7 +3427,24 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             } else if (is_method) {
                 frame.push(v);
                 frame.push(Value.null_sentinel);
+            } else if (v == .function or v == .builtin_fn) {
+                // Bare access (`obj.method` without an immediate call):
+                // bind self so a later call still injects it.
+                const BoundMethod = @import("../object/bound_method.zig").BoundMethod;
+                const bm = try BoundMethod.init(interp.allocator, v, obj);
+                frame.push(Value{ .bound_method = bm });
             } else frame.push(v);
+            return;
+        }
+        // Fall back to __getattr__ if the class defines one. CPython's
+        // semantics: only invoked when the regular lookup chain fails.
+        if (obj.instance.cls.lookup("__getattr__")) |getattr_v| {
+            const name_s = try Str.init(interp.allocator, name);
+            const r = try invoke(interp, getattr_v, &.{ obj, Value{ .str = name_s } });
+            if (is_method) {
+                frame.push(r);
+                frame.push(Value.null_sentinel);
+            } else frame.push(r);
             return;
         }
         try interp.attributeError(obj.typeName(), name);
@@ -3823,7 +3840,7 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
     }
 
     // Built-in methods on str/list/dict and collections types.
-    if (is_method) {
+    {
         var self_for_method = obj;
         const method: ?*value_mod.BuiltinFn = switch (obj) {
             .str => strmethods.lookup(name),
@@ -3868,8 +3885,14 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             else => null,
         };
         if (method) |m| {
-            frame.push(Value{ .builtin_fn = m });
-            frame.push(self_for_method);
+            if (is_method) {
+                frame.push(Value{ .builtin_fn = m });
+                frame.push(self_for_method);
+            } else {
+                const BoundMethod = @import("../object/bound_method.zig").BoundMethod;
+                const bm = try BoundMethod.init(interp.allocator, Value{ .builtin_fn = m }, self_for_method);
+                frame.push(Value{ .bound_method = bm });
+            }
             return;
         }
     }
@@ -4581,6 +4604,14 @@ fn instantiate(
         if (cls == zi_cls and kw_names.len == 0) {
             const zoneinfo_mod = @import("zoneinfo_mod.zig");
             if (try zoneinfo_mod.cachedInstantiate(interp, positional)) |v| return v;
+        }
+    }
+    // weakref.ref dedups when called without a callback so two refs to
+    // the same target share identity.
+    if (interp.weakref_ref_class) |ref_cls| {
+        if (cls == ref_cls and kw_names.len == 0) {
+            const weakref_mod = @import("weakref_mod.zig");
+            if (try weakref_mod.cachedRefInstantiate(interp, positional)) |v| return v;
         }
     }
     const inst = try Instance.init(interp.allocator, cls);

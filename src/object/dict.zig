@@ -93,4 +93,25 @@ pub const Dict = struct {
         }
         return true;
     }
+
+    /// `key in dict` for arbitrary keys.
+    pub fn findKeyWrap(self: *const Dict, key: Value) bool {
+        return self.findKey(key) != null;
+    }
+
+    /// Remove a pair keyed by an arbitrary Value. Returns whether the
+    /// key was found.
+    pub fn removeKeyWrap(self: *Dict, key: Value) bool {
+        const idx = self.findKey(key) orelse return false;
+        const removed = self.pairs.orderedRemove(idx);
+        if (removed.key == .str) {
+            for (self.keys.items, 0..) |k, i| {
+                if (std.mem.eql(u8, k, removed.key.str.bytes)) {
+                    _ = self.keys.orderedRemove(i);
+                    break;
+                }
+            }
+        }
+        return true;
+    }
 };
