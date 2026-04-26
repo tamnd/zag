@@ -9,6 +9,17 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.148] - 2026-04-26
+
+### Added
+
+- `linecache` module: `getline`, `getlines`, `clearcache`,
+  `checkcache`, and `lazycache`. Cache lives on the interp;
+  entries record file size and mtime so `checkcache` invalidates
+  stale entries. Mirrors CPython 3.14: an empty file caches as
+  `['\n']`, and a final line without a trailing newline gets one
+  appended.
+
 ## [0.0.147] - 2026-04-26
 
 ### Fixed
