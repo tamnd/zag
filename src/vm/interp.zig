@@ -247,6 +247,12 @@ pub const Interp = struct {
     /// HOME and TMPDIR; everything else gets the defaults.
     home: []const u8 = "/",
     tmp_dir: []const u8 = "/tmp",
+    /// Pointer to the host's env map. `os.environ` is seeded from
+    /// this on first import; `os.path.expandvars` reads from the
+    /// (mutable) `os.environ` dict thereafter, not from this map.
+    env_map: ?*const std.process.Environ.Map = null,
+    os_path_module: ?*Module = null,
+    os_stat_result_class: ?*@import("../object/class.zig").Class = null,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
     difflib_seqmatch_class: ?*@import("../object/class.zig").Class = null,
@@ -847,6 +853,13 @@ pub const Interp = struct {
             const m = @import("os_mod.zig").build(self) catch return null;
             self.os_module = m;
             return m;
+        }
+        if (std.mem.eql(u8, name, "os.path")) {
+            if (self.os_path_module) |m| return m;
+            // Build os first; os_mod.build attaches and caches the
+            // path submodule on the interp.
+            _ = self.getBuiltinModule("os") orelse return null;
+            return self.os_path_module;
         }
         if (std.mem.eql(u8, name, "pathlib")) {
             if (self.pathlib_module) |m| return m;
