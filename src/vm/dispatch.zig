@@ -3059,6 +3059,10 @@ pub fn iterStep(interp: *Interp, it: Value) DispatchError!?Value {
 }
 
 pub fn makeIter(interp: *Interp, v: Value) !*Iter {
+    if (v == .class and v.class.enum_kind != null) {
+        const lst_v = try @import("enum_mod.zig").iterClass(interp, v.class);
+        return try Iter.init(interp.allocator, .{ .list = lst_v.list });
+    }
     return switch (v) {
         .list => |l| try Iter.init(interp.allocator, .{ .list = l }),
         .tuple => |t| try Iter.init(interp.allocator, .{ .tuple = t }),
@@ -3093,6 +3097,9 @@ pub fn makeIter(interp: *Interp, v: Value) !*Iter {
 }
 
 pub fn containsOp(interp: *Interp, item: Value, container: Value) !bool {
+    if (container == .class and container.class.enum_kind != null) {
+        return @import("enum_mod.zig").classContains(container.class, item);
+    }
     switch (container) {
         .str => |s| {
             if (item != .str) {
@@ -4631,6 +4638,13 @@ fn instantiate(
             return try types_mod.moduleTypeCall(interp, positional, kw_names, kw_values);
         }
     }
+    // Enum classes redirect calling to a member lookup (`Color(2)`),
+    // a Flag composite, or the functional API (`Enum('Foo', [...])`).
+    if (cls.enum_kind != null) {
+        if (kw_names.len == 0) {
+            return try @import("enum_mod.zig").callEnum(interp, cls, positional);
+        }
+    }
     const inst = try Instance.init(interp.allocator, cls);
     const inst_val = Value{ .instance = inst };
     if (cls.lookup("__init__") == null and builtins_mod.isExceptionClass(interp, cls)) {
@@ -4745,6 +4759,8 @@ pub fn buildClassKw(
             }
         }
     }
+    // Promote enum members if any base carries an EnumKind marker.
+    try @import("enum_mod.zig").processClass(interp, cls);
     return Value{ .class = cls };
 }
 

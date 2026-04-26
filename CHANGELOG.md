@@ -9,6 +9,33 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.129] - 2026-04-26
+
+### Added
+
+- `enum` module: `Enum`, `IntEnum`, `StrEnum`, `Flag`, `IntFlag` base
+  classes, `auto`, and `unique`. Each base carries an `EnumKind` marker
+  on the class. After `__build_class__` finishes, the namespace walker
+  promotes plain attributes to singleton member instances, threads
+  `_name_` / `_value_` / `name` / `value` onto each member, builds
+  `__members__`, and records the canonical-member list. `auto()`
+  resolves to a sequential int for Enum/IntEnum, the next power of two
+  for Flag/IntFlag, and the lowercased attribute name for StrEnum.
+- `Cls(value)` looks up by value (or builds a Flag composite),
+  `Cls['NAME']` looks up by name through `__class_getitem__`, and
+  `iter`/`len`/`in` work on the class itself by reading the
+  canonical-member list. `unique` raises `ValueError` when any name in
+  `__members__` resolves to a member with a different `_name_`
+  (i.e., an alias).
+- IntEnum members compare equal to their int value and support
+  `+` / `-` / `<` / `<=` / `>` / `>=` against ints and other members.
+  StrEnum members compare equal to their string value. Flag members
+  combine with `|` / `&` / `^` and report containment via `in`.
+- Functional API: `Enum('Animal', ['ANT', 'BEE'])`,
+  `Enum('Direction', 'NORTH SOUTH EAST WEST')`, and
+  `Enum('Status', {'OK': 200})` all build a fresh subclass with the
+  expected members.
+
 ## [0.0.128] - 2026-04-26
 
 ### Added
