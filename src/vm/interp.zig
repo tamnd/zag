@@ -222,6 +222,7 @@ pub const Interp = struct {
     pathlib_stat_result_class: ?*@import("../object/class.zig").Class = null,
     tempfile_module: ?*Module = null,
     tempfile_temp_dir_class: ?*@import("../object/class.zig").Class = null,
+    tempfile_file_class: ?*@import("../object/class.zig").Class = null,
     templatelib_module: ?*Module = null,
     threading_lock_class: ?*@import("../object/class.zig").Class = null,
     threading_rlock_class: ?*@import("../object/class.zig").Class = null,
