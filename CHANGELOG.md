@@ -9,6 +9,18 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.109] - 2026-04-26
+
+### Added
+
+- `109_textwrap` fixture, byte-equal. `indent` honors a `predicate`
+  keyword. `wrap` and `fill` now respect `initial_indent`,
+  `subsequent_indent`, `max_lines`, `placeholder`, `expand_tabs`,
+  `tabsize`, `replace_whitespace`, `drop_whitespace`,
+  `break_long_words`. New `TextWrapper` class exposing the same knobs
+  as instance attributes plus `wrap`/`fill` methods. `shorten` is now
+  built on top of the shared core with `max_lines=1`.
+
 ## [0.0.108] - 2026-04-26
 
 ### Added
