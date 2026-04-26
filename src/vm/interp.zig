@@ -31,6 +31,7 @@ const io_mod = @import("io_mod.zig");
 const hashlib_mod = @import("hashlib_mod.zig");
 const base64_mod = @import("base64_mod.zig");
 const textwrap_mod = @import("textwrap_mod.zig");
+const unicodedata_mod = @import("unicodedata_mod.zig");
 const re_mod = @import("re_mod.zig");
 const struct_mod = @import("struct_mod.zig");
 const csv_mod = @import("csv_mod.zig");
@@ -83,6 +84,7 @@ pub const Interp = struct {
     hashlib_module: ?*Module = null,
     base64_module: ?*Module = null,
     textwrap_module: ?*Module = null,
+    unicodedata_module: ?*Module = null,
     re_module: ?*Module = null,
     struct_module: ?*Module = null,
     csv_module: ?*Module = null,
@@ -487,6 +489,12 @@ pub const Interp = struct {
             if (self.textwrap_module) |m| return m;
             const m = textwrap_mod.build(self) catch return null;
             self.textwrap_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "unicodedata")) {
+            if (self.unicodedata_module) |m| return m;
+            const m = unicodedata_mod.build(self) catch return null;
+            self.unicodedata_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "struct")) {
