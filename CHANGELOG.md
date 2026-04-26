@@ -9,6 +9,21 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.138] - 2026-04-26
+
+### Added
+
+- `itertools.batched(iter, n, *, strict=False)`: fixed-size chunks
+  yielded as tuples; `strict=True` raises `ValueError` on a short
+  final batch.
+
+### Fixed
+
+- `itertools.count(start, step)` with negative step now yields the
+  arithmetic progression downward instead of stopping immediately.
+  The internal range had a positive-step sentinel for `stop`; we now
+  pick `minInt(i64)` when `step < 0`.
+
 ## [0.0.137] - 2026-04-26
 
 ### Added
