@@ -9,6 +9,12 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.153] - 2026-04-26
+
+### Added
+
+- `marshal` module: `dumps`, `loads`, `dump`, `load`, `version`. Supports None, bool, int (arbitrary precision), float, complex, str, bytes, tuple, list, dict, set, frozenset, Ellipsis. Version parameter accepted. EOFError on empty input, ValueError on unsupported types.
+
 ## [0.0.152] - 2026-04-26
 
 ### Added
