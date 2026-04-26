@@ -686,6 +686,39 @@ fn formatImpl(
     return Value{ .str = try Str.fromOwnedSlice(interp.allocator, owned) };
 }
 
+pub fn formatTemplate(
+    interp: *Interp,
+    template: []const u8,
+    positional: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) !Value {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(interp.allocator);
+    var ctx: FmtCtx = .{
+        .interp = interp,
+        .positional = positional,
+        .kw_names = kw_names,
+        .kw_values = kw_values,
+        .auto_idx = 0,
+    };
+    try renderTemplate(&ctx, template, &buf);
+    const owned = try buf.toOwnedSlice(interp.allocator);
+    return Value{ .str = try Str.fromOwnedSlice(interp.allocator, owned) };
+}
+
+pub fn formatOne(interp: *Interp, v: Value, spec_raw: []const u8) !Value {
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(interp.allocator);
+    try formatValueWithSpec(interp, v, spec_raw, &buf);
+    const owned = try buf.toOwnedSlice(interp.allocator);
+    return Value{ .str = try Str.fromOwnedSlice(interp.allocator, owned) };
+}
+
+pub fn convertField(interp: *Interp, v: Value, conv: u8) !Value {
+    return applyConversion(interp, v, conv);
+}
+
 const FmtCtx = struct {
     interp: *Interp,
     positional: []const Value,
