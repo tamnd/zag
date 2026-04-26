@@ -9,6 +9,28 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.149] - 2026-04-26
+
+### Added
+
+- `shutil` module: `copyfile`, `copy`, `copy2`, `copymode`,
+  `copystat`, `copytree` (with `ignore` callable and
+  `dirs_exist_ok`), `move`, `rmtree` (with `ignore_errors`),
+  `ignore_patterns`, `make_archive` / `unpack_archive` (private
+  framing format covering `zip` and `tar` extensions for
+  round-tripping), `which` (PATH lookup against `interp.env_map`),
+  `disk_usage`, and `get_terminal_size`. `SameFileError` and
+  `Error` are registered as `OSError` subclasses.
+- `os` gained `chmod`, `rename`, and `access`. `stat` now reports
+  the actual permission bits (was hardcoded `0o644`).
+
+### Notes
+
+- On Windows, `std.Io.File.Permissions` lacks `fromMode`/`toMode`,
+  so `os.chmod` is a no-op (still raises `FileNotFoundError` for
+  missing paths) and `os.stat` reports `st_mode` as `0o644` |
+  kind. The shutil functions otherwise behave identically.
+
 ## [0.0.148] - 2026-04-26
 
 ### Added
