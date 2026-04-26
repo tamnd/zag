@@ -9,6 +9,23 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.123] - 2026-04-26
+
+### Added
+
+- `array` module with the `array.array` class. Supports the integer
+  typecodes (`b B h H i I l L q Q`) and the floats (`f d`); `u`/`w`
+  surface in `typecodes` but constructing one raises `ValueError`.
+  Construction takes a list/tuple/iterable initializer or a bytes
+  buffer (parsed little-endian). Method surface: `append`, `extend`,
+  `fromlist`, `insert`, `pop`, `remove`, `count`, `index`,
+  `reverse`, `tobytes`, `frombytes`, `tolist`, `buffer_info`,
+  `byteswap`. Dunders cover `__getitem__` (int + slice, slice
+  returns a fresh same-typecode array), `__setitem__`,
+  `__delitem__`, `__len__`, `__iter__`, `__contains__`, `__repr__`.
+  Per-typecode validation rejects the wrong value kind with
+  `TypeError` and out-of-range integers with `OverflowError`.
+
 ## [0.0.122] - 2026-04-26
 
 ### Added

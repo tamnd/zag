@@ -24,6 +24,7 @@ const collections_abc_mod = @import("collections_abc_mod.zig");
 const math_mod = @import("math_mod.zig");
 const heapq_mod = @import("heapq_mod.zig");
 const bisect_mod = @import("bisect_mod.zig");
+const array_mod = @import("array_mod.zig");
 const random_mod = @import("random_mod.zig");
 const json_mod = @import("json_mod.zig");
 const string_mod = @import("string_mod.zig");
@@ -88,6 +89,8 @@ pub const Interp = struct {
     math_module: ?*Module = null,
     heapq_module: ?*Module = null,
     bisect_module: ?*Module = null,
+    array_module: ?*Module = null,
+    array_class: ?*@import("../object/class.zig").Class = null,
     random_module: ?*Module = null,
     json_module: ?*Module = null,
     string_module: ?*Module = null,
@@ -478,6 +481,12 @@ pub const Interp = struct {
             if (self.bisect_module) |m| return m;
             const m = bisect_mod.build(self) catch return null;
             self.bisect_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "array")) {
+            if (self.array_module) |m| return m;
+            const m = array_mod.build(self) catch return null;
+            self.array_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "random")) {
