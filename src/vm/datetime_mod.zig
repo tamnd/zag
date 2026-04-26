@@ -455,6 +455,10 @@ fn tdMicros(self: *Instance) i128 {
     return d * 86_400_000_000 + s * 1_000_000 + u;
 }
 
+pub fn newTimedeltaPub(interp: *Interp, days: i128, seconds: i128, microseconds: i128) !Value {
+    return newTimedelta(interp, days, seconds, microseconds);
+}
+
 fn newTimedelta(interp: *Interp, days: i128, seconds: i128, microseconds: i128) !Value {
     const a = interp.allocator;
     const inst = try Instance.init(a, interp.dt_timedelta_class.?);
@@ -1202,11 +1206,12 @@ fn formatTime(interp: *Interp, timespec: []const u8, h: i64, m: i64, s: i64, us:
 }
 
 fn tzUtcoffsetFor(interp: *Interp, tz: Value, dt: Value) !Value {
-    if (tz == .none) return Value.none;
-    if (isTimezone(interp, tz)) {
-        return tz.instance.dict.getStr("_offset") orelse Value.none;
-    }
+    _ = interp;
     _ = dt;
+    if (tz == .none) return Value.none;
+    if (tz == .instance) {
+        if (tz.instance.dict.getStr("_offset")) |off| return off;
+    }
     return Value.none;
 }
 
