@@ -10,6 +10,8 @@ pub const Node = union(enum) {
     any,
     bol,
     eol,
+    bos,
+    eos,
     wb,
     nwb,
     class: ClassRef,

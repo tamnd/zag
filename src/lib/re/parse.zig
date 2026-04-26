@@ -402,7 +402,8 @@ const Parser = struct {
             'r' => return Node{ .literal = '\r' },
             'b' => return Node.wb,
             'B' => return Node.nwb,
-            'A', 'Z' => return error.UnsupportedRegex,
+            'A' => return Node.bos,
+            'Z' => return Node.eos,
             '1'...'9' => return Node{ .backref = c - '0' },
             else => return Node{ .literal = c },
         }
