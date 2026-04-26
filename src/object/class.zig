@@ -34,6 +34,11 @@ pub const AbcKind = enum {
     async_iterator,
     async_generator,
     buffer,
+    number,
+    complex_,
+    real,
+    rational,
+    integral,
 };
 
 /// A user-defined Python class. `mro` is the linearized parent

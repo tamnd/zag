@@ -9,6 +9,20 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.131] - 2026-04-26
+
+### Added
+
+- `numbers` module: the abstract numeric tower `Number`, `Complex`,
+  `Real`, `Rational`, `Integral`. Each ABC carries an `abc_kind` so
+  `isinstance(v, cls)` matches the right built-in numeric values
+  (int and bool flow through as Integral; float as Real; complex as
+  Complex), and the inheritance chain gives `issubclass(Integral,
+  Number)` for free via MRO.
+- `register()` works on each tower class (reusing the
+  `collections.abc` `abc_registered` machinery) so user classes can
+  opt into a layer as a virtual subclass.
+
 ## [0.0.130] - 2026-04-26
 
 ### Added
