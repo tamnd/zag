@@ -40,6 +40,7 @@ pub fn main(init: std.process.Init) !void {
 
     var interp = try zag.vm.interp.Interp.init(run_alloc, stdout, stderr);
     interp.io = io;
+    interp.env_map = init.environ_map;
     if (init.environ_map.get("HOME")) |h| if (h.len > 0) {
         interp.home = h;
     };
