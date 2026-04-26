@@ -114,6 +114,7 @@ pub const Interp = struct {
     threading_barrier_class: ?*@import("../object/class.zig").Class = null,
     threading_local_class: ?*@import("../object/class.zig").Class = null,
     string_formatter_class: ?*@import("../object/class.zig").Class = null,
+    string_template_class: ?*@import("../object/class.zig").Class = null,
     threading_main_thread: ?*@import("../object/instance.zig").Instance = null,
     sys_stream_class: ?*@import("../object/class.zig").Class = null,
     traceback_class: ?*@import("../object/class.zig").Class = null,

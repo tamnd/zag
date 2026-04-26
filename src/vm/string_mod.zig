@@ -35,6 +35,9 @@ pub fn build(interp: *Interp) !*Module {
 
     try ensureFormatterClass(interp);
     try reg(interp, m, "Formatter", formatterCtor);
+
+    try ensureTemplateClass(interp);
+    try reg(interp, m, "Template", templateCtor);
     return m;
 }
 
@@ -304,6 +307,334 @@ fn formatterGetValue(p: *anyopaque, args: []const Value) anyerror!Value {
 
 fn formatterCheckUnusedArgs(_: *anyopaque, _: []const Value) anyerror!Value {
     return Value.none;
+}
+
+// --- Template class ---
+
+fn isIdentStart(c: u8) bool {
+    return (c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or c == '_';
+}
+
+fn isIdentCont(c: u8) bool {
+    return isIdentStart(c) or (c >= '0' and c <= '9');
+}
+
+fn ensureTemplateClass(interp: *Interp) !void {
+    if (interp.string_template_class != null) return;
+    const a = interp.allocator;
+    const d = try Dict.init(a);
+    try methodRegKw(a, d, "substitute", templateSubstitute, templateSubstituteKw);
+    try methodRegKw(a, d, "safe_substitute", templateSafeSubstitute, templateSafeSubstituteKw);
+    try methodReg(a, d, "is_valid", templateIsValid);
+    try methodReg(a, d, "get_identifiers", templateGetIdentifiers);
+    interp.string_template_class = try Class.init(a, "Template", &.{}, d);
+}
+
+fn templateCtor(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args[0] != .str) {
+        try interp.typeError("Template expects a string");
+        return error.TypeError;
+    }
+    try ensureTemplateClass(interp);
+    const inst = try Instance.init(interp.allocator, interp.string_template_class.?);
+    try inst.dict.setStr(interp.allocator, "template", args[0]);
+    return Value{ .instance = inst };
+}
+
+fn templateText(args: []const Value) ?[]const u8 {
+    if (args.len < 1 or args[0] != .instance) return null;
+    const t = args[0].instance.dict.getStr("template") orelse return null;
+    if (t != .str) return null;
+    return t.str.bytes;
+}
+
+const SubMode = enum { strict, safe };
+
+fn lookupKey(
+    interp: *Interp,
+    name: []const u8,
+    mapping: ?Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+    mode: SubMode,
+) !?Value {
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn == .str and std.mem.eql(u8, kn.str.bytes, name)) return kv;
+    }
+    if (mapping) |m| {
+        if (m == .dict) {
+            if (m.dict.getStr(name)) |v| return v;
+        }
+    }
+    if (mode == .strict) {
+        try interp.raisePy("KeyError", name);
+        return error.PyException;
+    }
+    return null;
+}
+
+fn substituteCommon(
+    interp: *Interp,
+    template: []const u8,
+    mapping: ?Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+    mode: SubMode,
+) !Value {
+    const a = interp.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(a);
+    var i: usize = 0;
+    while (i < template.len) {
+        const c = template[i];
+        if (c != '$') {
+            try out.append(a, c);
+            i += 1;
+            continue;
+        }
+        // c == '$'
+        if (i + 1 >= template.len) {
+            // Trailing '$'
+            if (mode == .safe) {
+                try out.append(a, '$');
+                i += 1;
+                continue;
+            }
+            try interp.raisePy("ValueError", "invalid placeholder in string");
+            return error.PyException;
+        }
+        const n = template[i + 1];
+        if (n == '$') {
+            try out.append(a, '$');
+            i += 2;
+            continue;
+        }
+        if (n == '{') {
+            const close = std.mem.indexOfScalarPos(u8, template, i + 2, '}') orelse {
+                if (mode == .safe) {
+                    try out.append(a, c);
+                    i += 1;
+                    continue;
+                }
+                try interp.raisePy("ValueError", "unmatched '{'");
+                return error.PyException;
+            };
+            const name = template[i + 2 .. close];
+            // CPython requires the inside to be a valid identifier.
+            if (name.len == 0 or !isIdentStart(name[0])) {
+                if (mode == .safe) {
+                    try out.appendSlice(a, template[i .. close + 1]);
+                    i = close + 1;
+                    continue;
+                }
+                try interp.raisePy("ValueError", "invalid placeholder");
+                return error.PyException;
+            }
+            for (name[1..]) |bc| {
+                if (!isIdentCont(bc)) {
+                    if (mode == .safe) {
+                        try out.appendSlice(a, template[i .. close + 1]);
+                        i = close + 1;
+                        break;
+                    }
+                    try interp.raisePy("ValueError", "invalid placeholder");
+                    return error.PyException;
+                }
+            } else {
+                const v_opt = try lookupKey(interp, name, mapping, kw_names, kw_values, mode);
+                if (v_opt) |v| {
+                    try appendValueAsStr(interp, &out, v);
+                } else {
+                    try out.appendSlice(a, template[i .. close + 1]);
+                }
+                i = close + 1;
+                continue;
+            }
+            // safe-mode break landed here:
+            continue;
+        }
+        if (isIdentStart(n)) {
+            var j = i + 2;
+            while (j < template.len and isIdentCont(template[j])) j += 1;
+            const name = template[i + 1 .. j];
+            const v_opt = try lookupKey(interp, name, mapping, kw_names, kw_values, mode);
+            if (v_opt) |v| {
+                try appendValueAsStr(interp, &out, v);
+            } else {
+                try out.appendSlice(a, template[i..j]);
+            }
+            i = j;
+            continue;
+        }
+        // '$' followed by non-identifier and non-'$' and non-'{'.
+        if (mode == .safe) {
+            try out.append(a, '$');
+            i += 1;
+            continue;
+        }
+        try interp.raisePy("ValueError", "invalid placeholder in string");
+        return error.PyException;
+    }
+    const owned = try out.toOwnedSlice(a);
+    return Value{ .str = try Str.fromOwnedSlice(a, owned) };
+}
+
+fn appendValueAsStr(interp: *Interp, out: *std.ArrayList(u8), v: Value) !void {
+    const a = interp.allocator;
+    if (v == .str) {
+        try out.appendSlice(a, v.str.bytes);
+        return;
+    }
+    // Fall back to str.format("{}", v) — same path the {} formatter uses.
+    const piece = try strmethods.formatOne(interp, v, "");
+    if (piece == .str) {
+        try out.appendSlice(a, piece.str.bytes);
+    }
+}
+
+fn templateSubstitute(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const t = templateText(args) orelse {
+        try interp.typeError("substitute called on non-Template");
+        return error.TypeError;
+    };
+    const mapping: ?Value = if (args.len >= 2) args[1] else null;
+    return substituteCommon(interp, t, mapping, &.{}, &.{}, .strict);
+}
+
+fn templateSubstituteKw(
+    p: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const t = templateText(args) orelse {
+        try interp.typeError("substitute called on non-Template");
+        return error.TypeError;
+    };
+    const mapping: ?Value = if (args.len >= 2) args[1] else null;
+    return substituteCommon(interp, t, mapping, kw_names, kw_values, .strict);
+}
+
+fn templateSafeSubstitute(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const t = templateText(args) orelse {
+        try interp.typeError("safe_substitute called on non-Template");
+        return error.TypeError;
+    };
+    const mapping: ?Value = if (args.len >= 2) args[1] else null;
+    return substituteCommon(interp, t, mapping, &.{}, &.{}, .safe);
+}
+
+fn templateSafeSubstituteKw(
+    p: *anyopaque,
+    args: []const Value,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const t = templateText(args) orelse {
+        try interp.typeError("safe_substitute called on non-Template");
+        return error.TypeError;
+    };
+    const mapping: ?Value = if (args.len >= 2) args[1] else null;
+    return substituteCommon(interp, t, mapping, kw_names, kw_values, .safe);
+}
+
+fn templateIsValid(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    const t = templateText(args) orelse return Value{ .boolean = false };
+    var i: usize = 0;
+    while (i < t.len) {
+        const c = t[i];
+        if (c != '$') {
+            i += 1;
+            continue;
+        }
+        if (i + 1 >= t.len) return Value{ .boolean = false };
+        const n = t[i + 1];
+        if (n == '$') {
+            i += 2;
+            continue;
+        }
+        if (n == '{') {
+            const close = std.mem.indexOfScalarPos(u8, t, i + 2, '}') orelse return Value{ .boolean = false };
+            const name = t[i + 2 .. close];
+            if (name.len == 0 or !isIdentStart(name[0])) return Value{ .boolean = false };
+            for (name[1..]) |bc| if (!isIdentCont(bc)) return Value{ .boolean = false };
+            i = close + 1;
+            continue;
+        }
+        if (isIdentStart(n)) {
+            var j = i + 2;
+            while (j < t.len and isIdentCont(t[j])) j += 1;
+            i = j;
+            continue;
+        }
+        return Value{ .boolean = false };
+    }
+    return Value{ .boolean = true };
+}
+
+fn templateGetIdentifiers(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const t = templateText(args) orelse {
+        try interp.typeError("get_identifiers called on non-Template");
+        return error.TypeError;
+    };
+    const out = try List.init(a);
+    var seen: std.ArrayList([]const u8) = .empty;
+    defer seen.deinit(a);
+    var i: usize = 0;
+    while (i < t.len) {
+        const c = t[i];
+        if (c != '$') {
+            i += 1;
+            continue;
+        }
+        if (i + 1 >= t.len) {
+            try interp.raisePy("ValueError", "invalid placeholder");
+            return error.PyException;
+        }
+        const n = t[i + 1];
+        if (n == '$') {
+            i += 2;
+            continue;
+        }
+        var name: []const u8 = undefined;
+        if (n == '{') {
+            const close = std.mem.indexOfScalarPos(u8, t, i + 2, '}') orelse {
+                try interp.raisePy("ValueError", "unmatched '{'");
+                return error.PyException;
+            };
+            name = t[i + 2 .. close];
+            i = close + 1;
+        } else if (isIdentStart(n)) {
+            var j = i + 2;
+            while (j < t.len and isIdentCont(t[j])) j += 1;
+            name = t[i + 1 .. j];
+            i = j;
+        } else {
+            try interp.raisePy("ValueError", "invalid placeholder");
+            return error.PyException;
+        }
+        // Dedupe in encounter order.
+        var found = false;
+        for (seen.items) |s| {
+            if (std.mem.eql(u8, s, name)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            try seen.append(a, name);
+            try out.append(a, Value{ .str = try Str.init(a, name) });
+        }
+    }
+    return Value{ .list = out };
 }
 
 fn capwordsFn(p: *anyopaque, args: []const Value) anyerror!Value {
