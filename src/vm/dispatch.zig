@@ -4034,10 +4034,11 @@ fn bindDescriptor(
                 frame.push(d.func);
                 frame.push(cls);
             } else {
-                // Bare attribute access: produce a bound builtin-style
-                // wrapper isn't in scope; for the fixture this branch
-                // isn't reached, so fall back to pushing the function.
-                frame.push(d.func);
+                // Bare attribute access: hand back a bound method so a
+                // later CALL still injects `cls` as the first arg.
+                const BoundMethod = @import("../object/bound_method.zig").BoundMethod;
+                const bm = try BoundMethod.init(interp.allocator, d.func, cls);
+                frame.push(Value{ .bound_method = bm });
             }
         },
         .staticmethod => {
@@ -4708,8 +4709,12 @@ pub fn isInstanceBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerro
         return error.TypeError;
     }
     if (args[1] == .class) {
-        if (args[0] != .instance) return Value{ .boolean = false };
         const target = args[1].class;
+        if (target.abc_kind != null) {
+            const isInstanceOfAbc = @import("collections_abc_mod.zig").isInstanceOfAbc;
+            return Value{ .boolean = isInstanceOfAbc(target, args[0]) };
+        }
+        if (args[0] != .instance) return Value{ .boolean = false };
         for (args[0].instance.cls.mro) |c| {
             if (c == target) return Value{ .boolean = true };
         }

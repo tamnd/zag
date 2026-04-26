@@ -9,6 +9,30 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.120] - 2026-04-26
+
+### Added
+
+- `120_collections_abc` fixture, byte-equal. New `collections.abc`
+  module exposes the 25 ABCs (`Hashable`, `Callable`, `Iterable`,
+  `Iterator`, `Generator`, `Reversible`, `Sized`, `Container`,
+  `Collection`, `Sequence`, `MutableSequence`, `Set`, `MutableSet`,
+  `Mapping`, `MutableMapping`, `MappingView`, `KeysView`, `ItemsView`,
+  `ValuesView`, `Awaitable`, `Coroutine`, `AsyncIterable`,
+  `AsyncIterator`, `AsyncGenerator`, `Buffer`). `isinstance(obj, abc)`
+  walks the MRO for the ABC itself or anything passed to
+  `abc.register(cls)`, then a virtual-registration table for built-in
+  types, then the `__subclasshook__` structural check that ABCs like
+  `Hashable`, `Iterable`, `Sized`, `Callable`, `Buffer` ship in
+  CPython.
+
+### Changed
+
+- Bare attribute access on a `classmethod` descriptor now produces a
+  `BoundMethod` so a later call still injects the owning class as the
+  first argument (`Sequence.register` was the trigger, but the fix is
+  general).
+
 ## [0.0.119] - 2026-04-26
 
 ### Added
