@@ -9,6 +9,12 @@ changes.
 
 ## [Unreleased]
 
+## [0.0.152] - 2026-04-26
+
+### Added
+
+- `shelve` module: `open()`, `Shelf` class with full dict-like interface (`__getitem__`, `__setitem__`, `__delitem__`, `__contains__`, `__len__`, `__iter__`, `keys`, `values`, `items`, `get`, `pop`, `setdefault`, `update`, `sync`, `close`, context manager). Supports flags `c`/`n`/`r` and `writeback=True`. Uses private ZSHV binary format backed by pickle encoding.
+
 ## [0.0.151] - 2026-04-26
 
 ### Added
