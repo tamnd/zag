@@ -106,6 +106,7 @@ pub const names = [_][]const u8{
     "18_slicing",
     "180_token",
     "181_ast",
+    "182_argparse",
     "19_comprehensions",
     "20_unpack",
     "21_with_stress",
