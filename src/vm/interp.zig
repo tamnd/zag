@@ -370,6 +370,7 @@ pub const Interp = struct {
     traceback_te_class: ?*@import("../object/class.zig").Class = null,
     token_module: ?*Module = null,
     platform_module: ?*Module = null,
+    platform_uname_class: ?*@import("../object/class.zig").Class = null,
     getpass_module: ?*Module = null,
     traceback_module: ?*Module = null,
     inspect_module: ?*Module = null,
