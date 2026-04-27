@@ -60,6 +60,7 @@ const lzma_mod = @import("lzma_mod.zig");
 const tarfile_mod = @import("tarfile_mod.zig");
 const zstd_mod = @import("zstd_mod.zig");
 const configparser_mod = @import("configparser_mod.zig");
+const tomllib_mod = @import("tomllib_mod.zig");
 const fnmatch_mod = @import("fnmatch_mod.zig");
 const statistics_mod = @import("statistics_mod.zig");
 const calendar_mod = @import("calendar_mod.zig");
@@ -328,6 +329,8 @@ pub const Interp = struct {
     configparser_missing_header_class: ?*@import("../object/class.zig").Class = null,
     configparser_interp_missing_class: ?*@import("../object/class.zig").Class = null,
     configparser_proxy_class: ?*@import("../object/class.zig").Class = null,
+    tomllib_module: ?*Module = null,
+    toml_decode_error_class: ?*@import("../object/class.zig").Class = null,
     logging_module: ?*Module = null,
     logging_state: ?*@import("logging_mod.zig").LoggingState = null,
     logging_logger_class: ?*@import("../object/class.zig").Class = null,
@@ -1122,6 +1125,12 @@ pub const Interp = struct {
             if (self.configparser_module) |m| return m;
             const m = configparser_mod.build(self) catch return null;
             self.configparser_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "tomllib")) {
+            if (self.tomllib_module) |m| return m;
+            const m = tomllib_mod.build(self) catch return null;
+            self.tomllib_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "logging")) {

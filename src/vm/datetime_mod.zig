@@ -75,6 +75,10 @@ pub fn build(interp: *Interp) !*Module {
     return m;
 }
 
+pub fn ensureClasses(interp: *Interp) !void {
+    return buildClasses(interp);
+}
+
 fn buildClasses(interp: *Interp) !void {
     if (interp.dt_date_class != null) return;
     const a = interp.allocator;
@@ -457,6 +461,18 @@ fn tdMicros(self: *Instance) i128 {
 
 pub fn newTimedeltaPub(interp: *Interp, days: i128, seconds: i128, microseconds: i128) !Value {
     return newTimedelta(interp, days, seconds, microseconds);
+}
+
+pub fn newDatePub(interp: *Interp, y: i64, m: i64, d: i64) !Value {
+    return newDate(interp, y, m, d);
+}
+
+pub fn newTimePub(interp: *Interp, h: i64, m: i64, s: i64, us: i64, tzinfo: Value, fold: i64) !Value {
+    return newTime(interp, h, m, s, us, tzinfo, fold);
+}
+
+pub fn newDatetimePub(interp: *Interp, y: i64, mo: i64, d: i64, hh: i64, mm: i64, ss: i64, us: i64, tz: Value, fold: i64) !Value {
+    return newDatetime(interp, y, mo, d, hh, mm, ss, us, tz, fold);
 }
 
 fn newTimedelta(interp: *Interp, days: i128, seconds: i128, microseconds: i128) !Value {

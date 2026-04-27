@@ -465,11 +465,36 @@ pub const Value = union(Tag) {
     /// Zig's {d} already does shortest-round-trip, so we only need to
     /// fix up the "no decimal, no exponent" case.
     fn writeFloat(w: *std.Io.Writer, f: f64) !void {
-        var buf: [64]u8 = undefined;
-        const s = try std.fmt.bufPrint(&buf, "{d}", .{f});
-        try w.writeAll(s);
-        if (std.mem.indexOfAny(u8, s, ".eEnN") == null) {
-            try w.writeAll(".0");
+        if (std.math.isNan(f)) { try w.writeAll("nan"); return; }
+        if (std.math.isInf(f)) { try w.writeAll(if (f > 0) "inf" else "-inf"); return; }
+        // Use Zig's Ryu-based scientific format to extract the exponent.
+        var ebuf: [64]u8 = undefined;
+        const es = try std.fmt.bufPrint(&ebuf, "{e}", .{f});
+        // Parse exponent from the 'e' part: e.g. "6.626e-34" or "3.14e0"
+        const e_idx = std.mem.lastIndexOfScalar(u8, es, 'e') orelse {
+            // Fallback: nan/inf already handled above
+            try w.writeAll(es);
+            return;
+        };
+        const exp_str = es[e_idx + 1 ..];
+        const exp = std.fmt.parseInt(i32, exp_str, 10) catch 0;
+        // Python uses fixed notation when -4 <= exp < 16, else scientific
+        if (exp >= -4 and exp < 16) {
+            var dbuf: [64]u8 = undefined;
+            const s = try std.fmt.bufPrint(&dbuf, "{d}", .{f});
+            try w.writeAll(s);
+            if (std.mem.indexOfAny(u8, s, ".eEnN") == null) try w.writeAll(".0");
+        } else {
+            // Scientific notation: format like Python (e.g. "6.626e-34")
+            // Zig's {e} output: "6.626e-34" or "3.14e0" — reformat exponent
+            const mantissa = es[0..e_idx];
+            try w.writeAll(mantissa);
+            try w.writeByte('e');
+            if (exp >= 0) {
+                try w.print("+{d}", .{exp});
+            } else {
+                try w.print("{d}", .{exp});
+            }
         }
     }
 
