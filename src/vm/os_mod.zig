@@ -112,9 +112,12 @@ pub fn build(interp: *Interp) !*Module {
             try env.setKey(a, Value{ .str = k }, Value{ .str = v });
         }
     } else if (builtin.os.tag != .windows) {
-        // Fallback: read libc environ directly (for test harnesses that don't pass env_map).
+        // Fallback: read the C environ pointer directly when no env_map is provided.
+        const CEnv = struct {
+            extern var environ: [*:null]?[*:0]u8;
+        };
         var i: usize = 0;
-        while (std.c.environ[i]) |entry| : (i += 1) {
+        while (CEnv.environ[i]) |entry| : (i += 1) {
             const s = std.mem.span(entry);
             if (std.mem.indexOf(u8, s, "=")) |eq| {
                 const k = try Str.init(a, s[0..eq]);
@@ -298,13 +301,53 @@ fn truncateFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value.none;
 }
 
+fn posixUmask(mask: u32) u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.syscall1(.umask, mask));
+    } else {
+        return @intCast(std.c.umask(@intCast(mask)));
+    }
+}
+
+fn posixGetuid() u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getuid());
+    } else {
+        return @intCast(std.c.getuid());
+    }
+}
+
+fn posixGetgid() u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getgid());
+    } else {
+        return @intCast(std.c.getgid());
+    }
+}
+
+fn posixGeteuid() u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.geteuid());
+    } else {
+        return @intCast(std.c.geteuid());
+    }
+}
+
+fn posixGetegid() u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getegid());
+    } else {
+        return @intCast(std.c.getegid());
+    }
+}
+
 fn umaskFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     _ = interp;
     if (args.len < 1 or args[0] != .small_int) return Value{ .small_int = 0 };
     if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
-    const mask: std.c.mode_t = @intCast(args[0].small_int & 0o777);
-    const old = std.c.umask(mask);
+    const mask: u32 = @intCast(args[0].small_int & 0o777);
+    const old = posixUmask(mask);
     return Value{ .small_int = @intCast(old) };
 }
 
@@ -312,28 +355,28 @@ fn getgidFn(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = p;
     _ = args;
     if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
-    return Value{ .small_int = @intCast(std.c.getgid()) };
+    return Value{ .small_int = @intCast(posixGetgid()) };
 }
 
 fn getegidFn(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = p;
     _ = args;
     if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
-    return Value{ .small_int = @intCast(std.c.getegid()) };
+    return Value{ .small_int = @intCast(posixGetegid()) };
 }
 
 fn getEuidFn(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = p;
     _ = args;
     if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
-    return Value{ .small_int = @intCast(std.c.geteuid()) };
+    return Value{ .small_int = @intCast(posixGeteuid()) };
 }
 
 fn getuidFn(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = p;
     _ = args;
     if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
-    return Value{ .small_int = @intCast(std.c.getuid()) };
+    return Value{ .small_int = @intCast(posixGetuid()) };
 }
 
 fn getppidFn(p: *anyopaque, args: []const Value) anyerror!Value {
@@ -350,9 +393,51 @@ fn cpuCountFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .small_int = @intCast(n) };
 }
 
-const c_strerror = struct {
-    extern "c" fn strerror(errnum: c_int) [*:0]const u8;
-};
+fn strerrorMsg(n: i64) []const u8 {
+    // Common POSIX errno values (Linux/macOS compatible).
+    return switch (n) {
+        1 => "Operation not permitted",
+        2 => "No such file or directory",
+        3 => "No such process",
+        4 => "Interrupted system call",
+        5 => "Input/output error",
+        6 => "No such device or address",
+        7 => "Argument list too long",
+        8 => "Exec format error",
+        9 => "Bad file descriptor",
+        10 => "No child processes",
+        11 => "Resource temporarily unavailable",
+        12 => "Cannot allocate memory",
+        13 => "Permission denied",
+        14 => "Bad address",
+        16 => "Device or resource busy",
+        17 => "File exists",
+        18 => "Invalid cross-device link",
+        19 => "No such device",
+        20 => "Not a directory",
+        21 => "Is a directory",
+        22 => "Invalid argument",
+        23 => "Too many open files in system",
+        24 => "Too many open files",
+        25 => "Inappropriate ioctl for device",
+        26 => "Text file busy",
+        27 => "File too large",
+        28 => "No space left on device",
+        29 => "Illegal seek",
+        30 => "Read-only file system",
+        31 => "Too many links",
+        32 => "Broken pipe",
+        33 => "Numerical argument out of domain",
+        34 => "Numerical result out of range",
+        35 => "Resource deadlock avoided",
+        36 => "File name too long",
+        37 => "No locks available",
+        38 => "Function not implemented",
+        39 => "Directory not empty",
+        40 => "Too many levels of symbolic links",
+        else => "Unknown error",
+    };
+}
 
 fn strerrorFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
@@ -361,9 +446,19 @@ fn strerrorFn(p: *anyopaque, args: []const Value) anyerror!Value {
         try interp.typeError("os.strerror expects an int");
         return error.TypeError;
     }
-    const errno_int: c_int = @intCast(args[0].small_int);
-    const msg = std.mem.span(c_strerror.strerror(errno_int));
-    return Value{ .str = try Str.init(a, msg) };
+    return Value{ .str = try Str.init(a, strerrorMsg(args[0].small_int)) };
+}
+
+fn fillRandom(buf: []u8) void {
+    if (builtin.os.tag == .linux) {
+        var offset: usize = 0;
+        while (offset < buf.len) {
+            const n = std.os.linux.getrandom(buf.ptr + offset, buf.len - offset, 0);
+            if (n > 0) offset += n;
+        }
+    } else {
+        std.c.arc4random_buf(buf.ptr, buf.len);
+    }
 }
 
 fn urandomFn(p: *anyopaque, args: []const Value) anyerror!Value {
@@ -375,8 +470,7 @@ fn urandomFn(p: *anyopaque, args: []const Value) anyerror!Value {
     }
     const n: usize = @intCast(args[0].small_int);
     const buf = try a.alloc(u8, n);
-    // Use OS-provided randomness.
-    std.c.arc4random_buf(buf.ptr, buf.len);
+    fillRandom(buf);
     const b = try Bytes.fromOwnedSlice(a, buf);
     return Value{ .bytes = b };
 }
