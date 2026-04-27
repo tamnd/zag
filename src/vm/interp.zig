@@ -298,6 +298,7 @@ pub const Interp = struct {
     zipfile_class: ?*@import("../object/class.zig").Class = null,
     zipfile_info_class: ?*@import("../object/class.zig").Class = null,
     zipfile_extfile_class: ?*@import("../object/class.zig").Class = null,
+    zipfile_badzip_class: ?*@import("../object/class.zig").Class = null,
     lzma_module: ?*Module = null,
     lzma_error_class: ?*@import("../object/class.zig").Class = null,
     lzma_compressor_class: ?*@import("../object/class.zig").Class = null,
