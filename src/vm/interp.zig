@@ -58,7 +58,11 @@ const bz2_mod = @import("bz2_mod.zig");
 const zipfile_mod = @import("zipfile_mod.zig");
 const lzma_mod = @import("lzma_mod.zig");
 const tarfile_mod = @import("tarfile_mod.zig");
+const zstd_mod = @import("zstd_mod.zig");
 const configparser_mod = @import("configparser_mod.zig");
+const tomllib_mod = @import("tomllib_mod.zig");
+const plistlib_mod = @import("plistlib_mod.zig");
+const netrc_mod = @import("netrc_mod.zig");
 const fnmatch_mod = @import("fnmatch_mod.zig");
 const statistics_mod = @import("statistics_mod.zig");
 const calendar_mod = @import("calendar_mod.zig");
@@ -305,6 +309,13 @@ pub const Interp = struct {
     tarfile_error_class: ?*@import("../object/class.zig").Class = null,
     tarfile_read_error_class: ?*@import("../object/class.zig").Class = null,
     tarfile_module: ?*Module = null,
+    zstd_error_class: ?*@import("../object/class.zig").Class = null,
+    zstd_compressor_class: ?*@import("../object/class.zig").Class = null,
+    zstd_decompressor_class: ?*@import("../object/class.zig").Class = null,
+    zstd_dict_class: ?*@import("../object/class.zig").Class = null,
+    zstd_file_class: ?*@import("../object/class.zig").Class = null,
+    zstd_module: ?*Module = null,
+    compression_module: ?*Module = null,
     lzma_module: ?*Module = null,
     lzma_error_class: ?*@import("../object/class.zig").Class = null,
     lzma_compressor_class: ?*@import("../object/class.zig").Class = null,
@@ -316,6 +327,19 @@ pub const Interp = struct {
     configparser_no_section_class: ?*@import("../object/class.zig").Class = null,
     configparser_no_option_class: ?*@import("../object/class.zig").Class = null,
     configparser_dup_section_class: ?*@import("../object/class.zig").Class = null,
+    configparser_dup_option_class: ?*@import("../object/class.zig").Class = null,
+    configparser_missing_header_class: ?*@import("../object/class.zig").Class = null,
+    configparser_interp_missing_class: ?*@import("../object/class.zig").Class = null,
+    configparser_proxy_class: ?*@import("../object/class.zig").Class = null,
+    tomllib_module: ?*Module = null,
+    toml_decode_error_class: ?*@import("../object/class.zig").Class = null,
+    plistlib_module: ?*Module = null,
+    plist_uid_class: ?*@import("../object/class.zig").Class = null,
+    plist_error_class: ?*@import("../object/class.zig").Class = null,
+    plist_fmt_class: ?*@import("../object/class.zig").Class = null,
+    netrc_module: ?*Module = null,
+    netrc_class: ?*@import("../object/class.zig").Class = null,
+    netrc_error_class: ?*@import("../object/class.zig").Class = null,
     logging_module: ?*Module = null,
     logging_state: ?*@import("logging_mod.zig").LoggingState = null,
     logging_logger_class: ?*@import("../object/class.zig").Class = null,
@@ -360,8 +384,13 @@ pub const Interp = struct {
     io_bytesio_class: ?*@import("../object/class.zig").Class = null,
     file_class: ?*@import("../object/class.zig").Class = null,
     hashlib_hash_class: ?*@import("../object/class.zig").Class = null,
+    csv_dialect_class: ?*@import("../object/class.zig").Class = null,
+    csv_error_class: ?*@import("../object/class.zig").Class = null,
+    csv_reader_class: ?*@import("../object/class.zig").Class = null,
     csv_writer_class: ?*@import("../object/class.zig").Class = null,
+    csv_dict_reader_class: ?*@import("../object/class.zig").Class = null,
     csv_dict_writer_class: ?*@import("../object/class.zig").Class = null,
+    csv_sniffer_class: ?*@import("../object/class.zig").Class = null,
     urlparse_result_class: ?*@import("../object/class.zig").Class = null,
     hmac_class: ?*@import("../object/class.zig").Class = null,
     uuid_class: ?*@import("../object/class.zig").Class = null,
@@ -898,6 +927,20 @@ pub const Interp = struct {
             self.tarfile_module = m;
             return m;
         }
+        if (std.mem.eql(u8, name, "compression.zstd") or std.mem.eql(u8, name, "compression")) {
+            if (std.mem.eql(u8, name, "compression")) {
+                if (self.compression_module) |m| return m;
+                const m = zstd_mod.buildCompressionPackage(self) catch return null;
+                self.compression_module = m;
+                self.zstd_module = m.attrs.getStr("zstd").?.module;
+                return m;
+            } else {
+                if (self.zstd_module) |m| return m;
+                const m = zstd_mod.build(self) catch return null;
+                self.zstd_module = m;
+                return m;
+            }
+        }
         if (std.mem.eql(u8, name, "fnmatch")) {
             if (self.fnmatch_module) |m| return m;
             const m = fnmatch_mod.build(self) catch return null;
@@ -1091,6 +1134,24 @@ pub const Interp = struct {
             if (self.configparser_module) |m| return m;
             const m = configparser_mod.build(self) catch return null;
             self.configparser_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "tomllib")) {
+            if (self.tomllib_module) |m| return m;
+            const m = tomllib_mod.build(self) catch return null;
+            self.tomllib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "plistlib")) {
+            if (self.plistlib_module) |m| return m;
+            const m = plistlib_mod.build(self) catch return null;
+            self.plistlib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "netrc")) {
+            if (self.netrc_module) |m| return m;
+            const m = netrc_mod.build(self) catch return null;
+            self.netrc_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "logging")) {
