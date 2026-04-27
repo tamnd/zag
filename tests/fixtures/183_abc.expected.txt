@@ -1,0 +1,7 @@
+woof
+breathes
+True
+True
+True
+frozenset({'sound'})
+TypeError raised

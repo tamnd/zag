@@ -4770,7 +4770,7 @@ fn instantiate(
 ) !Value {
     // Refuse to instantiate classes with unresolved abstract methods.
     if (cls.dict.getStr("__abstractmethods__")) |am| {
-        if (am == .list and am.list.items.items.len > 0) {
+        if ((am == .list and am.list.items.items.len > 0) or (am == .set and am.set.items.items.len > 0)) {
             try interp.raisePy("TypeError", "Can't instantiate abstract class with abstract methods");
             return error.PyException;
         }
@@ -5032,13 +5032,13 @@ fn processAbcClass(
 
     if (unresolved.items.len == 0) return;
 
-    // Store as a List value on the class dict.
-    const am_list = try List.init(interp.allocator);
+    // Store as a frozenset on the class dict.
+    const am_set = try Set.initFrozen(interp.allocator);
     for (unresolved.items) |attr| {
         const s = try Str.init(interp.allocator, attr);
-        try am_list.append(interp.allocator, Value{ .str = s });
+        try am_set.add(interp.allocator, Value{ .str = s });
     }
-    try cls.dict.setStr(interp.allocator, "__abstractmethods__", Value{ .list = am_list });
+    try cls.dict.setStr(interp.allocator, "__abstractmethods__", Value{ .set = am_set });
 }
 
 /// `isinstance(obj, cls)` -- walks `obj.cls.mro` looking for `cls`.
