@@ -101,6 +101,7 @@ pub const names = [_][]const u8{
     "175_uuid",
     "176_typing",
     "177_contextlib",
+    "178_inspect",
     "18_slicing",
     "19_comprehensions",
     "20_unpack",
