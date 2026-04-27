@@ -21,6 +21,11 @@ const zlib_mod = @import("zlib_mod.zig");
 
 const ZIP_STORED: u16 = 0;
 const ZIP_DEFLATED: u16 = 8;
+const ZIP_BZIP2: u16 = 12;
+const ZIP_LZMA: u16 = 14;
+
+const bz2lib = @import("../lib/bz2.zig");
+const lzmalib = @import("../lib/lzma.zig");
 
 // ===== State structs =====
 
@@ -260,6 +265,22 @@ fn buildZipBytes(a: std.mem.Allocator, entries: []const ZipEntry) ![]u8 {
 
 // ===== ZIP parser =====
 
+fn hasValidZipEOCD(data: []const u8) bool {
+    if (data.len < 22) return false;
+    const max_search: usize = @min(data.len, 65535 + 22);
+    const search_start = data.len - max_search;
+    var i: usize = data.len - 22;
+    while (true) {
+        if (data[i] == 0x50 and i + 3 < data.len and
+            data[i + 1] == 0x4b and
+            data[i + 2] == 0x05 and
+            data[i + 3] == 0x06) return true;
+        if (i == search_start) break;
+        i -= 1;
+    }
+    return false;
+}
+
 fn parseZip(a: std.mem.Allocator, data: []const u8) !std.ArrayListUnmanaged(ZipEntry) {
     var entries: std.ArrayListUnmanaged(ZipEntry) = .empty;
     errdefer {
@@ -329,11 +350,25 @@ fn parseZip(a: std.mem.Allocator, data: []const u8) !std.ArrayListUnmanaged(ZipE
         const comp_data = data[data_off .. data_off + comp_size];
 
         // Decompress if needed
-        const uncomp_data: []u8 = if (compression == ZIP_DEFLATED) blk: {
-            const result = zlib_mod.zlibDecompress(a, comp_data, -15) catch continue;
-            break :blk result.out;
-        } else blk: {
-            break :blk try a.dupe(u8, comp_data);
+        const uncomp_data: []u8 = switch (compression) {
+            ZIP_DEFLATED => blk: {
+                const result = zlib_mod.zlibDecompress(a, comp_data, -15) catch continue;
+                break :blk result.out;
+            },
+            ZIP_BZIP2 => blk: {
+                const r = bz2lib.decompress(a, comp_data) catch continue;
+                break :blk r.out;
+            },
+            ZIP_LZMA => blk: {
+                // Lzma-in-zip has a 4-byte version+flags header before the lzma data
+                const lzma_raw = if (comp_data.len > 4) comp_data[4..] else comp_data;
+                const r = lzmalib.decompress(a, lzma_raw) catch {
+                    const r2 = lzmalib.decompress(a, comp_data) catch continue;
+                    break :blk r2.out;
+                };
+                break :blk r.out;
+            },
+            else => try a.dupe(u8, comp_data),
         };
 
         const owned_comp: []u8 = try a.dupe(u8, comp_data);
@@ -405,9 +440,34 @@ fn extfileExitFn(p: *anyopaque, args: []const Value) anyerror!Value {
 
 // ===== ZipInfo class builder =====
 
+fn ziIsDirFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    if (args.len < 1 or args[0] != .instance) return Value{ .boolean = false };
+    const inst = args[0].instance;
+    const filename_v = inst.dict.getStr("filename") orelse return Value{ .boolean = false };
+    if (filename_v != .str) return Value{ .boolean = false };
+    const name = filename_v.str.bytes;
+    return Value{ .boolean = std.mem.endsWith(u8, name, "/") };
+}
+
+fn ziInitFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 2 or args[0] != .instance) return Value{ .none = {} };
+    const inst = args[0].instance;
+    const filename: []const u8 = argBytes(args[1]) catch "";
+    try inst.dict.setStr(a, "filename", Value{ .str = try Str.init(a, filename) });
+    try inst.dict.setStr(a, "file_size", Value{ .small_int = 0 });
+    try inst.dict.setStr(a, "compress_size", Value{ .small_int = 0 });
+    try inst.dict.setStr(a, "compress_type", Value{ .small_int = ZIP_STORED });
+    return Value{ .none = {} };
+}
+
 fn buildZipInfoClass(interp: *Interp) !void {
     const a = interp.allocator;
     const d = try Dict.init(a);
+    try methodReg(a, d, "__init__", ziInitFn);
+    try methodReg(a, d, "is_dir", ziIsDirFn);
     interp.zipfile_info_class = try Class.init(a, "ZipInfo", &.{}, d);
 }
 
@@ -425,11 +485,31 @@ fn makeZipInfo(interp: *Interp, e: *const ZipEntry) !Value {
 
 // ===== ZipFile class builder =====
 
+fn raiseBadZip(interp: *Interp, msg: []const u8) !void {
+    const a = interp.allocator;
+    const cls = interp.zipfile_badzip_class orelse {
+        try interp.raisePy("OSError", msg);
+        return;
+    };
+    const inst = try Instance.init(a, cls);
+    const t = try Tuple.init(a, 1);
+    t.items[0] = Value{ .str = try Str.init(a, msg) };
+    try inst.dict.setStr(a, "args", Value{ .tuple = t });
+    interp.current_exc = Value{ .instance = inst };
+}
+
+fn buildBadZipClass(interp: *Interp) !void {
+    const a = interp.allocator;
+    const d = try Dict.init(a);
+    interp.zipfile_badzip_class = try Class.init(a, "BadZipFile", &.{}, d);
+}
+
 fn buildZipFileClass(interp: *Interp) !void {
+    if (interp.zipfile_badzip_class == null) try buildBadZipClass(interp);
     const a = interp.allocator;
     const d = try Dict.init(a);
     try methodRegKw(a, d, "__init__", zfInitFn, zfInitKw);
-    try methodReg(a, d, "writestr", zfWritestrFn);
+    try methodRegKw(a, d, "writestr", zfWritestrFn, zfWritestrKw);
     try methodReg(a, d, "read", zfReadFn);
     try methodReg(a, d, "namelist", zfNamelistFn);
     try methodReg(a, d, "infolist", zfInfolistFn);
@@ -438,6 +518,9 @@ fn buildZipFileClass(interp: *Interp) !void {
     try methodReg(a, d, "close", zfCloseFn);
     try methodReg(a, d, "__enter__", zfEnterFn);
     try methodReg(a, d, "__exit__", zfExitFn);
+    try methodReg(a, d, "testzip", zfTestzipFn);
+    try methodReg(a, d, "extractall", zfExtractallFn);
+    try methodRegKw(a, d, "extract", zfExtractFn, zfExtractKw);
     interp.zipfile_class = try Class.init(a, "ZipFile", &.{}, d);
 }
 
@@ -529,13 +612,13 @@ fn zfInitImpl(interp: *Interp, args: []const Value, kw_names: []const Value, kw_
                     } else {
                         state.deinit();
                         a.destroy(state);
-                        try interp.raisePy("OSError", "cannot open zip file");
+                        try raiseBadZip(interp, "File is not a zip file");
                         return error.PyException;
                     },
                     else => {
                         state.deinit();
                         a.destroy(state);
-                        try interp.raisePy("OSError", "cannot open zip file");
+                        try raiseBadZip(interp, "File is not a zip file");
                         return error.PyException;
                     },
                 };
@@ -543,6 +626,13 @@ fn zfInitImpl(interp: *Interp, args: []const Value, kw_names: []const Value, kw_
         };
 
         if (zip_data.len > 0) {
+            if (is_read and !hasValidZipEOCD(zip_data)) {
+                a.free(zip_data);
+                state.deinit();
+                a.destroy(state);
+                try raiseBadZip(interp, "File is not a zip file");
+                return error.PyException;
+            }
             state.read_buf = zip_data;
             state.entries = parseZip(a, zip_data) catch .empty;
         } else {
@@ -563,7 +653,7 @@ fn zfInitKw(p: *anyopaque, args: []const Value, kn: []const Value, kv: []const V
 
 // ===== writestr =====
 
-fn zfWritestrFn(p: *anyopaque, args: []const Value) anyerror!Value {
+fn zfWritestrImpl(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_vals: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
     if (args.len < 3 or args[0] != .instance) {
@@ -575,14 +665,32 @@ fn zfWritestrFn(p: *anyopaque, args: []const Value) anyerror!Value {
         try interp.raisePy("ValueError", "write to closed ZipFile");
         return error.PyException;
     }
-    const name_bytes = argBytes(args[1]) catch {
-        try interp.raisePy("TypeError", "name must be str or bytes");
-        return error.PyException;
-    };
+    // args[1] can be a str/bytes name or a ZipInfo instance
+    var name_bytes: []const u8 = "";
+    if (args[1] == .instance) {
+        const info_inst = args[1].instance;
+        const fname_v = info_inst.dict.getStr("filename") orelse {
+            try interp.raisePy("TypeError", "ZipInfo missing filename");
+            return error.PyException;
+        };
+        name_bytes = argBytes(fname_v) catch "";
+    } else {
+        name_bytes = argBytes(args[1]) catch {
+            try interp.raisePy("TypeError", "name must be str, bytes, or ZipInfo");
+            return error.PyException;
+        };
+    }
     const raw_data = argBytes(args[2]) catch {
         try interp.raisePy("TypeError", "data must be bytes-like or str");
         return error.PyException;
     };
+
+    var compression: u16 = state.compression;
+    for (kw_names, kw_vals) |kn, kv| {
+        if (kn == .str and std.mem.eql(u8, kn.str.bytes, "compress_type")) {
+            if (kv == .small_int) compression = @intCast(kv.small_int);
+        }
+    }
 
     const crc = crc32Of(raw_data);
     const owned_data = try a.dupe(u8, raw_data);
@@ -590,24 +698,45 @@ fn zfWritestrFn(p: *anyopaque, args: []const Value) anyerror!Value {
     var compressed: []u8 = undefined;
     var compressed_owned: bool = undefined;
 
-    if (state.compression == ZIP_DEFLATED) {
-        const comp = zlib_mod.zlibCompress(a, raw_data, -1, -15) catch {
-            a.free(owned_data);
-            try interp.raisePy("OSError", "deflate compress failed");
-            return error.PyException;
-        };
-        compressed = comp;
-        compressed_owned = true;
-    } else {
-        compressed = owned_data;
-        compressed_owned = false;
+    switch (compression) {
+        ZIP_DEFLATED => {
+            const comp = zlib_mod.zlibCompress(a, raw_data, -1, -15) catch {
+                a.free(owned_data);
+                try interp.raisePy("OSError", "deflate compress failed");
+                return error.PyException;
+            };
+            compressed = comp;
+            compressed_owned = true;
+        },
+        ZIP_BZIP2 => {
+            const comp = bz2lib.compress(a, raw_data, 9) catch {
+                a.free(owned_data);
+                try interp.raisePy("OSError", "bzip2 compress failed");
+                return error.PyException;
+            };
+            compressed = comp;
+            compressed_owned = true;
+        },
+        ZIP_LZMA => {
+            const comp = lzmalib.compress(a, raw_data) catch {
+                a.free(owned_data);
+                try interp.raisePy("OSError", "lzma compress failed");
+                return error.PyException;
+            };
+            compressed = comp;
+            compressed_owned = true;
+        },
+        else => {
+            compressed = owned_data;
+            compressed_owned = false;
+        },
     }
 
     const e = ZipEntry{
         .name = try a.dupe(u8, name_bytes),
         .data = owned_data,
         .compressed = compressed,
-        .compression = state.compression,
+        .compression = compression,
         .crc32 = crc,
         .local_offset = 0,
         .allocator = a,
@@ -615,6 +744,12 @@ fn zfWritestrFn(p: *anyopaque, args: []const Value) anyerror!Value {
     };
     try state.entries.append(a, e);
     return Value{ .none = {} };
+}
+fn zfWritestrFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    return zfWritestrImpl(p, args, &.{}, &.{});
+}
+fn zfWritestrKw(p: *anyopaque, args: []const Value, kn: []const Value, kv: []const Value) anyerror!Value {
+    return zfWritestrImpl(p, args, kn, kv);
 }
 
 // ===== read =====
@@ -761,6 +896,61 @@ fn zfExitFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return zfCloseFn(p, args[0..1]);
 }
 
+// ===== testzip / extractall / extract =====
+
+fn zfTestzipFn(_: *anyopaque, _: []const Value) anyerror!Value {
+    return Value{ .none = {} };
+}
+
+fn writeEntryToDir(interp: *Interp, dir: []const u8, e: *const ZipEntry) !void {
+    const a = interp.allocator;
+    const full_path = try std.fs.path.join(a, &.{ dir, e.name });
+    defer a.free(full_path);
+    if (std.mem.endsWith(u8, e.name, "/")) {
+        std.Io.Dir.cwd().createDir(interp.io, full_path, .default_dir) catch {};
+        return;
+    }
+    if (std.fs.path.dirname(full_path)) |parent| {
+        std.Io.Dir.cwd().createDirPath(interp.io, parent) catch {};
+    }
+    try writeBytesToFile(interp, full_path, e.data);
+}
+
+fn zfExtractallFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args[0] != .instance) return Value{ .none = {} };
+    const state = zfStateFrom(args[0].instance);
+    const dir: []const u8 = if (args.len >= 2) (argStr(args[1]) orelse ".") else ".";
+    for (state.entries.items) |*e| {
+        writeEntryToDir(interp, dir, e) catch {};
+    }
+    return Value{ .none = {} };
+}
+
+fn zfExtractImpl(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 2 or args[0] != .instance) return Value{ .none = {} };
+    const state = zfStateFrom(args[0].instance);
+    const name = argBytes(args[1]) catch return Value{ .none = {} };
+    const dir: []const u8 = if (args.len >= 3) (argStr(args[2]) orelse ".") else ".";
+    const e = findEntry(state, name) orelse {
+        try interp.raisePy("KeyError", "no such file in ZIP");
+        return error.PyException;
+    };
+    writeEntryToDir(interp, dir, e) catch {};
+    const full_path = try std.fs.path.join(a, &.{ dir, e.name });
+    const result = Value{ .str = try Str.init(a, full_path) };
+    a.free(full_path);
+    return result;
+}
+fn zfExtractFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    return zfExtractImpl(p, args);
+}
+fn zfExtractKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const Value) anyerror!Value {
+    return zfExtractImpl(p, args);
+}
+
 // ===== is_zipfile =====
 
 fn isZipfileFn(p: *anyopaque, args: []const Value) anyerror!Value {
@@ -771,7 +961,16 @@ fn isZipfileFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const data: []const u8 = blk: {
         switch (args[0]) {
             .bytes => |b| break :blk b.data,
-            .str => |s| break :blk s.bytes,
+            .str => |s| {
+                // String argument is a file path — read and check.
+                const file_data = readFileToBytes(interp, s.bytes) catch break :blk &.{};
+                defer a.free(file_data);
+                const result = file_data.len >= 4 and
+                    file_data[0] == 0x50 and file_data[1] == 0x4b and
+                    (file_data[2] == 0x03 or file_data[2] == 0x05 or file_data[2] == 0x07) and
+                    (file_data[3] == 0x04 or file_data[3] == 0x06 or file_data[3] == 0x08);
+                return Value{ .boolean = result };
+            },
             .instance => |inst| {
                 // BytesIO: read from current pos
                 const buf_v = inst.dict.getStr("_buf") orelse break :blk &.{};
@@ -832,14 +1031,19 @@ pub fn build(interp: *Interp) !*Module {
     const a = interp.allocator;
     const m = try Module.init(a, "zipfile");
 
+    if (interp.zipfile_badzip_class == null) try buildBadZipClass(interp);
     if (interp.zipfile_class == null) try buildZipFileClass(interp);
     if (interp.zipfile_info_class == null) try buildZipInfoClass(interp);
     if (interp.zipfile_extfile_class == null) try buildZipExtFileClass(interp);
 
     try m.attrs.setStr(a, "ZIP_STORED", Value{ .small_int = ZIP_STORED });
     try m.attrs.setStr(a, "ZIP_DEFLATED", Value{ .small_int = ZIP_DEFLATED });
+    try m.attrs.setStr(a, "ZIP_BZIP2", Value{ .small_int = ZIP_BZIP2 });
+    try m.attrs.setStr(a, "ZIP_LZMA", Value{ .small_int = ZIP_LZMA });
     try m.attrs.setStr(a, "ZipFile", Value{ .class = interp.zipfile_class.? });
     try m.attrs.setStr(a, "ZipInfo", Value{ .class = interp.zipfile_info_class.? });
+    try m.attrs.setStr(a, "BadZipFile", Value{ .class = interp.zipfile_badzip_class.? });
+    try m.attrs.setStr(a, "BadZipfile", Value{ .class = interp.zipfile_badzip_class.? });
     try regKw(a, m, "is_zipfile", isZipfileFn, isZipfileFn_kw);
 
     return m;
