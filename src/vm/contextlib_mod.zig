@@ -375,6 +375,11 @@ fn esExit(p: *anyopaque, args: []const Value) anyerror!Value {
     const self = args[0].instance;
     const cb_list_v = self.dict.getStr("_callbacks") orelse return Value{ .boolean = false };
     if (cb_list_v != .list) return Value{ .boolean = false };
+    // Propagate the active exception info (args[1..4]) to each registered exit.
+    var exc_type = if (args.len > 1) args[1] else Value.none;
+    var exc_val = if (args.len > 2) args[2] else Value.none;
+    var exc_tb = if (args.len > 3) args[3] else Value.none;
+    var suppressed = false;
     // Run callbacks in reverse order (LIFO).
     const items = cb_list_v.list.items.items;
     var i: usize = items.len;
@@ -387,7 +392,14 @@ fn esExit(p: *anyopaque, args: []const Value) anyerror!Value {
             // __exit__ style: tuple is (exit_fn, cm, true)
             const exit_fn = t[0];
             const cm = t[1];
-            _ = callWithSelfAndArgs(interp, exit_fn, cm, &.{ Value.none, Value.none, Value.none }) catch {};
+            const result = callWithSelfAndArgs(interp, exit_fn, cm, &.{ exc_type, exc_val, exc_tb }) catch Value{ .boolean = false };
+            if (result == .boolean and result.boolean) {
+                suppressed = true;
+                // Once an exit suppresses, subsequent exits see no exception.
+                exc_type = Value.none;
+                exc_val = Value.none;
+                exc_tb = Value.none;
+            }
         } else if (t.len >= 2) {
             // callback style: tuple is (callback, args_tuple)
             const callable = t[0];
@@ -399,7 +411,7 @@ fn esExit(p: *anyopaque, args: []const Value) anyerror!Value {
             }
         }
     }
-    return Value{ .boolean = false };
+    return Value{ .boolean = suppressed };
 }
 
 /// Call `callable` with `self` prepended only when `callable` is a
