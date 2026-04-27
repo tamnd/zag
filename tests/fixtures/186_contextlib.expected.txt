@@ -1,0 +1,10 @@
+enter 5
+inside 10
+exit 5
+after suppress
+after suppress2
+captured
+using resource
+closed
+42
+done

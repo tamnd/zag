@@ -1,0 +1,15 @@
+Color.RED
+RED
+1
+Color.GREEN
+[<Color.RED: 1>, <Color.GREEN: 2>, <Color.BLUE: 3>]
+True
+False
+1
+True
+True
+1
+2
+True
+False
+done
