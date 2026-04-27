@@ -1,4 +1,4 @@
-//! Pinhole `subprocess` module: run, check_output, CompletedProcess, PIPE/DEVNULL/STDOUT.
+//! subprocess module: run, check_output, CompletedProcess, CalledProcessError, PIPE/DEVNULL/STDOUT.
 
 const std = @import("std");
 const value_mod = @import("../object/value.zig");
@@ -12,11 +12,43 @@ const Instance = @import("../object/instance.zig").Instance;
 const Dict = @import("../object/dict.zig").Dict;
 const Str = @import("../object/string.zig").Str;
 const Bytes = @import("../object/bytes.zig").Bytes;
+const Tuple = @import("../object/tuple.zig").Tuple;
 const Interp = @import("interp.zig").Interp;
 
 const PIPE: i64 = -1;
 const STDOUT: i64 = -2;
 const DEVNULL: i64 = -3;
+
+fn ensureCalledProcessErrorClass(interp: *Interp) !*Class {
+    if (interp.subprocess_called_proc_err_class) |cls| return cls;
+    const a = interp.allocator;
+    const bases: []const *Class = if (interp.builtins.getStr("Exception")) |v|
+        if (v == .class) &[_]*Class{v.class} else &.{}
+    else
+        &.{};
+    const d = try Dict.init(a);
+    const cls = try Class.init(a, "CalledProcessError", bases, d);
+    interp.subprocess_called_proc_err_class = cls;
+    try interp.builtins.setStr(a, "CalledProcessError", Value{ .class = cls });
+    if (interp.subprocess_module) |m| {
+        try m.attrs.setStr(a, "CalledProcessError", Value{ .class = cls });
+    }
+    return cls;
+}
+
+fn raiseCalledProcessError(interp: *Interp, rc: i64, cmd: Value) !void {
+    const a = interp.allocator;
+    const cls = try ensureCalledProcessErrorClass(interp);
+    const inst = try Instance.init(a, cls);
+    try inst.dict.setStr(a, "returncode", Value{ .small_int = rc });
+    try inst.dict.setStr(a, "cmd", cmd);
+    try inst.dict.setStr(a, "output", Value.none);
+    try inst.dict.setStr(a, "stderr", Value.none);
+    const t = try Tuple.init(a, 1);
+    t.items[0] = Value{ .small_int = rc };
+    try inst.dict.setStr(a, "args", Value{ .tuple = t });
+    interp.current_exc = Value{ .instance = inst };
+}
 
 fn getOrCreateCpClass(interp: *Interp) !*Class {
     if (interp.subprocess_module) |m| {
@@ -72,6 +104,58 @@ fn freeArgv(a: std.mem.Allocator, argv: [][]u8) void {
     a.free(argv);
 }
 
+const RunOutput = struct {
+    term: std.process.Child.Term,
+    stdout: []u8,
+    stderr: []u8,
+};
+
+fn runWithInput(interp: *Interp, argv: []const []const u8, input: []const u8) !RunOutput {
+    const a = interp.allocator;
+    var child = try std.process.spawn(interp.io, .{
+        .argv = argv,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    // Write input then close stdin so child sees EOF.
+    if (input.len > 0) {
+        try child.stdin.?.writeStreamingAll(interp.io, input);
+    }
+    child.stdin.?.close(interp.io);
+    child.stdin = null;
+
+    var stdout_buf: std.ArrayList(u8) = .empty;
+    errdefer stdout_buf.deinit(a);
+    var stderr_buf: std.ArrayList(u8) = .empty;
+    errdefer stderr_buf.deinit(a);
+    var tmp: [4096]u8 = undefined;
+
+    // Sequential read: stdout then stderr. Safe for small inputs where the
+    // child does not produce more output than pipe buffer capacity.
+    outer: while (true) {
+        const n = child.stdout.?.readStreaming(interp.io, &[_][]u8{&tmp}) catch |e| switch (e) {
+            error.EndOfStream => break :outer,
+            else => return e,
+        };
+        try stdout_buf.appendSlice(a, tmp[0..n]);
+    }
+    outer2: while (true) {
+        const n = child.stderr.?.readStreaming(interp.io, &[_][]u8{&tmp}) catch |e| switch (e) {
+            error.EndOfStream => break :outer2,
+            else => return e,
+        };
+        try stderr_buf.appendSlice(a, tmp[0..n]);
+    }
+
+    const term = try child.wait(interp.io);
+    return .{
+        .term = term,
+        .stdout = try stdout_buf.toOwnedSlice(a),
+        .stderr = try stderr_buf.toOwnedSlice(a),
+    };
+}
+
 fn runKwFn(p: *anyopaque, args: []const Value, kn: []const Value, kv: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
@@ -86,6 +170,7 @@ fn runKwFn(p: *anyopaque, args: []const Value, kn: []const Value, kv: []const Va
     var stdout_pipe = false;
     var stderr_pipe = false;
     var do_check = false;
+    var input_bytes: ?[]const u8 = null;
 
     for (kn, kv) |k, v| {
         if (k != .str) continue;
@@ -100,6 +185,9 @@ fn runKwFn(p: *anyopaque, args: []const Value, kn: []const Value, kv: []const Va
             if (v == .small_int and v.small_int == PIPE) stderr_pipe = true;
         } else if (std.mem.eql(u8, name, "check")) {
             if (v == .boolean) do_check = v.boolean;
+        } else if (std.mem.eql(u8, name, "input")) {
+            if (v == .bytes) input_bytes = v.bytes.data;
+            if (v == .str) input_bytes = v.str.bytes;
         }
     }
     if (capture_output) {
@@ -113,40 +201,55 @@ fn runKwFn(p: *anyopaque, args: []const Value, kn: []const Value, kv: []const Va
     };
     defer freeArgv(a, argv_const);
 
-    // Always collect stdout+stderr via run(); if not piped we discard.
     const const_argv: []const []const u8 = @ptrCast(argv_const);
-    const result = std.process.run(a, interp.io, .{ .argv = const_argv }) catch |err| {
-        try interp.raisePy("OSError", @errorName(err));
-        return error.PyException;
-    };
-    defer a.free(result.stdout);
-    defer a.free(result.stderr);
 
-    const rc: i64 = switch (result.term) {
+    var out_bytes: []u8 = undefined;
+    var err_bytes: []u8 = undefined;
+    var term: std.process.Child.Term = undefined;
+
+    if (input_bytes) |inp| {
+        const res = runWithInput(interp, const_argv, inp) catch |err| {
+            try interp.raisePy("OSError", @errorName(err));
+            return error.PyException;
+        };
+        out_bytes = res.stdout;
+        err_bytes = res.stderr;
+        term = res.term;
+    } else {
+        const res = std.process.run(a, interp.io, .{ .argv = const_argv }) catch |err| {
+            try interp.raisePy("OSError", @errorName(err));
+            return error.PyException;
+        };
+        out_bytes = res.stdout;
+        err_bytes = res.stderr;
+        term = res.term;
+    }
+    defer a.free(out_bytes);
+    defer a.free(err_bytes);
+
+    const rc: i64 = switch (term) {
         .exited => |code| @intCast(code),
         else => -1,
     };
 
     const stdout_val: Value = if (stdout_pipe or capture_output) blk: {
         if (text_mode) {
-            break :blk Value{ .str = try Str.init(a, result.stdout) };
+            break :blk Value{ .str = try Str.init(a, out_bytes) };
         } else {
-            const b = try Bytes.init(a, result.stdout);
-            break :blk Value{ .bytes = b };
+            break :blk Value{ .bytes = try Bytes.init(a, out_bytes) };
         }
     } else Value.none;
 
     const stderr_val: Value = if (stderr_pipe or capture_output) blk: {
         if (text_mode) {
-            break :blk Value{ .str = try Str.init(a, result.stderr) };
+            break :blk Value{ .str = try Str.init(a, err_bytes) };
         } else {
-            const b = try Bytes.init(a, result.stderr);
-            break :blk Value{ .bytes = b };
+            break :blk Value{ .bytes = try Bytes.init(a, err_bytes) };
         }
     } else Value.none;
 
     if (do_check and rc != 0) {
-        try interp.raisePy("CalledProcessError", "Command returned non-zero exit status");
+        try raiseCalledProcessError(interp, rc, cmd_v);
         return error.PyException;
     }
 
@@ -179,14 +282,7 @@ fn checkOutputFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return checkOutputKwFn(p, args, &.{}, &.{});
 }
 
-fn reg(a: std.mem.Allocator, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {
-    const f = try a.create(BuiltinFn);
-    f.* = .{ .name = name, .func = func };
-    try m.attrs.setStr(a, name, Value{ .builtin_fn = f });
-}
-
 fn regKw(a: std.mem.Allocator, m: *Module, name: []const u8, func: BuiltinFnPtr, kw: BuiltinKwFnPtr) !void {
-    _ = reg;
     const f = try a.create(BuiltinFn);
     f.* = .{ .name = name, .func = func, .kw_func = kw };
     try m.attrs.setStr(a, name, Value{ .builtin_fn = f });
@@ -205,6 +301,7 @@ pub fn build(interp: *Interp) !*Module {
     try m.attrs.setStr(a, "DEVNULL", Value{ .small_int = DEVNULL });
 
     _ = try getOrCreateCpClass(interp);
+    _ = try ensureCalledProcessErrorClass(interp);
 
     return m;
 }
