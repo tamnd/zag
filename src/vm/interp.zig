@@ -58,6 +58,7 @@ const bz2_mod = @import("bz2_mod.zig");
 const zipfile_mod = @import("zipfile_mod.zig");
 const lzma_mod = @import("lzma_mod.zig");
 const tarfile_mod = @import("tarfile_mod.zig");
+const zstd_mod = @import("zstd_mod.zig");
 const configparser_mod = @import("configparser_mod.zig");
 const fnmatch_mod = @import("fnmatch_mod.zig");
 const statistics_mod = @import("statistics_mod.zig");
@@ -305,6 +306,13 @@ pub const Interp = struct {
     tarfile_error_class: ?*@import("../object/class.zig").Class = null,
     tarfile_read_error_class: ?*@import("../object/class.zig").Class = null,
     tarfile_module: ?*Module = null,
+    zstd_error_class: ?*@import("../object/class.zig").Class = null,
+    zstd_compressor_class: ?*@import("../object/class.zig").Class = null,
+    zstd_decompressor_class: ?*@import("../object/class.zig").Class = null,
+    zstd_dict_class: ?*@import("../object/class.zig").Class = null,
+    zstd_file_class: ?*@import("../object/class.zig").Class = null,
+    zstd_module: ?*Module = null,
+    compression_module: ?*Module = null,
     lzma_module: ?*Module = null,
     lzma_error_class: ?*@import("../object/class.zig").Class = null,
     lzma_compressor_class: ?*@import("../object/class.zig").Class = null,
@@ -897,6 +905,20 @@ pub const Interp = struct {
             const m = tarfile_mod.build(self) catch return null;
             self.tarfile_module = m;
             return m;
+        }
+        if (std.mem.eql(u8, name, "compression.zstd") or std.mem.eql(u8, name, "compression")) {
+            if (std.mem.eql(u8, name, "compression")) {
+                if (self.compression_module) |m| return m;
+                const m = zstd_mod.buildCompressionPackage(self) catch return null;
+                self.compression_module = m;
+                self.zstd_module = m.attrs.getStr("zstd").?.module;
+                return m;
+            } else {
+                if (self.zstd_module) |m| return m;
+                const m = zstd_mod.build(self) catch return null;
+                self.zstd_module = m;
+                return m;
+            }
         }
         if (std.mem.eql(u8, name, "fnmatch")) {
             if (self.fnmatch_module) |m| return m;
