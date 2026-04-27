@@ -57,8 +57,30 @@ pub fn build(b: *std.Build) void {
     integration.step.dependOn(&gen_fixtures.step);
     const run_integration = b.addRunArtifact(integration);
 
+    const gen_ext_fixtures = b.addSystemCommand(&.{ "bash", "tests/fixtures/ext/gen.sh" });
+
+    const ext_fixtures_mod = b.createModule(.{
+        .root_source_file = b.path("tests/fixtures/ext/fixtures.zig"),
+        .target = target,
+    });
+
+    const ext_integration = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/ext_integration.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zag", .module = mod },
+                .{ .name = "ext_fixtures", .module = ext_fixtures_mod },
+            },
+        }),
+    });
+    ext_integration.step.dependOn(&gen_ext_fixtures.step);
+    const run_ext_integration = b.addRunArtifact(ext_integration);
+
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
     test_step.dependOn(&run_integration.step);
+    test_step.dependOn(&run_ext_integration.step);
 }

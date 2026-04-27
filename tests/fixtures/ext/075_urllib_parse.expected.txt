@@ -1,0 +1,23 @@
+https
+www.example.com:8080
+/path/page
+query=value&a=1
+section
+www.example.com
+8080
+https://example.com/path?q=1#frag
+True
+hello%20world
+/path/to/file
+%2Fpath%2Fto%2Ffile
+hello world
+hello+world
+hello world
+[('a', ['1', '3']), ('b', ['2'])]
+[('a', '1'), ('b', '2'), ('a', '3')]
+https://example.com/foo/bar
+https://example.com/bar
+https://other.com/
+user
+pass
+done

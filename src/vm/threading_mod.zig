@@ -104,6 +104,14 @@ fn ensureClasses(interp: *Interp) !void {
         try methodReg(a, d, "run", threadRun);
         interp.threading_thread_class = try Class.init(a, "Thread", &.{}, d);
     }
+    if (interp.threading_main_thread_class == null) {
+        const d = try Dict.init(a);
+        try methodReg(a, d, "start", threadStart);
+        try methodReg(a, d, "join", threadJoin);
+        try methodReg(a, d, "is_alive", threadIsAlive);
+        try methodReg(a, d, "run", threadRun);
+        interp.threading_main_thread_class = try Class.init(a, "_MainThread", &.{}, d);
+    }
     if (interp.threading_event_class == null) {
         const d = try Dict.init(a);
         try methodReg(a, d, "set", eventSet);
@@ -495,7 +503,7 @@ fn currentThreadFn(p: *anyopaque, _: []const Value) anyerror!Value {
     try ensureClasses(interp);
     const a = interp.allocator;
     if (interp.threading_main_thread) |inst| return Value{ .instance = inst };
-    const inst = try Instance.init(a, interp.threading_thread_class.?);
+    const inst = try Instance.init(a, interp.threading_main_thread_class.?);
     const name_s = try Str.init(a, "MainThread");
     try inst.dict.setStr(a, "name", Value{ .str = name_s });
     try inst.dict.setStr(a, "_alive", Value{ .boolean = true });

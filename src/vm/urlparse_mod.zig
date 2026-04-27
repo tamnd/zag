@@ -175,9 +175,20 @@ fn newParseResult(interp: *Interp, parts: Parts) !Value {
     }
     try inst.dict.setStr(a, "_items", Value{ .tuple = tup });
 
-    // hostname / port — from netloc[after @]
+    // Parse netloc: [user[:pass]@]host[:port]
     var host_part = parts.netloc;
-    if (std.mem.lastIndexOfScalar(u8, host_part, '@')) |at| host_part = host_part[at + 1 ..];
+    var username_val: Value = Value.none;
+    var password_val: Value = Value.none;
+    if (std.mem.lastIndexOfScalar(u8, host_part, '@')) |at| {
+        const userinfo = host_part[0..at];
+        host_part = host_part[at + 1 ..];
+        if (std.mem.indexOfScalar(u8, userinfo, ':')) |ci| {
+            username_val = Value{ .str = try Str.init(a, userinfo[0..ci]) };
+            password_val = Value{ .str = try Str.init(a, userinfo[ci + 1 ..]) };
+        } else {
+            username_val = Value{ .str = try Str.init(a, userinfo) };
+        }
+    }
     var hostname: []const u8 = host_part;
     var port_val: Value = Value.none;
     if (std.mem.lastIndexOfScalar(u8, host_part, ':')) |ci| {
@@ -191,6 +202,8 @@ fn newParseResult(interp: *Interp, parts: Parts) !Value {
     const lower = try std.ascii.allocLowerString(a, hostname);
     try inst.dict.setStr(a, "hostname", Value{ .str = try Str.fromOwnedSlice(a, lower) });
     try inst.dict.setStr(a, "port", port_val);
+    try inst.dict.setStr(a, "username", username_val);
+    try inst.dict.setStr(a, "password", password_val);
 
     return Value{ .instance = inst };
 }

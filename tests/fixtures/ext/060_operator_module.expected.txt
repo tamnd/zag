@@ -1,0 +1,28 @@
+7
+7
+20
+2.5
+3
+1
+256
+5
+7
+True
+True
+True
+True
+True
+True
+True
+False
+2
+7
+5
+10
+20
+[('Bob', 25), ('Alice', 30), ('Charlie', 35)]
+Alice
+25
+['Bob', 'Alice', 'Charlie']
+['HELLO', 'WORLD']
+done

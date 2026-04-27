@@ -1,0 +1,13 @@
+_MainThread
+_MainThread
+lock
+lock ok
+rlock ok
+False
+True
+False
+[0, 2, 4]
+Semaphore
+Condition
+True
+done

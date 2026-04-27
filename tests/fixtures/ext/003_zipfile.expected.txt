@@ -1,0 +1,19 @@
+0
+8
+['data/test.txt', 'hello.txt']
+Hello, World!
+nested file
+hello.txt
+True
+13
+True
+False
+2
+hello.txt
+b'Hello, World!'
+True
+['file1.txt', 'file2.txt']
+b'content1'
+b'content2'
+['file1.txt', 'file2.txt', 'file3.txt']
+done

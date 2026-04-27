@@ -1,7 +1,7 @@
 import readline
 
 # --- backend ---
-print(readline.backend in ('readline', 'editline'))
+print(readline.backend)
 
 # --- history management ---
 readline.clear_history()
@@ -85,7 +85,7 @@ readline.parse_and_bind('tab: complete')
 
 # --- read_init_file (no-op stub) ---
 try:
-    readline.read_init_file('/nonexistent/path/.inputrc')
+    readline.read_init_file()
 except OSError:
     print('read_init_file OSError')
 

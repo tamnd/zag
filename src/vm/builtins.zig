@@ -268,7 +268,21 @@ fn iterableItems(v: Value) ?[]const Value {
 
 pub fn sumBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const dispatch = @import("dispatch.zig");
     const list = try materialize(interp, args[0]);
+    // If start value is a non-numeric, use generic + via dispatch
+    if (args.len >= 2) {
+        switch (args[1]) {
+            .small_int, .boolean, .float => {},
+            else => {
+                var acc = args[1];
+                for (list.items.items) |it| {
+                    acc = try dispatch.binaryOp(interp, acc, it, 0); // 0 = ADD
+                }
+                return acc;
+            },
+        }
+    }
     var int_acc: i64 = 0;
     var float_acc: f64 = 0;
     var has_float = false;
@@ -280,10 +294,7 @@ pub fn sumBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
                 float_acc = f;
                 has_float = true;
             },
-            else => {
-                try interp.typeError("unsupported start value for sum");
-                return error.TypeError;
-            },
+            else => unreachable,
         }
     }
     for (list.items.items) |it| {
@@ -480,22 +491,37 @@ pub fn sortedBuiltinKw(
                 }
             }.lt);
         }
+        // For stable descending sort: reverse idx for equal keys
+        if (reverse) {
+            // We need stable descending: sort by (key desc, original_index asc)
+            // Since block sort is stable ascending, we can simulate descending
+            // by sorting with reversed comparison and then the result is
+            // stable descending (equal keys preserve original order).
+            const Ctx2 = struct { keys: []const Value };
+            const ctx2: Ctx2 = .{ .keys = keys };
+            std.sort.block(usize, idx, ctx2, struct {
+                fn lt(c: Ctx2, a: usize, b: usize) bool {
+                    if (c.keys[a].order(c.keys[b])) |o| return o == .gt;
+                    return false;
+                }
+            }.lt);
+        }
         const buf = try interp.allocator.alloc(Value, slice.len);
         for (idx, 0..) |src_i, i| buf[i] = slice[src_i];
         @memcpy(slice, buf);
         interp.allocator.free(buf);
     } else {
         std.sort.pdq(Value, slice, {}, lessThanForSort);
-    }
-    if (reverse) {
-        var i: usize = 0;
-        var j: usize = if (slice.len == 0) 0 else slice.len - 1;
-        while (i < j) {
-            const tmp = slice[i];
-            slice[i] = slice[j];
-            slice[j] = tmp;
-            i += 1;
-            j -= 1;
+        if (reverse) {
+            var i: usize = 0;
+            var j: usize = if (slice.len == 0) 0 else slice.len - 1;
+            while (i < j) {
+                const tmp = slice[i];
+                slice[i] = slice[j];
+                slice[j] = tmp;
+                i += 1;
+                j -= 1;
+            }
         }
     }
     return Value{ .list = out };
@@ -626,6 +652,17 @@ pub fn hashBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
     return Value{ .small_int = 0 };
 }
 
+pub fn dictBuiltinKw(interp_opaque: *anyopaque, args: []const Value, kn: []const Value, kv: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    const d_val = try dictBuiltin(interp_opaque, args);
+    if (d_val != .dict) return d_val;
+    const d = d_val.dict;
+    for (kn, kv) |nm, vl| {
+        if (nm == .str) try d.setStr(interp.allocator, nm.str.bytes, vl);
+    }
+    return Value{ .dict = d };
+}
+
 pub fn dictBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const d = try Dict.init(interp.allocator);
@@ -672,16 +709,33 @@ pub fn dictBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
 }
 
 pub fn maxBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
+    return maxBuiltinKw(interp_opaque, args, &.{}, &.{});
+}
+
+pub fn maxBuiltinKw(interp_opaque: *anyopaque, args: []const Value, kn: []const Value, kv: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    return try minMax(interp, args, true);
+    return try minMaxKw(interp, args, kn, kv, true);
 }
 
 pub fn minBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
-    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    return try minMax(interp, args, false);
+    return minBuiltinKw(interp_opaque, args, &.{}, &.{});
 }
 
-fn minMax(interp: *Interp, args: []const Value, want_max: bool) !Value {
+pub fn minBuiltinKw(interp_opaque: *anyopaque, args: []const Value, kn: []const Value, kv: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
+    return try minMaxKw(interp, args, kn, kv, false);
+}
+
+fn minMaxKw(interp: *Interp, args: []const Value, kn: []const Value, kv: []const Value, want_max: bool) !Value {
+    const dispatch = @import("dispatch.zig");
+    var key_fn: ?Value = null;
+    var default_v: Value = Value.null_sentinel;
+    for (kn, kv) |nm, vl| {
+        if (nm == .str) {
+            if (std.mem.eql(u8, nm.str.bytes, "key")) key_fn = vl;
+            if (std.mem.eql(u8, nm.str.bytes, "default")) default_v = vl;
+        }
+    }
     var items: []const Value = undefined;
     var owned: ?*List = null;
     if (args.len == 1) {
@@ -691,18 +745,39 @@ fn minMax(interp: *Interp, args: []const Value, want_max: bool) !Value {
         items = args;
     }
     if (items.len == 0) {
+        if (default_v != .null_sentinel) return default_v;
         try interp.typeError("min/max arg is an empty sequence");
         return error.TypeError;
     }
+    if (key_fn == null) {
+        var best = items[0];
+        var i: usize = 1;
+        while (i < items.len) : (i += 1) {
+            const o = best.order(items[i]) orelse {
+                try interp.typeError("min/max: types are not orderable");
+                return error.TypeError;
+            };
+            const swap = if (want_max) o == .lt else o == .gt;
+            if (swap) best = items[i];
+        }
+        return best;
+    }
+    // With key function
+    const key_fn_v = key_fn.?;
     var best = items[0];
+    var best_key = try dispatch.invoke(interp, key_fn_v, &[_]Value{best});
     var i: usize = 1;
     while (i < items.len) : (i += 1) {
-        const o = best.order(items[i]) orelse {
-            try interp.typeError("min/max: types are not orderable");
+        const candidate_key = try dispatch.invoke(interp, key_fn_v, &[_]Value{items[i]});
+        const o = best_key.order(candidate_key) orelse {
+            try interp.typeError("min/max: keys are not orderable");
             return error.TypeError;
         };
         const swap = if (want_max) o == .lt else o == .gt;
-        if (swap) best = items[i];
+        if (swap) {
+            best = items[i];
+            best_key = candidate_key;
+        }
     }
     return best;
 }
@@ -789,17 +864,36 @@ pub fn zipBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value
 
 pub fn mapBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    if (args.len != 2) {
-        try interp.typeError("map() takes exactly 2 arguments (zag)");
+    if (args.len < 2) {
+        try interp.typeError("map() requires at least 2 arguments");
         return error.TypeError;
     }
+    const a = interp.allocator;
     const dispatch = @import("dispatch.zig");
     const fn_val = args[0];
-    const src = try materialize(interp, args[1]);
-    const out = try List.init(interp.allocator);
-    for (src.items.items) |v| {
-        const r = try dispatch.invoke(interp, fn_val, &[_]Value{v});
-        try out.append(interp.allocator, r);
+    const out = try List.init(a);
+    if (args.len == 2) {
+        const src = try materialize(interp, args[1]);
+        for (src.items.items) |v| {
+            const r = try dispatch.invoke(interp, fn_val, &[_]Value{v});
+            try out.append(a, r);
+        }
+    } else {
+        // Multiple iterables: zip them
+        const srcs = try a.alloc(*List, args.len - 1);
+        defer a.free(srcs);
+        var min_len: usize = std.math.maxInt(usize);
+        for (args[1..], 0..) |it, i| {
+            srcs[i] = try materialize(interp, it);
+            if (srcs[i].items.items.len < min_len) min_len = srcs[i].items.items.len;
+        }
+        const call_args = try a.alloc(Value, args.len - 1);
+        defer a.free(call_args);
+        for (0..min_len) |i| {
+            for (srcs, 0..) |src, si| call_args[si] = src.items.items[i];
+            const r = try dispatch.invoke(interp, fn_val, call_args);
+            try out.append(a, r);
+        }
     }
     return Value{ .list = out };
 }
@@ -1743,8 +1837,38 @@ fn lookupAttr(obj: Value, name: []const u8) ?Value {
         .instance => |inst| inst.dict.getStr(name) orelse inst.cls.lookup(name),
         .class => |cls| cls.lookup(name),
         .module => |m| m.attrs.getStr(name),
+        .builtin_fn => |f| builtinTypeLookup(f.name, name),
         else => null,
     };
+}
+
+/// Return a non-null sentinel for dunders that a builtin type actually
+/// supports. Used by `hasattr(list, '__len__')` etc. when the builtin
+/// type is represented as a `builtin_fn` constructor rather than a full
+/// `Class` with an MRO. We return `.none` as a cheap truthy sentinel;
+/// the caller only cares whether the result is non-null.
+fn builtinTypeLookup(type_name: []const u8, attr: []const u8) ?Value {
+    // Sequence types: have __len__, __iter__, __getitem__, __contains__
+    const is_seq = std.mem.eql(u8, type_name, "list") or
+        std.mem.eql(u8, type_name, "tuple") or
+        std.mem.eql(u8, type_name, "str") or
+        std.mem.eql(u8, type_name, "bytes") or
+        std.mem.eql(u8, type_name, "bytearray");
+    const is_mapping = std.mem.eql(u8, type_name, "dict");
+    const is_set_type = std.mem.eql(u8, type_name, "set") or std.mem.eql(u8, type_name, "frozenset");
+    const is_int = std.mem.eql(u8, type_name, "int") or std.mem.eql(u8, type_name, "bool");
+    const is_float = std.mem.eql(u8, type_name, "float");
+    _ = is_float;
+    _ = is_int;
+
+    if ((is_seq or is_mapping or is_set_type) and
+        (std.mem.eql(u8, attr, "__len__") or
+        std.mem.eql(u8, attr, "__iter__") or
+        std.mem.eql(u8, attr, "__contains__")))
+        return Value.none;
+    if (is_seq and std.mem.eql(u8, attr, "__getitem__"))
+        return Value.none;
+    return null;
 }
 
 pub fn dirBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
@@ -1833,9 +1957,9 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("set", setBuiltin);
     try interp.registerBuiltin("frozenset", frozensetBuiltin);
     try interp.registerBuiltin("hash", hashBuiltin);
-    try interp.registerBuiltin("dict", dictBuiltin);
-    try interp.registerBuiltin("max", maxBuiltin);
-    try interp.registerBuiltin("min", minBuiltin);
+    try interp.registerBuiltinKw("dict", dictBuiltin, dictBuiltinKw);
+    try interp.registerBuiltinKw("max", maxBuiltin, maxBuiltinKw);
+    try interp.registerBuiltinKw("min", minBuiltin, minBuiltinKw);
     try interp.registerBuiltin("reversed", reversedBuiltin);
     try interp.registerBuiltinKw("enumerate", enumerateBuiltin, enumerateBuiltinKw);
     try interp.registerBuiltin("zip", zipBuiltin);
@@ -1894,9 +2018,39 @@ pub fn install(interp: *Interp) !void {
     try installObjectClass(interp);
 }
 
+fn objectSetattr(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 3 or args[0] != .instance or args[1] != .str) {
+        try interp.typeError("object.__setattr__() requires (self, name, value)");
+        return error.TypeError;
+    }
+    try args[0].instance.dict.setStr(a, args[1].str.bytes, args[2]);
+    return Value.none;
+}
+
+fn objectGetattr(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 2 or args[0] != .instance or args[1] != .str) {
+        try interp.typeError("object.__getattribute__() requires (self, name)");
+        return error.TypeError;
+    }
+    return args[0].instance.dict.getStr(args[1].str.bytes) orelse {
+        try interp.attributeError(args[0].instance.cls.name, args[1].str.bytes);
+        return error.AttributeError;
+    };
+}
+
 fn installObjectClass(interp: *Interp) !void {
     const a = interp.allocator;
-    const obj_cls = try Class.init(a, "object", &.{}, try Dict.init(a));
+    const d = try Dict.init(a);
+    const sa = try a.create(BuiltinFn);
+    sa.* = .{ .name = "__setattr__", .func = objectSetattr };
+    try d.setStr(a, "__setattr__", Value{ .builtin_fn = sa });
+    const ga = try a.create(BuiltinFn);
+    ga.* = .{ .name = "__getattribute__", .func = objectGetattr };
+    try d.setStr(a, "__getattribute__", Value{ .builtin_fn = ga });
+    const obj_cls = try Class.init(a, "object", &.{}, d);
     try interp.builtins.setStr(a, "object", Value{ .class = obj_cls });
 }
 
@@ -2061,11 +2215,69 @@ fn installExceptions(interp: *Interp) !void {
         const cls = try Class.init(a, "ExceptionGroup", &.{ beg.class, exc.class }, try Dict.init(a));
         try interp.builtins.setStr(a, "ExceptionGroup", Value{ .class = cls });
     }
+    // Add __init__ to BaseException so super().__init__(msg) works.
+    {
+        const bev = interp.builtins.getStr("BaseException") orelse return error.TypeError;
+        const be_cls = bev.class;
+        const f = try a.create(BuiltinFn);
+        f.* = .{ .name = "__init__", .func = baseExceptionInit };
+        try be_cls.dict.setStr(a, "__init__", Value{ .builtin_fn = f });
+        // __str__ on BaseException
+        const sf = try a.create(BuiltinFn);
+        sf.* = .{ .name = "__str__", .func = baseExceptionStr };
+        try be_cls.dict.setStr(a, "__str__", Value{ .builtin_fn = sf });
+    }
+    // KeyError.__str__ returns repr(args[0]) for single-arg string keys.
+    {
+        const kev = interp.builtins.getStr("KeyError") orelse return error.TypeError;
+        const ke_cls = kev.class;
+        const sf = try a.create(BuiltinFn);
+        sf.* = .{ .name = "__str__", .func = keyErrorStr };
+        try ke_cls.dict.setStr(a, "__str__", Value{ .builtin_fn = sf });
+    }
     // IOError and EnvironmentError are CPython aliases for OSError.
     if (interp.builtins.getStr("OSError")) |v| {
         try interp.builtins.setStr(a, "IOError", v);
         try interp.builtins.setStr(a, "EnvironmentError", v);
     }
+}
+
+fn baseExceptionInit(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .instance) return Value.none;
+    const self = args[0].instance;
+    const msg_args = args[1..];
+    const t = try Tuple.init(a, msg_args.len);
+    for (msg_args, 0..) |v, i| t.items[i] = v;
+    try self.dict.setStr(a, "args", Value{ .tuple = t });
+    return Value.none;
+}
+
+fn baseExceptionStr(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .instance) return Value{ .str = try Str.init(a, "") };
+    const self = args[0].instance;
+    const args_v = self.dict.getStr("args") orelse return Value{ .str = try Str.init(a, "") };
+    if (args_v != .tuple) return Value{ .str = try Str.init(a, "") };
+    const t = args_v.tuple;
+    if (t.items.len == 0) return Value{ .str = try Str.init(a, "") };
+    // strBuiltin for single arg
+    const r = try strBuiltin(p, &.{t.items[0]});
+    return r;
+}
+
+fn keyErrorStr(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .instance) return Value{ .str = try Str.init(a, "") };
+    const self = args[0].instance;
+    const args_v = self.dict.getStr("args") orelse return Value{ .str = try Str.init(a, "") };
+    if (args_v != .tuple) return Value{ .str = try Str.init(a, "") };
+    const t = args_v.tuple;
+    if (t.items.len == 0) return Value{ .str = try Str.init(a, "") };
+    return reprBuiltin(p, &.{t.items[0]});
 }
 
 /// True if `cls`'s MRO contains the builtin BaseException -- we use

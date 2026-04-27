@@ -639,6 +639,41 @@ pub const Value = union(Tag) {
             }
             return true;
         }
+        // OrderedDict == OrderedDict: order-sensitive
+        if (a == .ordered_dict and b == .ordered_dict) {
+            const ax = a.ordered_dict.data.pairs.items;
+            const bx = b.ordered_dict.data.pairs.items;
+            if (ax.len != bx.len) return false;
+            for (ax, bx) |pa, pb| {
+                if (!pa.key.equals(pb.key) or !pa.value.equals(pb.value)) return false;
+            }
+            return true;
+        }
+        // OrderedDict == dict or dict == OrderedDict: order-insensitive
+        if (a == .ordered_dict and b == .dict) {
+            const ax = a.ordered_dict.data.pairs.items;
+            const bx = b.dict.pairs.items;
+            if (ax.len != bx.len) return false;
+            outer_od: for (ax) |pa| {
+                for (bx) |pb| {
+                    if (pa.key.equals(pb.key) and pa.value.equals(pb.value)) continue :outer_od;
+                }
+                return false;
+            }
+            return true;
+        }
+        if (a == .dict and b == .ordered_dict) {
+            const ax = a.dict.pairs.items;
+            const bx = b.ordered_dict.data.pairs.items;
+            if (ax.len != bx.len) return false;
+            outer_do: for (ax) |pa| {
+                for (bx) |pb| {
+                    if (pa.key.equals(pb.key) and pa.value.equals(pb.value)) continue :outer_do;
+                }
+                return false;
+            }
+            return true;
+        }
         if (a == .list and b == .list) {
             const ax = a.list.items.items;
             const bx = b.list.items.items;

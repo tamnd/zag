@@ -1,0 +1,15 @@
+True
+True
+True
+randint ok
+random ok
+uniform ok
+choice ok
+True
+10
+10
+True
+randrange ok
+True
+getrandbits ok
+done

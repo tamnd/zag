@@ -1,0 +1,12 @@
+True
+test
+bar
+42
+qux
+True
+True
+True
+True
+['done']
+False
+done

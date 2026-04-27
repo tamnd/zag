@@ -1,0 +1,14 @@
+11
+b'hello world'
+b'abc'
+hello world
+11
+line1
+
+line2
+
+3
+a
+hello
+test
+done

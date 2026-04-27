@@ -58,6 +58,8 @@ fn ensureClasses(interp: *Interp) !void {
         try methodReg(a, d, "seek", ioSeek);
         try methodReg(a, d, "close", ioClose);
         try methodReg(a, d, "truncate", ioTruncate);
+        try methodReg(a, d, "__iter__", ioIterSelf);
+        try methodReg(a, d, "__next__", strIterNext);
         interp.io_stringio_class = try Class.init(a, "StringIO", &.{}, d);
     }
     if (interp.io_bytesio_class == null) {
@@ -82,6 +84,10 @@ fn newBuf(a: std.mem.Allocator) !*Buf {
 fn bufFromInstance(inst: *Instance) *Buf {
     const v = inst.dict.getStr("_buf").?;
     return @ptrFromInt(@as(usize, @intCast(v.small_int)));
+}
+
+pub fn getStringIODataList(inst: *Instance) *std.ArrayList(u8) {
+    return &bufFromInstance(inst).data;
 }
 
 fn argInst(args: []const Value) !*Instance {
@@ -272,6 +278,22 @@ fn strReadlines(p: *anyopaque, args: []const Value) anyerror!Value {
         buf.pos = i;
     }
     return Value{ .list = out };
+}
+
+fn ioIterSelf(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (args.len < 1) return error.TypeError;
+    return args[0];
+}
+
+fn strIterNext(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const inst = try argInst(args);
+    const buf = bufFromInstance(inst);
+    if (buf.pos >= buf.data.items.len) {
+        try interp.raisePy("StopIteration", "");
+        return error.PyException;
+    }
+    return strReadline(p, args);
 }
 
 fn strGetvalue(p: *anyopaque, args: []const Value) anyerror!Value {

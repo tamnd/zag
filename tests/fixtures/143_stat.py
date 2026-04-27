@@ -24,6 +24,7 @@ print(oct(stat.S_IFLNK))   # 0o120000
 print(oct(stat.S_IFSOCK))  # 0o140000
 print(oct(stat.S_IFDOOR))  # 0o0
 print(oct(stat.S_IFPORT))  # 0o0
+print(oct(stat.S_IFWHT))   # 0o160000
 
 # ===== S_IFMT() / S_IMODE() — functions, not constants =====
 print(oct(stat.S_IFMT(0o100644)))   # 0o100000
@@ -61,6 +62,9 @@ print(stat.S_ISDOOR(0o100644))   # False
 print(stat.S_ISPORT(0o160777))   # False  (S_IFPORT=0 on POSIX)
 print(stat.S_ISPORT(0o100644))   # False
 
+print(stat.S_ISWHT(0o160000))    # True
+print(stat.S_ISWHT(0o100644))    # False
+
 # ===== Permission bit constants =====
 print(oct(stat.S_ISUID))   # 0o4000
 print(oct(stat.S_ISGID))   # 0o2000
@@ -87,18 +91,30 @@ print(stat.S_IWRITE == stat.S_IWUSR)   # True
 print(stat.S_IEXEC == stat.S_IXUSR)    # True
 print(stat.S_ENFMT == stat.S_ISGID)    # True
 
-# ===== UF_* / SF_* portable subset (full BSD/macOS surface lives in
-# stat but the macOS-only flag values aren't exported on Linux). =====
+# ===== UF_* user flags =====
 print(hex(stat.UF_NODUMP))      # 0x1
 print(hex(stat.UF_IMMUTABLE))   # 0x2
 print(hex(stat.UF_APPEND))      # 0x4
 print(hex(stat.UF_OPAQUE))      # 0x8
 print(hex(stat.UF_NOUNLINK))    # 0x10
+print(hex(stat.UF_COMPRESSED))  # 0x800
+print(hex(stat.UF_HIDDEN))      # 0x8000
+print(hex(stat.UF_TRACKED))     # 0x40
+print(hex(stat.UF_DATAVAULT))   # 0x80
+print(hex(stat.UF_SETTABLE))    # 0xffff
+
+# ===== SF_* superuser flags =====
 print(hex(stat.SF_ARCHIVED))    # 0x10000
 print(hex(stat.SF_IMMUTABLE))   # 0x20000
 print(hex(stat.SF_APPEND))      # 0x40000
 print(hex(stat.SF_NOUNLINK))    # 0x100000
 print(hex(stat.SF_SNAPSHOT))    # 0x200000
+print(hex(stat.SF_FIRMLINK))    # 0x800000
+print(hex(stat.SF_RESTRICTED))  # 0x80000
+print(hex(stat.SF_SUPPORTED))   # 0x9f0000
+print(hex(stat.SF_DATALESS))    # 0x40000000
+print(hex(stat.SF_SYNTHETIC))   # 0xc0000000
+print(hex(stat.SF_SETTABLE))    # 0x3fff0000
 
 # ===== FILE_ATTRIBUTE_* Windows constants (cross-platform) =====
 print(stat.FILE_ATTRIBUTE_ARCHIVE)              # 32

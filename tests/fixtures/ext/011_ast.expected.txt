@@ -1,0 +1,13 @@
+42
+hello
+[1, 2, 3]
+{'a': 1}
+(True, None, False)
+rejected
+Module
+True
+True
+2
+3
+doc
+done

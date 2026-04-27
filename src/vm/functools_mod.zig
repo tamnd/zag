@@ -231,7 +231,11 @@ fn wrapsApply(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     fn_dst.wrapped = src;
     if (src == .function) {
         fn_dst.name_override = src.function.name_override orelse src.function.code.qualname;
-        if (src.function.doc_override) |d| fn_dst.doc_override = d;
+        if (src.function.doc_override) |d| {
+            fn_dst.doc_override = d;
+        } else if (src.function.code.consts.len > 0 and src.function.code.consts[0] == .str) {
+            fn_dst.doc_override = src.function.code.consts[0];
+        }
     } else if (src == .builtin_fn) {
         fn_dst.name_override = src.builtin_fn.name;
     } else if (src == .cached_fn) {

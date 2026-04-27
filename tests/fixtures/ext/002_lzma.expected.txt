@@ -1,0 +1,47 @@
+True
+True
+True
+True
+True
+0
+1
+2
+LZMAError raised
+True
+True
+True
+True
+True
+b''
+True
+True
+True
+True
+True
+True
+False
+True
+14
+True
+False
+False
+True
+b'hello lzmafile'
+True
+False
+b'abc'
+3
+b'def'
+b'ghij'
+b'line1\n'
+b'line2\n'
+b'line3'
+b''
+b'abc'
+0
+b'a'
+b'lzma open write'
+hello text mode
+
+b'part1part2part3'
+done

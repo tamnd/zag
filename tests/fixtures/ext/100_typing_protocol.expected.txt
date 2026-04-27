@@ -1,0 +1,12 @@
+drawing circle
+drawing square
+3
+True
+False
+3
+2
+1
+apple
+[2, 4, 6]
+[1, 4, 9, 16]
+done

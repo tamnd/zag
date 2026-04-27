@@ -1,0 +1,14 @@
+T
+hello
+False
+1 2
+1 2
+True
+Point(x=1, y=2)
+3 0
+test 2020
+True
+True
+True
+True
+done

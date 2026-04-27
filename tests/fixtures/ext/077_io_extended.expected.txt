@@ -1,0 +1,17 @@
+Hello, World!
+Hello, World!
+World!
+Hello, World!
+initial content
+initial
+b'Hello World'
+b'Hello'
+b' World'
+b'init'
+5
+hello
+['line1\n', 'line2\n', 'line3\n']
+5
+5
+abcdef
+done

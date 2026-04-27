@@ -1,0 +1,15 @@
+15
+24
+16
+27
+Hello, Alice!
+Hello, Bob!
+55
+6765
+3628800
+True
+False
+True
+True
+Hello World
+done
