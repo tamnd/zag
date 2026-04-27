@@ -376,6 +376,7 @@ pub const Interp = struct {
     contextlib_module: ?*Module = null,
     ast_module: ?*Module = null,
     subprocess_module: ?*Module = null,
+    subprocess_called_proc_err_class: ?*@import("../object/class.zig").Class = null,
     time_module: ?*Module = null,
     argparse_namespace_class: ?*@import("../object/class.zig").Class = null,
     argparse_parser_class: ?*@import("../object/class.zig").Class = null,
