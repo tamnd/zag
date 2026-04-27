@@ -102,6 +102,7 @@ pub const names = [_][]const u8{
     "176_typing",
     "177_contextlib",
     "178_inspect",
+    "179_gc",
     "18_slicing",
     "19_comprehensions",
     "20_unpack",
