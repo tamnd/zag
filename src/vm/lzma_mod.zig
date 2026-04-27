@@ -145,7 +145,7 @@ pub fn build(interp: *Interp) !*Module {
     try m.attrs.setStr(a, "LZMAFile", Value{ .class = interp.lzma_file_class.? });
 
     try regKw(a, m, "compress", lzmaCompressFn, lzmaCompressKw);
-    try reg(a, m, "decompress", lzmaDecompressFn);
+    try regKw(a, m, "decompress", lzmaDecompressFn, lzmaDecompressKw);
     try regKw(a, m, "open", lzmaOpenFn, lzmaOpenKw);
 
     // Format constants
@@ -229,6 +229,10 @@ fn lzmaDecompressFn(p: *anyopaque, args: []const Value) anyerror!Value {
         remaining = remaining[r.consumed..];
     }
     return Value{ .bytes = try Bytes.init(a, all_out.items) };
+}
+
+fn lzmaDecompressKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const Value) anyerror!Value {
+    return lzmaDecompressFn(p, args);
 }
 
 fn raiseLzmaError(interp: *Interp, msg: []const u8) !void {
@@ -523,6 +527,8 @@ fn bfInitImpl(interp: *Interp, args: []const Value, kw_names: []const Value, kw_
 
     try inst.dict.setStr(a, "_lf", Value{ .small_int = @intCast(@intFromPtr(state)) });
     try inst.dict.setStr(a, "closed", Value{ .boolean = false });
+    try inst.dict.setStr(a, "name", Value{ .str = try Str.init(a, path_str) });
+    try inst.dict.setStr(a, "mode", Value{ .str = try Str.init(a, mode_str) });
     return Value{ .none = {} };
 }
 fn bfInitFn(p: *anyopaque, args: []const Value) anyerror!Value {
