@@ -103,7 +103,7 @@ fn parseAndBindFn(_: *anyopaque, _: []const Value) anyerror!Value {
 
 fn readInitFileFn(p: *anyopaque, _: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
-    try interp.raisePy("OSError", "[Errno -1] Unknown error: -1");
+    try interp.raisePy("OSError", "[Errno 2] No such file or directory");
     return error.PyException;
 }
 
