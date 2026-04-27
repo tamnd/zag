@@ -1408,6 +1408,13 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
                             return error.AttributeError;
                         }
                     }
+                    if (i.cls.lookup("__setattr__")) |sa| {
+                        if (sa == .builtin_fn or sa == .function or sa == .bound_method) {
+                            const name_val = try Str.init(interp.allocator, name);
+                            _ = try invoke(interp, sa, &.{ obj, Value{ .str = name_val }, value });
+                            continue :sw advance(frame, &ext_arg, op.cache_width[@intFromEnum(Opcode.STORE_ATTR)]);
+                        }
+                    }
                     try i.dict.setStr(interp.allocator, name, value);
                 },
                 .class => |c| try c.dict.setStr(interp.allocator, name, value),
@@ -3104,6 +3111,27 @@ pub fn makeIter(interp: *Interp, v: Value) !*Iter {
                     }
                     break :blk try Iter.init(interp.allocator, .{ .list = lst });
                 },
+                .list => |l| break :blk try Iter.init(interp.allocator, .{ .list = l }),
+                .instance => {
+                    // __iter__ returned self or another instance — drain via __next__
+                    const lst = try List.init(interp.allocator);
+                    while (true) {
+                        const r = @import("dunder.zig").call(interp, it_v, "__next__", &.{}) catch |e| switch (e) {
+                            error.PyException => {
+                                if (interp.current_exc) |cur| {
+                                    if (cur == .instance and std.mem.eql(u8, cur.instance.cls.name, "StopIteration")) {
+                                        interp.current_exc = null;
+                                        break;
+                                    }
+                                }
+                                return e;
+                            },
+                            else => return e,
+                        };
+                        if (r) |x| try lst.append(interp.allocator, x) else break;
+                    }
+                    break :blk try Iter.init(interp.allocator, .{ .list = lst });
+                },
                 else => {
                     try interp.typeError("__iter__ returned non-iterator");
                     return error.TypeError;
@@ -3334,7 +3362,7 @@ fn matchClassCheck(subject: Value, cls: Value) bool {
     if (std.mem.eql(u8, name, "float")) return subject == .float;
     if (std.mem.eql(u8, name, "bool")) return subject == .boolean;
     if (std.mem.eql(u8, name, "list")) return subject == .list;
-    if (std.mem.eql(u8, name, "tuple")) return subject == .tuple;
+    if (std.mem.eql(u8, name, "tuple")) return subject == .tuple or subject == .named_tuple;
     if (std.mem.eql(u8, name, "dict")) return subject == .dict;
     if (std.mem.eql(u8, name, "bytes")) return subject == .bytes;
     if (std.mem.eql(u8, name, "bytearray")) return subject == .bytearray;
@@ -3356,9 +3384,10 @@ fn matchClassCheck(subject: Value, cls: Value) bool {
 /// method tables. Falls back to `AttributeError`.
 pub fn loadAttrValue(interp: *Interp, obj: Value, name: []const u8) !Value {
     if (obj == .instance) {
+        if (std.mem.eql(u8, name, "__class__")) return Value{ .class = obj.instance.cls };
         if (obj.instance.dict.getStr(name)) |v| return v;
         if (obj.instance.cls.lookup(name)) |v| {
-            if (v == .function) {
+            if (v == .function or v == .builtin_fn) {
                 const BoundMethod = @import("../object/bound_method.zig").BoundMethod;
                 const bm = try BoundMethod.init(interp.allocator, v, obj);
                 return Value{ .bound_method = bm };
@@ -3398,6 +3427,14 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
     if (obj == .instance) {
         if (std.mem.eql(u8, name, "__dict__")) {
             const v = Value{ .dict = obj.instance.dict };
+            if (is_method) {
+                frame.push(v);
+                frame.push(Value.null_sentinel);
+            } else frame.push(v);
+            return;
+        }
+        if (std.mem.eql(u8, name, "__class__")) {
+            const v = Value{ .class = obj.instance.cls };
             if (is_method) {
                 frame.push(v);
                 frame.push(Value.null_sentinel);
@@ -3561,7 +3598,11 @@ fn loadAttr(interp: *Interp, frame: *Frame, obj: Value, name: []const u8, is_met
             return;
         }
         if (std.mem.eql(u8, name, "__doc__")) {
-            const v = f.doc_override orelse Value.none;
+            const v = f.doc_override orelse blk: {
+                // CPython stores the docstring as co_consts[0] when it's a string.
+                if (f.code.consts.len > 0 and f.code.consts[0] == .str) break :blk f.code.consts[0];
+                break :blk Value.none;
+            };
             if (is_method) {
                 frame.push(v);
                 frame.push(Value.null_sentinel);
@@ -4541,12 +4582,19 @@ fn cacheInfoImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value 
         return error.TypeError;
     }
     const c = args[0].cached_fn;
-    const t = try Tuple.init(interp.allocator, 4);
-    t.items[0] = Value{ .small_int = @intCast(c.hits) };
-    t.items[1] = Value{ .small_int = @intCast(c.misses) };
-    t.items[2] = if (c.maxsize) |m| Value{ .small_int = @intCast(m) } else Value.none;
-    t.items[3] = Value{ .small_int = @intCast(c.cache.pairs.items.len) };
-    return Value{ .tuple = t };
+    const a = interp.allocator;
+    const NamedTupleFactory = @import("../object/named_tuple.zig").NamedTupleFactory;
+    const NamedTuple = @import("../object/named_tuple.zig").NamedTuple;
+    const fields = &[_][]const u8{ "hits", "misses", "maxsize", "currsize" };
+    const factory = try NamedTupleFactory.init(a, "CacheInfo", fields);
+    const items = [_]Value{
+        Value{ .small_int = @intCast(c.hits) },
+        Value{ .small_int = @intCast(c.misses) },
+        if (c.maxsize) |m| Value{ .small_int = @intCast(m) } else Value.none,
+        Value{ .small_int = @intCast(c.cache.pairs.items.len) },
+    };
+    const nt = try NamedTuple.init(a, factory, &items);
+    return Value{ .named_tuple = nt };
 }
 
 fn cacheClearImpl(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
@@ -4720,6 +4768,13 @@ fn instantiate(
     kw_names: []const Value,
     kw_values: []const Value,
 ) !Value {
+    // Refuse to instantiate classes with unresolved abstract methods.
+    if (cls.dict.getStr("__abstractmethods__")) |am| {
+        if (am == .list and am.list.items.items.len > 0) {
+            try interp.raisePy("TypeError", "Can't instantiate abstract class with abstract methods");
+            return error.PyException;
+        }
+    }
     // ZoneInfo("UTC") returns the cached instance. The fixture relies on
     // identity-equality between two ZoneInfo("UTC") calls.
     if (interp.zoneinfo_class) |zi_cls| {
@@ -4743,6 +4798,14 @@ fn instantiate(
             const types_mod = @import("types_mod.zig");
             return try types_mod.moduleTypeCall(interp, positional, kw_names, kw_values);
         }
+    }
+    // TypedDict classes produce a plain dict containing the kwargs.
+    if (cls.dict.getStr("__typed_dict__") != null) {
+        const d = try Dict.init(interp.allocator);
+        for (kw_names, kw_values) |kn, kv| {
+            if (kn == .str) try d.setStr(interp.allocator, kn.str.bytes, kv);
+        }
+        return Value{ .dict = d };
     }
     // Enum classes redirect calling to a member lookup (`Color(2)`),
     // a Flag composite, or the functional API (`Enum('Foo', [...])`).
@@ -4867,7 +4930,115 @@ pub fn buildClassKw(
     }
     // Promote enum members if any base carries an EnumKind marker.
     try @import("enum_mod.zig").processClass(interp, cls);
+    // Convert to namedtuple if class inherits from typing.NamedTuple.
+    if (try @import("typing_mod.zig").processNamedTupleSubclass(interp, cls)) |nt_val| {
+        return nt_val;
+    }
+    // ABC abstract-method tracking.
+    // Determine if this class participates in ABC (inherits from ABC or
+    // uses metaclass=ABCMeta). If so compute __abstractmethods__.
+    try processAbcClass(interp, cls, kw_names, kw_values);
     return Value{ .class = cls };
+}
+
+/// Scan the class for abstract methods and compute `__abstractmethods__`.
+/// Called after every `__build_class__` so that the flag is set before
+/// `instantiate` is reached.
+fn processAbcClass(
+    interp: *Interp,
+    cls: *Class,
+    kw_names: []const Value,
+    kw_values: []const Value,
+) !void {
+    const abc_mod_ref = @import("abc_mod.zig");
+    const isAbstract = abc_mod_ref.isAbstractWrapper;
+    // Decide whether this class is in the ABC family.
+    // Condition 1: ABC or ABCMeta is in the MRO (starting at index 1 to
+    //              skip the class itself).
+    var is_abc_family = false;
+    if (interp.abc_abc_class) |abc_cls| {
+        for (cls.mro[1..]) |c| {
+            if (c == abc_cls) {
+                is_abc_family = true;
+                break;
+            }
+        }
+    }
+    // Condition 2: metaclass=ABCMeta keyword was provided.
+    if (!is_abc_family) {
+        if (interp.abc_abcmeta_class) |meta_cls| {
+            for (kw_names, 0..) |kn, ki| {
+                if (kn == .str and std.mem.eql(u8, kn.str.bytes, "metaclass")) {
+                    if (ki < kw_values.len) {
+                        const kv = kw_values[ki];
+                        if (kv == .class and kv.class == meta_cls) {
+                            is_abc_family = true;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    if (!is_abc_family) return;
+
+    // Install register() classmethod if not already present so that
+    // user-defined ABCs support `MyAbc.register(SomeClass)`.
+    if (cls.dict.getStr("register") == null) {
+        if (interp.abc_abc_class) |abc_cls| {
+            if (abc_cls.dict.getStr("register")) |reg_v| {
+                try cls.dict.setStr(interp.allocator, "register", reg_v);
+            }
+        }
+    }
+
+    // Collect all abstract method names from the parent chain.
+    // Use a simple ArrayList of string slices (borrowed from the dict keys).
+    var abstract_names: std.ArrayList([]const u8) = .empty;
+    defer abstract_names.deinit(interp.allocator);
+    // Walk MRO from index 1 onward (skip the class itself).
+    for (cls.mro[1..]) |base| {
+        for (base.dict.keys.items) |attr| {
+            const v = base.dict.getStr(attr) orelse continue;
+            if (!isAbstract(v)) continue;
+            // Check if already in our list.
+            var already = false;
+            for (abstract_names.items) |n| {
+                if (std.mem.eql(u8, n, attr)) { already = true; break; }
+            }
+            if (!already) try abstract_names.append(interp.allocator, attr);
+        }
+    }
+    // Also check the class's own dict for abstract methods.
+    for (cls.dict.keys.items) |attr| {
+        const v = cls.dict.getStr(attr) orelse continue;
+        if (!isAbstract(v)) continue;
+        var already = false;
+        for (abstract_names.items) |n| {
+            if (std.mem.eql(u8, n, attr)) { already = true; break; }
+        }
+        if (!already) try abstract_names.append(interp.allocator, attr);
+    }
+
+    // Remove names that the current class overrides with a non-abstract value.
+    var unresolved: std.ArrayList([]const u8) = .empty;
+    defer unresolved.deinit(interp.allocator);
+    for (abstract_names.items) |attr| {
+        if (cls.dict.getStr(attr)) |v| {
+            if (!isAbstract(v)) continue; // overridden concretely
+        }
+        try unresolved.append(interp.allocator, attr);
+    }
+
+    if (unresolved.items.len == 0) return;
+
+    // Store as a List value on the class dict.
+    const am_list = try List.init(interp.allocator);
+    for (unresolved.items) |attr| {
+        const s = try Str.init(interp.allocator, attr);
+        try am_list.append(interp.allocator, Value{ .str = s });
+    }
+    try cls.dict.setStr(interp.allocator, "__abstractmethods__", Value{ .list = am_list });
 }
 
 /// `isinstance(obj, cls)` -- walks `obj.cls.mro` looking for `cls`.
@@ -4891,6 +5062,12 @@ pub fn isInstanceBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerro
         for (args[0].instance.cls.mro) |c| {
             if (c == target) return Value{ .boolean = true };
         }
+        // Check abc_registered: virtual subclass via register().
+        for (target.abc_registered.items) |reg| {
+            for (args[0].instance.cls.mro) |c| {
+                if (c == reg) return Value{ .boolean = true };
+            }
+        }
         return Value{ .boolean = false };
     }
     if (args[1] == .builtin_fn) {
@@ -4907,18 +5084,55 @@ pub fn isInstanceBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerro
     return error.TypeError;
 }
 
-/// `issubclass(sub, cls)` -- walks `sub.mro` for `cls`. Both args
-/// must be classes; the fixture-side `__exit__` uses this on
-/// exception types.
+/// `issubclass(sub, cls)` -- walks `sub.mro` for `cls`. The first arg
+/// may also be a builtin_fn (e.g. the `list` constructor) when
+/// `__subclasshook__` is involved.
 pub fn isSubclassBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
-    if (args.len != 2 or args[0] != .class or args[1] != .class) {
+    if (args.len != 2) {
         try interp.typeError("issubclass expects (class, class)");
         return error.TypeError;
     }
+    if (args[1] != .class) {
+        try interp.typeError("issubclass() arg 2 must be a class");
+        return error.TypeError;
+    }
     const target = args[1].class;
-    for (args[0].class.mro) |c| {
-        if (c == target) return Value{ .boolean = true };
+
+    // Check __subclasshook__ on target first. This is the hook that lets
+    // user-defined ABCs override the subclass check structurally.
+    if (target.dict.getStr("__subclasshook__")) |hook_raw| {
+        // The hook is typically stored as a classmethod descriptor.
+        const hook: Value = if (hook_raw == .descriptor and hook_raw.descriptor.kind == .classmethod)
+            hook_raw.descriptor.func
+        else
+            hook_raw;
+        // Call __subclasshook__(target_class, sub) with cls prepended.
+        const r = try invoke(interp, hook, &.{ Value{ .class = target }, args[0] });
+        if (r != .not_implemented and !(r == .none)) {
+            // Return the truthiness of the result.
+            const truth = switch (r) {
+                .boolean => |b| b,
+                .small_int => |i| i != 0,
+                .none => false,
+                else => true,
+            };
+            return Value{ .boolean = truth };
+        }
+    }
+
+    // Standard MRO walk -- only works when args[0] is a class.
+    if (args[0] == .class) {
+        for (args[0].class.mro) |c| {
+            if (c == target) return Value{ .boolean = true };
+        }
+        // Check abc_registered: virtual subclass via register().
+        for (target.abc_registered.items) |reg| {
+            if (args[0].class == reg) return Value{ .boolean = true };
+            for (args[0].class.mro) |c| {
+                if (c == reg) return Value{ .boolean = true };
+            }
+        }
     }
     return Value{ .boolean = false };
 }

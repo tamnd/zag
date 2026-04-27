@@ -1,0 +1,12 @@
+HELLO WORLD
+greet
+hi
+hi
+hi
+hi
+True
+42
+[hello]
+55
+6765
+done

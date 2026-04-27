@@ -1,4 +1,4 @@
-True
+editline
 0
 3
 first line

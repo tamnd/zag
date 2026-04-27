@@ -21,7 +21,17 @@ fi
 for src in "${py_files[@]}"; do
   base=${src%.py}
   $PY -c "import py_compile; py_compile.compile('$src', cfile='${base}.cpython-314.pyc', doraise=True)"
-  $PY "$src" > "${base}.expected.txt"
+  # In CI the committed expected.txt files are the ground truth; skip
+  # regeneration so platform differences (e.g. macOS readline vs Linux
+  # readline, macOS-only stat constants) don't clobber the committed
+  # output.  Set REGEN=1 locally to force a full regeneration.
+  if [[ -z "${CI:-}" || -n "${REGEN:-}" ]]; then
+    if ! $PY "$src" > "${base}.expected.txt.tmp" 2>/dev/null; then
+      rm -f "${base}.expected.txt.tmp"
+    else
+      mv "${base}.expected.txt.tmp" "${base}.expected.txt"
+    fi
+  fi
 done
 
 # Compile every .py inside helper-package directories (those whose

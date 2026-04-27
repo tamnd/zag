@@ -36,7 +36,8 @@ const State = union(enum) {
 
 
 pub fn build(interp: *Interp) !*Module {
-    const m = try Module.init(interp.allocator, "hashlib");
+    const a = interp.allocator;
+    const m = try Module.init(a, "hashlib");
     try ensureClass(interp);
     try reg(interp, m, "md5", md5Fn);
     try reg(interp, m, "sha1", sha1Fn);
@@ -45,6 +46,16 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "sha384", sha384Fn);
     try reg(interp, m, "sha512", sha512Fn);
     try reg(interp, m, "new", newFn);
+    // algorithms_available / algorithms_guaranteed: frozenset of algorithm names
+    const Set = @import("../object/set.zig").Set;
+    const names = [_][]const u8{ "md5", "sha1", "sha224", "sha256", "sha384", "sha512", "blake2b", "blake2s" };
+    const avail_set = try Set.init(a);
+    for (names) |name| {
+        const s = try @import("../object/string.zig").Str.init(a, name);
+        try avail_set.add(a, Value{ .str = s });
+    }
+    try m.attrs.setStr(a, "algorithms_available", Value{ .set = avail_set });
+    try m.attrs.setStr(a, "algorithms_guaranteed", Value{ .set = avail_set });
     return m;
 }
 
@@ -118,6 +129,12 @@ fn newInstance(interp: *Interp, kind: Kind, initial: ?[]const u8) !Value {
         .sha512 => 64,
     };
     try inst.dict.setStr(a, "digest_size", Value{ .small_int = sz });
+
+    const block_sz: i64 = switch (kind) {
+        .md5, .sha1, .sha224, .sha256 => 64,
+        .sha384, .sha512 => 128,
+    };
+    try inst.dict.setStr(a, "block_size", Value{ .small_int = block_sz });
 
     return Value{ .instance = inst };
 }

@@ -1,0 +1,15 @@
+localhost
+8080
+False
+example.com
+443
+[1]
+[]
+{'x': 1.0, 'y': 2.0}
+(1.0, 2.0)
+10.0 2.0
+1.0
+['x', 'y']
+3.0
+Cannot modify frozen
+done

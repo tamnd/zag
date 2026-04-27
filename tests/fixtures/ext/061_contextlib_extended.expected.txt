@@ -1,0 +1,20 @@
+acquiring db
+using db
+releasing db
+start 3
+got 30
+end 3
+acquiring a
+acquiring b
+a and b
+releasing b
+releasing a
+after suppress
+after suppress 2
+got: not suppressed
+acquiring r1
+acquiring r2
+using r1 and r2
+releasing r2
+releasing r1
+done

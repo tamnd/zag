@@ -22,7 +22,7 @@ const dunder = @import("dunder.zig");
 pub fn build(interp: *Interp) !*Module {
     const m = try Module.init(interp.allocator, "csv");
     try ensureClasses(interp);
-    try regKw(interp, m, "reader", readerFn, null);
+    try regKw(interp, m, "reader", readerFn, readerKw);
     try regKw(interp, m, "writer", writerFn, writerKw);
     try regKw(interp, m, "DictReader", dictReaderFn, dictReaderKw);
     try regKw(interp, m, "DictWriter", dictWriterFn, dictWriterKw);
@@ -143,10 +143,19 @@ fn collectLines(interp: *Interp, src: Value) !std.ArrayList([]const u8) {
 }
 
 fn readerFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    return readerKw(p, args, &.{}, &.{});
+}
+
+fn readerKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
     if (args.len < 1) return error.TypeError;
-    const delim: u8 = if (args.len >= 2) dialectDelim(args[1]) else ',';
+    var delim: u8 = if (args.len >= 2) dialectDelim(args[1]) else ',';
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn == .str and std.mem.eql(u8, kn.str.bytes, "delimiter") and kv == .str and kv.str.bytes.len > 0) {
+            delim = kv.str.bytes[0];
+        }
+    }
     var lines = try collectLines(interp, args[0]);
     defer lines.deinit(a);
     const out = try List.init(a);
@@ -341,15 +350,26 @@ fn dictWriterFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return dictWriterKw(p, args, &.{}, &.{});
 }
 
-fn dictWriterKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const Value) anyerror!Value {
+fn dictWriterKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     try ensureClasses(interp);
     const a = interp.allocator;
-    if (args.len < 2) return error.TypeError;
+    if (args.len < 1) return error.TypeError;
+    var fieldnames_val: ?Value = if (args.len >= 2) args[1] else null;
+    var delim: u8 = ',';
+    for (kw_names, kw_values) |kn, kv| {
+        if (kn == .str) {
+            if (std.mem.eql(u8, kn.str.bytes, "fieldnames")) fieldnames_val = kv;
+            if (std.mem.eql(u8, kn.str.bytes, "delimiter")) {
+                if (kv == .str and kv.str.bytes.len > 0) delim = kv.str.bytes[0];
+            }
+        }
+    }
+    if (fieldnames_val == null) return error.TypeError;
     const inst = try Instance.init(a, interp.csv_dict_writer_class.?);
     try inst.dict.setStr(a, "_target", args[0]);
-    try inst.dict.setStr(a, "fieldnames", args[1]);
-    try inst.dict.setStr(a, "_delim", Value{ .small_int = ',' });
+    try inst.dict.setStr(a, "fieldnames", fieldnames_val.?);
+    try inst.dict.setStr(a, "_delim", Value{ .small_int = delim });
     return Value{ .instance = inst };
 }
 

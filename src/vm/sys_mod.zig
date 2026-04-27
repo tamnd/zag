@@ -15,20 +15,26 @@ const Str = @import("../object/string.zig").Str;
 const Dict = @import("../object/dict.zig").Dict;
 const Class = @import("../object/class.zig").Class;
 const Instance = @import("../object/instance.zig").Instance;
+const NamedTupleFactory = @import("../object/named_tuple.zig").NamedTupleFactory;
+const NamedTuple = @import("../object/named_tuple.zig").NamedTuple;
 const Interp = @import("interp.zig").Interp;
 
 pub fn build(interp: *Interp) !*Module {
     const a = interp.allocator;
     const m = try Module.init(a, "sys");
 
-    // version_info: (3, 14, 0, 'final', 0)
-    const vi = try Tuple.init(a, 5);
-    vi.items[0] = Value{ .small_int = 3 };
-    vi.items[1] = Value{ .small_int = 14 };
-    vi.items[2] = Value{ .small_int = 0 };
-    vi.items[3] = Value{ .str = try Str.init(a, "final") };
-    vi.items[4] = Value{ .small_int = 0 };
-    try m.attrs.setStr(a, "version_info", Value{ .tuple = vi });
+    // version_info as named tuple with major/minor/micro/releaselevel/serial
+    const vi_factory = try NamedTupleFactory.init(a, "version_info",
+        &.{ "major", "minor", "micro", "releaselevel", "serial" });
+    const vi_items = [_]Value{
+        Value{ .small_int = 3 },
+        Value{ .small_int = 14 },
+        Value{ .small_int = 0 },
+        Value{ .str = try Str.init(a, "final") },
+        Value{ .small_int = 0 },
+    };
+    const vi = try NamedTuple.init(a, vi_factory, &vi_items);
+    try m.attrs.setStr(a, "version_info", Value{ .named_tuple = vi });
 
     try m.attrs.setStr(a, "version", Value{ .str = try Str.init(a, "3.14.0 (zag)") });
     try m.attrs.setStr(a, "byteorder", Value{ .str = try Str.init(a, "little") });

@@ -1,0 +1,22 @@
+Color.RED
+RED
+1
+Color.GREEN
+Color.BLUE
+True
+RED 1
+GREEN 2
+BLUE 3
+True
+False
+True
+3
+3
+True
+1
+2
+3
+4
+[1, 2, 3]
+['RED', 'GREEN', 'BLUE']
+done

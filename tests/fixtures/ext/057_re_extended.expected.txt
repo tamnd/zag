@@ -1,0 +1,17 @@
+123
+123
+['1', '22', '333']
+aNUMbNUMcNUM
+['hello', 'world', 'foo']
+John
+Doe
+('John', 'Doe')
+2024
+01
+15
+Hello
+['This', 'test', 'with', 'some', 'four']
+None
+12345
+None
+done

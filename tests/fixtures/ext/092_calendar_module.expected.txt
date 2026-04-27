@@ -1,0 +1,22 @@
+True
+False
+True
+False
+6
+0
+6
+3 29
+2 28
+January
+Jan
+Monday
+Sun
+True
+1
+True
+True
+True
+True
+6
+1704067200
+done

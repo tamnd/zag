@@ -54,12 +54,17 @@ const uuid_mod = @import("uuid_mod.zig");
 const difflib_mod = @import("difflib_mod.zig");
 const shlex_mod = @import("shlex_mod.zig");
 const gzip_mod = @import("gzip_mod.zig");
+const bz2_mod = @import("bz2_mod.zig");
+const zipfile_mod = @import("zipfile_mod.zig");
+const lzma_mod = @import("lzma_mod.zig");
+const configparser_mod = @import("configparser_mod.zig");
 const fnmatch_mod = @import("fnmatch_mod.zig");
 const statistics_mod = @import("statistics_mod.zig");
 const calendar_mod = @import("calendar_mod.zig");
 const pprint_mod = @import("pprint_mod.zig");
 const html_mod = @import("html_mod.zig");
 const sys_mod = @import("sys_mod.zig");
+const abc_mod = @import("abc_mod.zig");
 
 pub const Interp = struct {
     allocator: std.mem.Allocator,
@@ -77,6 +82,9 @@ pub const Interp = struct {
     gen_yielded: ?Value = null,
     /// Cached builtin modules. Lazily built on first import so a
     /// script that doesn't reach for them pays nothing.
+    abc_module: ?*Module = null,
+    abc_abc_class: ?*@import("../object/class.zig").Class = null,
+    abc_abcmeta_class: ?*@import("../object/class.zig").Class = null,
     asyncio_module: ?*Module = null,
     importlib_module: ?*Module = null,
     functools_module: ?*Module = null,
@@ -232,6 +240,7 @@ pub const Interp = struct {
     threading_cond_class: ?*@import("../object/class.zig").Class = null,
     threading_barrier_class: ?*@import("../object/class.zig").Class = null,
     threading_local_class: ?*@import("../object/class.zig").Class = null,
+    threading_main_thread_class: ?*@import("../object/class.zig").Class = null,
     string_formatter_class: ?*@import("../object/class.zig").Class = null,
     string_template_class: ?*@import("../object/class.zig").Class = null,
     threading_main_thread: ?*@import("../object/instance.zig").Instance = null,
@@ -281,6 +290,55 @@ pub const Interp = struct {
     zlib_dobj_class: ?*@import("../object/class.zig").Class = null,
     gzip_bad_class: ?*@import("../object/class.zig").Class = null,
     gzip_file_class: ?*@import("../object/class.zig").Class = null,
+    bz2_module: ?*Module = null,
+    bz2_compressor_class: ?*@import("../object/class.zig").Class = null,
+    bz2_decompressor_class: ?*@import("../object/class.zig").Class = null,
+    bz2_file_class: ?*@import("../object/class.zig").Class = null,
+    zipfile_module: ?*Module = null,
+    zipfile_class: ?*@import("../object/class.zig").Class = null,
+    zipfile_info_class: ?*@import("../object/class.zig").Class = null,
+    zipfile_extfile_class: ?*@import("../object/class.zig").Class = null,
+    lzma_module: ?*Module = null,
+    lzma_error_class: ?*@import("../object/class.zig").Class = null,
+    lzma_compressor_class: ?*@import("../object/class.zig").Class = null,
+    lzma_decompressor_class: ?*@import("../object/class.zig").Class = null,
+    lzma_file_class: ?*@import("../object/class.zig").Class = null,
+    configparser_module: ?*Module = null,
+    configparser_class: ?*@import("../object/class.zig").Class = null,
+    configparser_raw_class: ?*@import("../object/class.zig").Class = null,
+    configparser_no_section_class: ?*@import("../object/class.zig").Class = null,
+    configparser_no_option_class: ?*@import("../object/class.zig").Class = null,
+    configparser_dup_section_class: ?*@import("../object/class.zig").Class = null,
+    logging_module: ?*Module = null,
+    logging_state: ?*@import("logging_mod.zig").LoggingState = null,
+    logging_logger_class: ?*@import("../object/class.zig").Class = null,
+    logging_handler_class: ?*@import("../object/class.zig").Class = null,
+    logging_stream_handler_class: ?*@import("../object/class.zig").Class = null,
+    logging_null_handler_class: ?*@import("../object/class.zig").Class = null,
+    logging_formatter_class: ?*@import("../object/class.zig").Class = null,
+    dataclasses_field_class: ?*@import("../object/class.zig").Class = null,
+    dataclasses_factory_class: ?*@import("../object/class.zig").Class = null,
+    typing_typevar_class: ?*@import("../object/class.zig").Class = null,
+    typing_namedtuple_class: ?*@import("../object/class.zig").Class = null,
+    typing_optional_class: ?*@import("../object/class.zig").Class = null,
+    typing_union_class: ?*@import("../object/class.zig").Class = null,
+    typing_generic_alias_class: ?*@import("../object/class.zig").Class = null,
+    typing_any: ?Value = null,
+    traceback_te_class: ?*@import("../object/class.zig").Class = null,
+    token_module: ?*Module = null,
+    platform_module: ?*Module = null,
+    getpass_module: ?*Module = null,
+    traceback_module: ?*Module = null,
+    inspect_module: ?*Module = null,
+    contextlib_module: ?*Module = null,
+    ast_module: ?*Module = null,
+    subprocess_module: ?*Module = null,
+    time_module: ?*Module = null,
+    argparse_namespace_class: ?*@import("../object/class.zig").Class = null,
+    argparse_parser_class: ?*@import("../object/class.zig").Class = null,
+    time_struct_time_class: ?*@import("../object/class.zig").Class = null,
+    xml_etree_module: ?*Module = null,
+    xml_element_class: ?*@import("../object/class.zig").Class = null,
     linecache_cache: std.StringHashMapUnmanaged(@import("linecache_mod.zig").Entry) = .empty,
     recursion_limit: i64 = 1000,
     current_frame: ?*@import("frame.zig").Frame = null,
@@ -332,6 +390,9 @@ pub const Interp = struct {
     ellipsis_type: ?*@import("../object/class.zig").Class = null,
     not_implemented_type: ?*@import("../object/class.zig").Class = null,
     slice_type: ?*@import("../object/class.zig").Class = null,
+    gc_module: ?*Module = null,
+    gc_enabled: bool = true,
+    gc_threshold: [3]i64 = .{ 2000, 10, 0 },
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 
@@ -446,6 +507,7 @@ pub const Interp = struct {
         const t = try Tuple.init(self.allocator, 1);
         t.items[0] = val;
         try inst.dict.setStr(self.allocator, "args", Value{ .tuple = t });
+        try inst.dict.setStr(self.allocator, "value", val);
         self.current_exc = Value{ .instance = inst };
     }
 
@@ -541,6 +603,18 @@ pub const Interp = struct {
     /// Hand back the builtin module of the given name. Cached on
     /// first access so identity holds across re-imports.
     pub fn getBuiltinModule(self: *Interp, name: []const u8) ?*Module {
+        if (std.mem.eql(u8, name, "gc")) {
+            if (self.gc_module) |m| return m;
+            const m = @import("gc_mod.zig").build(self) catch return null;
+            self.gc_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "abc")) {
+            if (self.abc_module) |m| return m;
+            const m = abc_mod.build(self) catch return null;
+            self.abc_module = m;
+            return m;
+        }
         if (std.mem.eql(u8, name, "asyncio")) {
             if (self.asyncio_module) |m| return m;
             const m = asyncio_mod.build(self) catch return null;
@@ -793,6 +867,24 @@ pub const Interp = struct {
             self.gzip_module = m;
             return m;
         }
+        if (std.mem.eql(u8, name, "bz2")) {
+            if (self.bz2_module) |m| return m;
+            const m = bz2_mod.build(self) catch return null;
+            self.bz2_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "zipfile")) {
+            if (self.zipfile_module) |m| return m;
+            const m = zipfile_mod.build(self) catch return null;
+            self.zipfile_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "lzma")) {
+            if (self.lzma_module) |m| return m;
+            const m = lzma_mod.build(self) catch return null;
+            self.lzma_module = m;
+            return m;
+        }
         if (std.mem.eql(u8, name, "fnmatch")) {
             if (self.fnmatch_module) |m| return m;
             const m = fnmatch_mod.build(self) catch return null;
@@ -981,6 +1073,102 @@ pub const Interp = struct {
             const m = @import("threading_mod.zig").build(self) catch return null;
             self.threading_module = m;
             return m;
+        }
+        if (std.mem.eql(u8, name, "configparser")) {
+            if (self.configparser_module) |m| return m;
+            const m = configparser_mod.build(self) catch return null;
+            self.configparser_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "logging")) {
+            if (self.logging_module) |m| return m;
+            const m = @import("logging_mod.zig").build(self) catch return null;
+            self.logging_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "dataclasses")) {
+            const m = @import("dataclasses_mod.zig").build(self) catch return null;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "typing")) {
+            const m = @import("typing_mod.zig").build(self) catch return null;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "token")) {
+            if (self.token_module) |m| return m;
+            const m = @import("token_mod.zig").build(self) catch return null;
+            self.token_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "platform")) {
+            if (self.platform_module) |m| return m;
+            const m = @import("platform_mod.zig").build(self) catch return null;
+            self.platform_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "getpass")) {
+            if (self.getpass_module) |m| return m;
+            const m = @import("getpass_mod.zig").build(self) catch return null;
+            self.getpass_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "traceback")) {
+            if (self.traceback_module) |m| return m;
+            const m = @import("traceback_mod.zig").build(self) catch return null;
+            self.traceback_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "inspect")) {
+            if (self.inspect_module) |m| return m;
+            const m = @import("inspect_mod.zig").build(self) catch return null;
+            self.inspect_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "contextlib")) {
+            if (self.contextlib_module) |m| return m;
+            const m = @import("contextlib_mod.zig").build(self) catch return null;
+            self.contextlib_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "ast")) {
+            if (self.ast_module) |m| return m;
+            const m = @import("ast_mod.zig").build(self) catch return null;
+            self.ast_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "subprocess")) {
+            if (self.subprocess_module) |m| return m;
+            const m = @import("subprocess_mod.zig").build(self) catch return null;
+            self.subprocess_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "abc")) {
+            if (self.abc_module) |m| return m;
+            const m = @import("abc_mod.zig").build(self) catch return null;
+            self.abc_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "argparse")) {
+            const m = @import("argparse_mod.zig").build(self) catch return null;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "time")) {
+            if (self.time_module) |m| return m;
+            const m = @import("time_mod.zig").build(self) catch return null;
+            self.time_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "xml.etree.ElementTree")) {
+            if (self.xml_etree_module) |m| return m;
+            const m = @import("xml_mod.zig").build(self) catch return null;
+            self.xml_etree_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "xml.etree")) {
+            return @import("xml_mod.zig").buildEtreePackage(self) catch return null;
+        }
+        if (std.mem.eql(u8, name, "xml")) {
+            return @import("xml_mod.zig").buildXmlPackage(self) catch return null;
         }
         return null;
     }

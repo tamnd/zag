@@ -1,0 +1,13 @@
+inside stack
+callback 2
+callback 1
+enter A
+enter B
+using A and B
+exit B
+exit A
+after suppress
+after suppress 2
+TypeError not suppressed
+['cleanup2', 'cleanup1']
+done

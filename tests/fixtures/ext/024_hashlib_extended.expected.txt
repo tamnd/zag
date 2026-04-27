@@ -1,0 +1,13 @@
+64
+True
+32
+16
+40
+128
+64
+True
+64
+True
+True
+64
+done

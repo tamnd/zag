@@ -1,0 +1,13 @@
+100
+212.0
+32.0
+3
+0
+Point(1, 2)
+Point(x=1, y=2)
+3
+world
+True
+False
+[1, 2, 3, 4]
+done

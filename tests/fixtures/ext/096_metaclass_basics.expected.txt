@@ -1,0 +1,7 @@
+['PluginA', 'PluginB', 'PluginC']
+{'FastAlgo': 'fast', 'SlowAlgo': 'slow'}
+TypedList[int]
+TypedList[str]
+3
+1 2 3
+done

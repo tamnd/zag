@@ -1,0 +1,29 @@
+42
+3.14
+true
+false
+null
+"hello"
+[1, 2, 3]
+{"a": 1, "b": 2}
+42
+3.14
+True
+False
+None
+hello
+[1, 2, 3]
+Alice
+30
+Alice
+25
+{
+  "a": 1,
+  "b": [
+    1,
+    2
+  ]
+}
+{"key": "value"}
+{"a": 1, "b": 2, "c": 3}
+done

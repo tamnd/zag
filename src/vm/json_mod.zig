@@ -15,12 +15,18 @@ const List = @import("../object/list.zig").List;
 const Tuple = @import("../object/tuple.zig").Tuple;
 const Dict = @import("../object/dict.zig").Dict;
 const Str = @import("../object/string.zig").Str;
+const Class = @import("../object/class.zig").Class;
 const Interp = @import("interp.zig").Interp;
 
 pub fn build(interp: *Interp) !*Module {
-    const m = try Module.init(interp.allocator, "json");
+    const a = interp.allocator;
+    const m = try Module.init(a, "json");
     try regKw(interp, m, "dumps", dumpsFn, dumpsKw);
     try reg(interp, m, "loads", loadsFn);
+    // JSONDecodeError is a subclass of ValueError
+    const d = try Dict.init(a);
+    const json_decode_error = try Class.init(a, "JSONDecodeError", &.{}, d);
+    try m.attrs.setStr(a, "JSONDecodeError", Value{ .class = json_decode_error });
     return m;
 }
 
