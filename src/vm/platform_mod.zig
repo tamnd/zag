@@ -74,6 +74,9 @@ fn nodeFn(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = args;
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
+    if (builtin.os.tag == .windows) {
+        return Value{ .str = try Str.init(a, "localhost") };
+    }
     var buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
     const hostname = std.posix.gethostname(&buf) catch "localhost";
     return Value{ .str = try Str.init(a, hostname) };

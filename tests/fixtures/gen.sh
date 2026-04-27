@@ -21,7 +21,13 @@ fi
 for src in "${py_files[@]}"; do
   base=${src%.py}
   $PY -c "import py_compile; py_compile.compile('$src', cfile='${base}.cpython-314.pyc', doraise=True)"
-  $PY "$src" > "${base}.expected.txt"
+  # If Python can't run the fixture (e.g. platform-specific constants on Linux),
+  # keep the committed expected.txt rather than overwriting with an error or empty file.
+  if ! $PY "$src" > "${base}.expected.txt.tmp" 2>/dev/null; then
+    rm -f "${base}.expected.txt.tmp"
+  else
+    mv "${base}.expected.txt.tmp" "${base}.expected.txt"
+  fi
 done
 
 # Compile every .py inside helper-package directories (those whose
