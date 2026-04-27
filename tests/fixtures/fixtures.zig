@@ -98,6 +98,7 @@ pub const names = [_][]const u8{
     "172_subprocess",
     "173_pprint",
     "174_logging",
+    "175_uuid",
     "18_slicing",
     "19_comprehensions",
     "20_unpack",
