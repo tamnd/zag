@@ -24,8 +24,10 @@ const Sha224 = std.crypto.hash.sha2.Sha224;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const Sha384 = std.crypto.hash.sha2.Sha384;
 const Sha512 = std.crypto.hash.sha2.Sha512;
+const Sha3_256 = std.crypto.hash.sha3.Sha3_256;
+const Sha3_512 = std.crypto.hash.sha3.Sha3_512;
 
-const Algo = enum { md5, sha1, sha224, sha256, sha384, sha512 };
+const Algo = enum { md5, sha1, sha224, sha256, sha384, sha512, sha3_256, sha3_512 };
 
 const State = union(Algo) {
     md5: Md5,
@@ -34,6 +36,8 @@ const State = union(Algo) {
     sha256: Sha256,
     sha384: Sha384,
     sha512: Sha512,
+    sha3_256: Sha3_256,
+    sha3_512: Sha3_512,
 };
 
 pub fn build(interp: *Interp) !*Module {
@@ -43,6 +47,12 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "digest", digestFn);
     try reg(interp, m, "compare_digest", compareDigestFn);
     return m;
+}
+
+fn methodRegKw(a: std.mem.Allocator, dict: *Dict, name: []const u8, func: BuiltinFnPtr, kw: BuiltinKwFnPtr) !void {
+    const f = try a.create(BuiltinFn);
+    f.* = .{ .name = name, .func = func, .kw_func = kw };
+    try dict.setStr(a, name, Value{ .builtin_fn = f });
 }
 
 fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {
@@ -70,6 +80,7 @@ fn ensureClass(interp: *Interp) !void {
     try methodReg(a, d, "update", hmacUpdate);
     try methodReg(a, d, "digest", hmacDigest);
     try methodReg(a, d, "hexdigest", hmacHexdigest);
+    try methodReg(a, d, "copy", hmacCopy);
     interp.hmac_class = try Class.init(a, "HMAC", &.{}, d);
 }
 
@@ -94,6 +105,8 @@ fn algoFromValue(v: Value) ?Algo {
     if (std.mem.eql(u8, name, "sha256")) return .sha256;
     if (std.mem.eql(u8, name, "sha384")) return .sha384;
     if (std.mem.eql(u8, name, "sha512")) return .sha512;
+    if (std.mem.eql(u8, name, "sha3_256")) return .sha3_256;
+    if (std.mem.eql(u8, name, "sha3_512")) return .sha3_512;
     return null;
 }
 
@@ -101,6 +114,8 @@ fn algoBlockSize(a: Algo) usize {
     return switch (a) {
         .md5, .sha1, .sha224, .sha256 => 64,
         .sha384, .sha512 => 128,
+        .sha3_256 => 136,
+        .sha3_512 => 72,
     };
 }
 
@@ -112,6 +127,8 @@ fn algoDigestSize(a: Algo) usize {
         .sha256 => 32,
         .sha384 => 48,
         .sha512 => 64,
+        .sha3_256 => 32,
+        .sha3_512 => 64,
     };
 }
 
@@ -123,6 +140,8 @@ fn algoName(a: Algo) []const u8 {
         .sha256 => "sha256",
         .sha384 => "sha384",
         .sha512 => "sha512",
+        .sha3_256 => "sha3_256",
+        .sha3_512 => "sha3_512",
     };
 }
 
@@ -134,6 +153,8 @@ fn initState(a: Algo) State {
         .sha256 => .{ .sha256 = Sha256.init(.{}) },
         .sha384 => .{ .sha384 = Sha384.init(.{}) },
         .sha512 => .{ .sha512 = Sha512.init(.{}) },
+        .sha3_256 => .{ .sha3_256 = Sha3_256.init(.{}) },
+        .sha3_512 => .{ .sha3_512 = Sha3_512.init(.{}) },
     };
 }
 
@@ -145,6 +166,8 @@ fn updateState(s: *State, data: []const u8) void {
         .sha256 => |*h| h.update(data),
         .sha384 => |*h| h.update(data),
         .sha512 => |*h| h.update(data),
+        .sha3_256 => |*h| h.update(data),
+        .sha3_512 => |*h| h.update(data),
     }
 }
 
@@ -157,6 +180,8 @@ fn finalState(s: *State, out: []u8) void {
         .sha256 => |*h| h.final(out[0..32]),
         .sha384 => |*h| h.final(out[0..48]),
         .sha512 => |*h| h.final(out[0..64]),
+        .sha3_256 => |*h| h.final(out[0..32]),
+        .sha3_512 => |*h| h.final(out[0..64]),
     }
 }
 
@@ -166,16 +191,19 @@ fn hashOnce(a: Algo, data: []const u8, out: []u8) void {
     finalState(&s, out);
 }
 
+// 200 covers all supported block sizes: SHA3-256=136, SHA-512=128, etc.
+const MAX_BLOCK = 200;
+
 const HmacState = struct {
     algo: Algo,
     inner: State,
-    outer_key: [128]u8,
+    outer_key: [MAX_BLOCK]u8,
     outer_key_len: usize,
 };
 
 fn newHmacState(allocator: std.mem.Allocator, algo: Algo, key: []const u8) !*HmacState {
     const block_size = algoBlockSize(algo);
-    var key_buf: [128]u8 = undefined;
+    var key_buf: [MAX_BLOCK]u8 = undefined;
     @memset(key_buf[0..block_size], 0);
     if (key.len > block_size) {
         var tmp: [64]u8 = undefined;
@@ -186,8 +214,8 @@ fn newHmacState(allocator: std.mem.Allocator, algo: Algo, key: []const u8) !*Hma
         @memcpy(key_buf[0..key.len], key);
     }
 
-    var ipad: [128]u8 = undefined;
-    var opad: [128]u8 = undefined;
+    var ipad: [MAX_BLOCK]u8 = undefined;
+    var opad: [MAX_BLOCK]u8 = undefined;
     var i: usize = 0;
     while (i < block_size) : (i += 1) {
         ipad[i] = key_buf[i] ^ 0x36;
@@ -299,6 +327,22 @@ fn hmacDigest(p: *anyopaque, args: []const Value) anyerror!Value {
     finalizeHmac(st, out);
     const b = try Bytes.fromOwnedSlice(a, out);
     return Value{ .bytes = b };
+}
+
+fn hmacCopy(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .instance) return error.TypeError;
+    const inst = args[0].instance;
+    const old_st = hmacStatePtr(inst);
+    const new_st = try a.create(HmacState);
+    new_st.* = old_st.*;
+    const new_inst = try Instance.init(a, interp.hmac_class.?);
+    try new_inst.dict.setStr(a, "_state", Value{ .small_int = @intCast(@intFromPtr(new_st)) });
+    if (inst.dict.getStr("name")) |v| try new_inst.dict.setStr(a, "name", v);
+    if (inst.dict.getStr("digest_size")) |v| try new_inst.dict.setStr(a, "digest_size", v);
+    if (inst.dict.getStr("block_size")) |v| try new_inst.dict.setStr(a, "block_size", v);
+    return Value{ .instance = new_inst };
 }
 
 fn hmacHexdigest(p: *anyopaque, args: []const Value) anyerror!Value {
