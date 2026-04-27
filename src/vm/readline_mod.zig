@@ -3,6 +3,7 @@
 //! crosses into a real terminal or init file.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 const value_mod = @import("../object/value.zig");
 const Value = value_mod.Value;
@@ -36,7 +37,8 @@ fn state(interp: *Interp) *State {
 pub fn build(interp: *Interp) !*Module {
     const m = try Module.init(interp.allocator, "readline");
     {
-        const s = try Str.init(interp.allocator, "editline");
+        const backend = comptime if (builtin.os.tag == .macos) "editline" else "readline";
+        const s = try Str.init(interp.allocator, backend);
         try m.attrs.setStr(interp.allocator, "backend", Value{ .str = s });
     }
     try reg(interp, m, "parse_and_bind", parseAndBindFn);
