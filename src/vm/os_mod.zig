@@ -111,20 +111,6 @@ pub fn build(interp: *Interp) !*Module {
             const v = try Str.init(a, entry.value_ptr.*);
             try env.setKey(a, Value{ .str = k }, Value{ .str = v });
         }
-    } else if (builtin.os.tag != .windows) {
-        // Fallback: read the C environ pointer directly when no env_map is provided.
-        const CEnv = struct {
-            extern var environ: [*:null]?[*:0]u8;
-        };
-        var i: usize = 0;
-        while (CEnv.environ[i]) |entry| : (i += 1) {
-            const s = std.mem.span(entry);
-            if (std.mem.indexOf(u8, s, "=")) |eq| {
-                const k = try Str.init(a, s[0..eq]);
-                const v = try Str.init(a, s[eq + 1 ..]);
-                try env.setKey(a, Value{ .str = k }, Value{ .str = v });
-            }
-        }
     }
     try m.attrs.setStr(a, "environ", Value{ .dict = env });
 
@@ -456,6 +442,11 @@ fn fillRandom(buf: []u8) void {
             const n = std.os.linux.getrandom(buf.ptr + offset, buf.len - offset, 0);
             if (n > 0) offset += n;
         }
+    } else if (builtin.os.tag == .windows) {
+        const SystemFunction036 = struct {
+            extern "advapi32" fn SystemFunction036(buf: *anyopaque, len: u32) callconv(.winapi) u8;
+        };
+        _ = SystemFunction036.SystemFunction036(buf.ptr, @intCast(buf.len));
     } else {
         std.c.arc4random_buf(buf.ptr, buf.len);
     }
