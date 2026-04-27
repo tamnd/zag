@@ -994,6 +994,10 @@ pub const Interp = struct {
             self.enum_module = m;
             return m;
         }
+        if (std.mem.eql(u8, name, "errno")) {
+            const m = @import("errno_mod.zig").build(self) catch return null;
+            return m;
+        }
         if (std.mem.eql(u8, name, "graphlib")) {
             if (self.graphlib_module) |m| return m;
             const m = @import("graphlib_mod.zig").build(self) catch return null;
