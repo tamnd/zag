@@ -134,13 +134,38 @@ fn emit(interp: *Interp, h: *Instance, level: i64, name: []const u8, msg: []cons
     _ = try dispatch.invoke(interp, attr, &.{Value{ .str = try Str.init(a, line) }});
 }
 
+fn effectiveLevel(gs: *LoggingState, ls: *LoggerState) i64 {
+    if (ls.level != NOTSET) return ls.level;
+    // Walk up: for "a.b.c" try "a.b", "a", then "root".
+    var name: []const u8 = ls.name;
+    while (true) {
+        if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| {
+            name = name[0..dot];
+        } else {
+            name = "root";
+        }
+        if (gs.loggers.get(name)) |parent| {
+            if (parent.level != NOTSET) return parent.level;
+            if (std.mem.eql(u8, name, "root")) break;
+        } else {
+            break;
+        }
+    }
+    return WARNING;
+}
+
 fn logAt(interp: *Interp, inst: *Instance, level: i64, msg: []const u8) !void {
     const state_v = inst.dict.getStr("__state") orelse return;
     const ls: *LoggerState = @ptrFromInt(@as(usize, @intCast(state_v.small_int)));
     const gs = gstate(interp);
-    const eff = if (ls.level == NOTSET) DEBUG else ls.level;
-    if (level < eff or level <= gs.disabled) return;
+    if (level < effectiveLevel(gs, ls) or level <= gs.disabled) return;
+    // Emit to own handlers, then propagate up to root.
     for (ls.handlers.items) |h| try emit(interp, h, level, ls.name, msg);
+    if (!std.mem.eql(u8, ls.name, "root")) {
+        if (gs.loggers.get("root")) |root_ls| {
+            for (root_ls.handlers.items) |h| try emit(interp, h, level, ls.name, msg);
+        }
+    }
 }
 
 // ===== Logger methods =====
