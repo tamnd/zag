@@ -22,7 +22,9 @@ fn rng() std.Random {
 }
 
 pub fn build(interp: *Interp) !*Module {
-    const m = try Module.init(interp.allocator, "secrets");
+    const a = interp.allocator;
+    const m = try Module.init(a, "secrets");
+    try m.attrs.setStr(a, "DEFAULT_ENTROPY", Value{ .small_int = 32 });
     try reg(interp, m, "token_bytes", tokenBytesFn);
     try reg(interp, m, "token_hex", tokenHexFn);
     try reg(interp, m, "token_urlsafe", tokenUrlsafeFn);
@@ -48,19 +50,21 @@ fn argBytes(v: Value) ![]const u8 {
     };
 }
 
-fn defaultN(args: []const Value, fallback: usize) usize {
-    if (args.len < 1) return fallback;
-    return switch (args[0]) {
-        .small_int => |i| if (i >= 0) @intCast(i) else fallback,
-        .none => fallback,
-        else => fallback,
-    };
+fn extractN(interp: *Interp, args: []const Value, fallback: usize) !usize {
+    if (args.len < 1 or args[0] == .none) return fallback;
+    if (args[0] != .small_int) return fallback;
+    const n = args[0].small_int;
+    if (n < 0) {
+        try interp.raisePy("ValueError", "negative argument not allowed");
+        return error.PyException;
+    }
+    return @intCast(n);
 }
 
 fn tokenBytesFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    const n = defaultN(args, 32);
+    const n = try extractN(interp, args, 32);
     const out = try a.alloc(u8, n);
     rng().bytes(out);
     const b = try Bytes.fromOwnedSlice(a, out);
@@ -70,7 +74,7 @@ fn tokenBytesFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn tokenHexFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    const n = defaultN(args, 32);
+    const n = try extractN(interp, args, 32);
     const raw = try a.alloc(u8, n);
     defer a.free(raw);
     rng().bytes(raw);
@@ -88,7 +92,7 @@ fn tokenHexFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn tokenUrlsafeFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    const n = defaultN(args, 32);
+    const n = try extractN(interp, args, 32);
     const raw = try a.alloc(u8, n);
     defer a.free(raw);
     rng().bytes(raw);
@@ -131,7 +135,7 @@ fn tokenUrlsafeFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn randbelowFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     if (args.len < 1 or args[0] != .small_int or args[0].small_int <= 0) {
-        try interp.raisePy("ValueError", "randbelow requires positive int");
+        try interp.raisePy("ValueError", "Upper bound must be positive.");
         return error.PyException;
     }
     const n: u64 = @intCast(args[0].small_int);
@@ -141,8 +145,12 @@ fn randbelowFn(p: *anyopaque, args: []const Value) anyerror!Value {
 
 fn randbitsFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
-    if (args.len < 1 or args[0] != .small_int or args[0].small_int < 0 or args[0].small_int > 63) {
-        try interp.raisePy("ValueError", "randbits requires 0..63 bits");
+    if (args.len < 1 or args[0] != .small_int or args[0].small_int < 0) {
+        try interp.raisePy("ValueError", "number of bits must be non-negative");
+        return error.PyException;
+    }
+    if (args[0].small_int > 63) {
+        try interp.raisePy("ValueError", "number of bits must be non-negative");
         return error.PyException;
     }
     const k: u6 = @intCast(args[0].small_int);
@@ -160,7 +168,7 @@ fn choiceFn(p: *anyopaque, args: []const Value) anyerror!Value {
     if (args[0] == .str) {
         const bytes = args[0].str.bytes;
         if (bytes.len == 0) {
-            try interp.raisePy("IndexError", "choice from empty sequence");
+            try interp.raisePy("IndexError", "Cannot choose from an empty sequence");
             return error.PyException;
         }
         const idx = rng().uintLessThan(u64, bytes.len);
@@ -176,7 +184,7 @@ fn choiceFn(p: *anyopaque, args: []const Value) anyerror!Value {
         },
     };
     if (items.len == 0) {
-        try interp.raisePy("IndexError", "choice from empty sequence");
+        try interp.raisePy("IndexError", "Cannot choose from an empty sequence");
         return error.PyException;
     }
     const idx = rng().uintLessThan(u64, items.len);
