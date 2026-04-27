@@ -1,0 +1,20 @@
+str
+Alice
+30
+True
+[1, 2, 3, 'hello', None, True, False]
+42
+True
+[1, 2, 3]
+None
+True
+False
+42
+hello
+null
+true
+42
+3.14
+"hi"
+decode error
+done

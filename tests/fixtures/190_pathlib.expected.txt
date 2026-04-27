@@ -1,0 +1,17 @@
+file.txt
+.txt
+file
+/tmp/test
+file.txt
+/home/user/docs/file.txt
+4
+/
+c
+/some/path
+/dir/file.py
+/dir/other.txt
+True
+False
+.txt
+c
+done
