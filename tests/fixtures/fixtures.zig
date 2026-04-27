@@ -96,6 +96,7 @@ pub const names = [_][]const u8{
     "170_secrets",
     "171_os",
     "172_subprocess",
+    "173_pprint",
     "18_slicing",
     "19_comprehensions",
     "20_unpack",
