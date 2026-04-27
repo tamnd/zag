@@ -1,0 +1,11 @@
+DEBUG:root:debug message
+INFO:root:info message
+WARNING:root:warning message
+ERROR:root:error message
+CRITICAL:root:critical message
+WARNING:myapp:from myapp
+10
+20
+30
+DEBUG
+30
