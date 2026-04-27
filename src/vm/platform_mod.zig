@@ -69,16 +69,16 @@ fn pythonVersionTupleFn(p: *anyopaque, _: []const Value) anyerror!Value {
     return Value{ .tuple = t };
 }
 
+fn getHostname(allocator: std.mem.Allocator) []const u8 {
+    if (comptime builtin.os.tag == .windows) return "localhost";
+    var buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
+    const h = std.posix.gethostname(&buf) catch return "localhost";
+    return allocator.dupe(u8, if (h.len > 0) h else "localhost") catch "localhost";
+}
+
 fn nodeFn(p: *anyopaque, _: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
-    const a = interp.allocator;
-    if (builtin.os.tag == .windows) {
-        return Value{ .str = try Str.init(a, "localhost") };
-    }
-    var buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
-    const hostname = std.posix.gethostname(&buf) catch "localhost";
-    if (hostname.len == 0) return Value{ .str = try Str.init(a, "localhost") };
-    return Value{ .str = try Str.init(a, hostname) };
+    return Value{ .str = try Str.init(interp.allocator, getHostname(interp.allocator)) };
 }
 
 fn architectureFn(p: *anyopaque, _: []const Value) anyerror!Value {
@@ -108,9 +108,8 @@ fn processorFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn platformFn(p: *anyopaque, _: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    var buf: [256]u8 = undefined;
-    var hostname_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
-    const node = if (builtin.os.tag == .windows) "localhost" else (std.posix.gethostname(&hostname_buf) catch "localhost");
+    const node = getHostname(a);
+    var buf: [512]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, "{s}-{s}", .{ system_str, node }) catch system_str;
     return Value{ .str = try Str.init(a, s) };
 }
@@ -122,8 +121,7 @@ fn unameFn(p: *anyopaque, _: []const Value) anyerror!Value {
     const cls = try getUnameClass(interp);
     const inst = try Instance.init(a, cls);
 
-    var hostname_buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
-    const node = if (builtin.os.tag == .windows) "localhost" else (std.posix.gethostname(&hostname_buf) catch "localhost");
+    const node = getHostname(a);
 
     try inst.dict.setStr(a, "system",    Value{ .str = try Str.init(a, system_str) });
     try inst.dict.setStr(a, "node",      Value{ .str = try Str.init(a, if (node.len > 0) node else "localhost") });
