@@ -71,6 +71,18 @@ const html_mod = @import("html_mod.zig");
 const sys_mod = @import("sys_mod.zig");
 const abc_mod = @import("abc_mod.zig");
 
+pub const OsFdPos = struct {
+    pos: u64 = 0,
+    refcount: u32 = 1,
+};
+
+pub const OsFd = struct {
+    file: std.Io.File,
+    path: []u8,
+    writable: bool,
+    shared_pos: *OsFdPos,
+};
+
 pub const Interp = struct {
     allocator: std.mem.Allocator,
     stdout: *std.Io.Writer,
@@ -394,6 +406,10 @@ pub const Interp = struct {
     urlparse_result_class: ?*@import("../object/class.zig").Class = null,
     hmac_class: ?*@import("../object/class.zig").Class = null,
     uuid_class: ?*@import("../object/class.zig").Class = null,
+    os_direntry_class: ?*@import("../object/class.zig").Class = null,
+    /// Virtual fd table for os.open/read/write/lseek/fstat/close/dup.
+    os_fd_table: std.AutoHashMapUnmanaged(i32, OsFd) = .empty,
+    os_next_fd: i32 = 10,
     primitive_classes: std.StringHashMapUnmanaged(*@import("../object/class.zig").Class) = .empty,
     /// Pre-registered user-module code objects, keyed by module name.
     /// Populated by the embedder (the test harness pre-registers every

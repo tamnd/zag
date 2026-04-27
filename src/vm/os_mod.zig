@@ -3,18 +3,36 @@
 //! filesystem-touching ones go through `interp.io`.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 const value_mod = @import("../object/value.zig");
 const Value = value_mod.Value;
 const BuiltinFn = value_mod.BuiltinFn;
 const BuiltinFnPtr = value_mod.BuiltinFnPtr;
+const BuiltinKwFnPtr = value_mod.BuiltinKwFnPtr;
 const Module = @import("../object/module.zig").Module;
 const Dict = @import("../object/dict.zig").Dict;
 const Str = @import("../object/string.zig").Str;
 const Tuple = @import("../object/tuple.zig").Tuple;
+const List = @import("../object/list.zig").List;
 const Class = @import("../object/class.zig").Class;
 const Instance = @import("../object/instance.zig").Instance;
-const Interp = @import("interp.zig").Interp;
+const Bytes = @import("../object/bytes.zig").Bytes;
+const interp_mod = @import("interp.zig");
+const Interp = interp_mod.Interp;
+const OsFd = interp_mod.OsFd;
+const OsFdPos = interp_mod.OsFdPos;
+
+// Platform O_ flags.
+const O_RDONLY: i64 = 0;
+const O_WRONLY: i64 = 1;
+const O_RDWR: i64 = 2;
+const O_CREAT: i64 = if (builtin.os.tag == .macos) 0o200 else 64;
+const O_TRUNC: i64 = if (builtin.os.tag == .macos) 0o1000 else 512;
+const O_APPEND: i64 = if (builtin.os.tag == .macos) 0o10 else 1024;
+const SEEK_SET: i64 = 0;
+const SEEK_CUR: i64 = 1;
+const SEEK_END: i64 = 2;
 
 pub fn build(interp: *Interp) !*Module {
     const a = interp.allocator;
@@ -26,16 +44,63 @@ pub fn build(interp: *Interp) !*Module {
     try reg(interp, m, "symlink", symlinkFn);
     try reg(interp, m, "stat", statFn);
     try reg(interp, m, "lstat", lstatFn);
+    try reg(interp, m, "fstat", fstatFn);
     try reg(interp, m, "fspath", fspathFn);
     try reg(interp, m, "mkdir", mkdirFn);
     try reg(interp, m, "rmdir", rmdirFn);
-    try reg(interp, m, "makedirs", makedirsFn);
+    try regKw(interp, m, "makedirs", makedirsFn, makedirsKwFn);
     try reg(interp, m, "chdir", chdirFn);
     try reg(interp, m, "listdir", listdirFn);
     try reg(interp, m, "close", closeFn);
     try reg(interp, m, "chmod", chmodFn);
     try reg(interp, m, "rename", renameFn);
+    try reg(interp, m, "replace", replaceFn);
+    try reg(interp, m, "link", linkFn);
+    try reg(interp, m, "truncate", truncateFn);
     try reg(interp, m, "access", accessFn);
+    try reg(interp, m, "umask", umaskFn);
+    try reg(interp, m, "getgid", getgidFn);
+    try reg(interp, m, "getegid", getegidFn);
+    try reg(interp, m, "geteuid", getEuidFn);
+    try reg(interp, m, "getuid", getuidFn);
+    try reg(interp, m, "getppid", getppidFn);
+    try reg(interp, m, "cpu_count", cpuCountFn);
+    try reg(interp, m, "strerror", strerrorFn);
+    try reg(interp, m, "urandom", urandomFn);
+    try reg(interp, m, "fsencode", fsencodeFn);
+    try reg(interp, m, "fsdecode", fsdecodeFn);
+    try reg(interp, m, "get_exec_path", getExecPathFn);
+    try reg(interp, m, "walk", walkFn);
+    try reg(interp, m, "scandir", scandirFn);
+    // low-level fd ops
+    try reg(interp, m, "open", osOpenFn);
+    try reg(interp, m, "read", osReadFn);
+    try reg(interp, m, "write", osWriteFn);
+    try reg(interp, m, "lseek", osLseekFn);
+    try reg(interp, m, "dup", osDupFn);
+
+    // constants
+    try m.attrs.setStr(a, "F_OK", Value{ .small_int = 0 });
+    try m.attrs.setStr(a, "R_OK", Value{ .small_int = 4 });
+    try m.attrs.setStr(a, "W_OK", Value{ .small_int = 2 });
+    try m.attrs.setStr(a, "X_OK", Value{ .small_int = 1 });
+    try m.attrs.setStr(a, "O_RDONLY", Value{ .small_int = O_RDONLY });
+    try m.attrs.setStr(a, "O_WRONLY", Value{ .small_int = O_WRONLY });
+    try m.attrs.setStr(a, "O_RDWR", Value{ .small_int = O_RDWR });
+    try m.attrs.setStr(a, "O_CREAT", Value{ .small_int = O_CREAT });
+    try m.attrs.setStr(a, "O_TRUNC", Value{ .small_int = O_TRUNC });
+    try m.attrs.setStr(a, "O_APPEND", Value{ .small_int = O_APPEND });
+    try m.attrs.setStr(a, "SEEK_SET", Value{ .small_int = SEEK_SET });
+    try m.attrs.setStr(a, "SEEK_CUR", Value{ .small_int = SEEK_CUR });
+    try m.attrs.setStr(a, "SEEK_END", Value{ .small_int = SEEK_END });
+    try m.attrs.setStr(a, "sep", Value{ .str = try Str.init(a, "/") });
+    try m.attrs.setStr(a, "linesep", Value{ .str = try Str.init(a, "\n") });
+    try m.attrs.setStr(a, "curdir", Value{ .str = try Str.init(a, ".") });
+    try m.attrs.setStr(a, "pardir", Value{ .str = try Str.init(a, "..") });
+    try m.attrs.setStr(a, "extsep", Value{ .str = try Str.init(a, ".") });
+    try m.attrs.setStr(a, "pathsep", Value{ .str = try Str.init(a, ":") });
+    try m.attrs.setStr(a, "devnull", Value{ .str = try Str.init(a, "/dev/null") });
+    try m.attrs.setStr(a, "name", Value{ .str = try Str.init(a, "posix") });
 
     // os.environ: a regular dict, seeded from the host env once.
     const env = try Dict.init(a);
@@ -59,6 +124,12 @@ pub fn build(interp: *Interp) !*Module {
 fn reg(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {
     const f = try interp.allocator.create(BuiltinFn);
     f.* = .{ .name = name, .func = func };
+    try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
+}
+
+fn regKw(interp: *Interp, m: *Module, name: []const u8, func: BuiltinFnPtr, kw_func: BuiltinKwFnPtr) !void {
+    const f = try interp.allocator.create(BuiltinFn);
+    f.* = .{ .name = name, .func = func, .kw_func = kw_func };
     try m.attrs.setStr(interp.allocator, name, Value{ .builtin_fn = f });
 }
 
@@ -105,19 +176,40 @@ fn mkdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn makedirsFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    return makedirsImpl(p, args, false);
+}
+
+fn makedirsKwFn(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
+    var exist_ok = false;
+    for (kw_names, kw_values) |k, v| {
+        if (k == .str and std.mem.eql(u8, k.str.bytes, "exist_ok")) {
+            exist_ok = v == .boolean and v.boolean;
+        }
+    }
+    return makedirsImpl(p, args, exist_ok);
+}
+
+fn makedirsImpl(p: *anyopaque, args: []const Value, exist_ok: bool) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     if (args.len < 1 or args[0] != .str) {
         try interp.typeError("os.makedirs expects a path");
         return error.TypeError;
     }
-    std.Io.Dir.cwd().createDirPath(interp.io, args[0].str.bytes) catch |err| switch (err) {
+    const path = args[0].str.bytes;
+    const status = std.Io.Dir.cwd().createDirPathStatus(interp.io, path, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {
-            // Match os.makedirs default: raise unless exist_ok=True.
-            try interp.raisePy("FileExistsError", args[0].str.bytes);
-            return error.PyException;
+            if (!exist_ok) {
+                try interp.raisePy("FileExistsError", path);
+                return error.PyException;
+            }
+            return Value.none;
         },
         else => return err,
     };
+    if (status == .existed and !exist_ok) {
+        try interp.raisePy("FileExistsError", path);
+        return error.PyException;
+    }
     return Value.none;
 }
 
@@ -153,12 +245,574 @@ fn listdirFn(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .list = list };
 }
 
-fn closeFn(p: *anyopaque, args: []const Value) anyerror!Value {
+fn replaceFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 2 or args[0] != .str or args[1] != .str) {
+        try interp.typeError("os.replace expects (src, dst)");
+        return error.TypeError;
+    }
+    const cwd = std.Io.Dir.cwd();
+    cwd.rename(args[0].str.bytes, cwd, args[1].str.bytes, interp.io) catch |err| switch (err) {
+        error.FileNotFound => {
+            try interp.raisePy("FileNotFoundError", args[0].str.bytes);
+            return error.PyException;
+        },
+        else => return err,
+    };
+    return Value.none;
+}
+
+fn linkFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 2 or args[0] != .str or args[1] != .str) {
+        try interp.typeError("os.link expects (src, dst)");
+        return error.TypeError;
+    }
+    const cwd = std.Io.Dir.cwd();
+    try cwd.hardLink(args[0].str.bytes, cwd, args[1].str.bytes, interp.io, .{});
+    return Value.none;
+}
+
+fn truncateFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 2 or args[0] != .str or args[1] != .small_int) {
+        try interp.typeError("os.truncate expects (path, length)");
+        return error.TypeError;
+    }
+    const path = args[0].str.bytes;
+    const size: u64 = @intCast(args[1].small_int);
+    var f = try std.Io.Dir.cwd().openFile(interp.io, path, .{ .mode = .read_write });
+    defer f.close(interp.io);
+    try f.setLength(interp.io, size);
+    return Value.none;
+}
+
+fn posixUmask(mask: u32) u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.syscall1(.umask, mask));
+    } else {
+        return @intCast(std.c.umask(@intCast(mask)));
+    }
+}
+
+fn posixGetuid() u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getuid());
+    } else {
+        return @intCast(std.c.getuid());
+    }
+}
+
+fn posixGetgid() u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getgid());
+    } else {
+        return @intCast(std.c.getgid());
+    }
+}
+
+fn posixGeteuid() u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.geteuid());
+    } else {
+        return @intCast(std.c.geteuid());
+    }
+}
+
+fn posixGetegid() u32 {
+    if (builtin.os.tag == .linux) {
+        return @intCast(std.os.linux.getegid());
+    } else {
+        return @intCast(std.c.getegid());
+    }
+}
+
+fn umaskFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    _ = interp;
+    if (args.len < 1 or args[0] != .small_int) return Value{ .small_int = 0 };
+    if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
+    const mask: u32 = @intCast(args[0].small_int & 0o777);
+    const old = posixUmask(mask);
+    return Value{ .small_int = @intCast(old) };
+}
+
+fn getgidFn(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = p;
     _ = args;
-    // Pinhole `os.close`: tempfile's mkstemp returns synthetic fds, and
-    // the host's real fds aren't tracked, so close is a no-op. Callers
-    // pair this with `os.unlink` to remove the file from disk.
+    if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
+    return Value{ .small_int = @intCast(posixGetgid()) };
+}
+
+fn getegidFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    _ = args;
+    if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
+    return Value{ .small_int = @intCast(posixGetegid()) };
+}
+
+fn getEuidFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    _ = args;
+    if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
+    return Value{ .small_int = @intCast(posixGeteuid()) };
+}
+
+fn getuidFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    _ = args;
+    if (builtin.os.tag == .windows) return Value{ .small_int = 0 };
+    return Value{ .small_int = @intCast(posixGetuid()) };
+}
+
+fn getppidFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    _ = args;
+    if (builtin.os.tag == .windows) return Value{ .small_int = 1 };
+    return Value{ .small_int = @intCast(std.posix.getppid()) };
+}
+
+fn cpuCountFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    _ = args;
+    const n = std.Thread.getCpuCount() catch return Value.none;
+    return Value{ .small_int = @intCast(n) };
+}
+
+fn strerrorMsg(n: i64) []const u8 {
+    // Common POSIX errno values (Linux/macOS compatible).
+    return switch (n) {
+        1 => "Operation not permitted",
+        2 => "No such file or directory",
+        3 => "No such process",
+        4 => "Interrupted system call",
+        5 => "Input/output error",
+        6 => "No such device or address",
+        7 => "Argument list too long",
+        8 => "Exec format error",
+        9 => "Bad file descriptor",
+        10 => "No child processes",
+        11 => "Resource temporarily unavailable",
+        12 => "Cannot allocate memory",
+        13 => "Permission denied",
+        14 => "Bad address",
+        16 => "Device or resource busy",
+        17 => "File exists",
+        18 => "Invalid cross-device link",
+        19 => "No such device",
+        20 => "Not a directory",
+        21 => "Is a directory",
+        22 => "Invalid argument",
+        23 => "Too many open files in system",
+        24 => "Too many open files",
+        25 => "Inappropriate ioctl for device",
+        26 => "Text file busy",
+        27 => "File too large",
+        28 => "No space left on device",
+        29 => "Illegal seek",
+        30 => "Read-only file system",
+        31 => "Too many links",
+        32 => "Broken pipe",
+        33 => "Numerical argument out of domain",
+        34 => "Numerical result out of range",
+        35 => "Resource deadlock avoided",
+        36 => "File name too long",
+        37 => "No locks available",
+        38 => "Function not implemented",
+        39 => "Directory not empty",
+        40 => "Too many levels of symbolic links",
+        else => "Unknown error",
+    };
+}
+
+fn strerrorFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .small_int) {
+        try interp.typeError("os.strerror expects an int");
+        return error.TypeError;
+    }
+    return Value{ .str = try Str.init(a, strerrorMsg(args[0].small_int)) };
+}
+
+fn fillRandom(buf: []u8) void {
+    if (builtin.os.tag == .linux) {
+        var offset: usize = 0;
+        while (offset < buf.len) {
+            const n = std.os.linux.getrandom(buf.ptr + offset, buf.len - offset, 0);
+            if (n > 0) offset += n;
+        }
+    } else if (builtin.os.tag == .windows) {
+        const SystemFunction036 = struct {
+            extern "advapi32" fn SystemFunction036(buf: *anyopaque, len: u32) callconv(.winapi) u8;
+        };
+        _ = SystemFunction036.SystemFunction036(buf.ptr, @intCast(buf.len));
+    } else {
+        std.c.arc4random_buf(buf.ptr, buf.len);
+    }
+}
+
+fn urandomFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .small_int) {
+        try interp.typeError("os.urandom expects an int");
+        return error.TypeError;
+    }
+    const n: usize = @intCast(args[0].small_int);
+    const buf = try a.alloc(u8, n);
+    fillRandom(buf);
+    const b = try Bytes.fromOwnedSlice(a, buf);
+    return Value{ .bytes = b };
+}
+
+fn fsencodeFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1) {
+        try interp.typeError("os.fsencode expects a str or bytes");
+        return error.TypeError;
+    }
+    if (args[0] == .bytes) return args[0];
+    if (args[0] == .bytearray) {
+        const data = try a.dupe(u8, args[0].bytearray.data.items);
+        const b = try Bytes.fromOwnedSlice(a, data);
+        return Value{ .bytes = b };
+    }
+    if (args[0] != .str) {
+        try interp.typeError("os.fsencode expects str or bytes");
+        return error.TypeError;
+    }
+    const data = try a.dupe(u8, args[0].str.bytes);
+    const b = try Bytes.fromOwnedSlice(a, data);
+    return Value{ .bytes = b };
+}
+
+fn fsdecodeFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1) {
+        try interp.typeError("os.fsdecode expects bytes or str");
+        return error.TypeError;
+    }
+    if (args[0] == .str) return args[0];
+    const data: []const u8 = switch (args[0]) {
+        .bytes => |b| b.data,
+        .bytearray => |b| b.data.items,
+        else => {
+            try interp.typeError("os.fsdecode expects bytes or str");
+            return error.TypeError;
+        },
+    };
+    return Value{ .str = try Str.init(a, data) };
+}
+
+fn getExecPathFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    _ = args;
+    const list = try List.init(a);
+    // Read PATH from os.environ or host env.
+    const path_env: ?[]const u8 = blk: {
+        if (interp.os_module) |m| {
+            if (m.attrs.getStr("environ")) |env_v| {
+                if (env_v == .dict) {
+                    if (env_v.dict.getStr("PATH")) |v| {
+                        if (v == .str) break :blk v.str.bytes;
+                    }
+                }
+            }
+        }
+        if (interp.env_map) |em| {
+            if (em.get("PATH")) |v| break :blk v;
+        }
+        break :blk null;
+    };
+    const pe = path_env orelse "/bin:/usr/bin";
+    var it = std.mem.splitScalar(u8, pe, ':');
+    while (it.next()) |part| {
+        if (part.len > 0) {
+            try list.items.append(a, Value{ .str = try Str.init(a, part) });
+        }
+    }
+    return Value{ .list = list };
+}
+
+fn walkFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .str) {
+        try interp.typeError("os.walk expects a path");
+        return error.TypeError;
+    }
+    const top = args[0].str.bytes;
+    // Return a list of (root, dirs, files) tuples (eager walk).
+    const result = try List.init(a);
+    try walkDir(interp, result, top);
+    return Value{ .list = result };
+}
+
+fn walkDir(interp: *Interp, result: *List, dir_path: []const u8) !void {
+    const a = interp.allocator;
+    var dir = std.Io.Dir.cwd().openDir(interp.io, dir_path, .{ .iterate = true }) catch return;
+    defer dir.close(interp.io);
+    const sub_dirs = try List.init(a);
+    const files = try List.init(a);
+    var it = dir.iterate();
+    while (try it.next(interp.io)) |entry| {
+        const name_dup = try a.dupe(u8, entry.name);
+        const name_val = Value{ .str = try Str.fromOwnedSlice(a, name_dup) };
+        if (entry.kind == .directory) {
+            try sub_dirs.items.append(a, name_val);
+        } else {
+            try files.items.append(a, name_val);
+        }
+    }
+    const tup = try Tuple.init(a, 3);
+    tup.items[0] = Value{ .str = try Str.init(a, dir_path) };
+    tup.items[1] = Value{ .list = sub_dirs };
+    tup.items[2] = Value{ .list = files };
+    try result.items.append(a, Value{ .tuple = tup });
+    for (sub_dirs.items.items) |sd| {
+        if (sd != .str) continue;
+        const child = try std.fmt.allocPrint(a, "{s}/{s}", .{ dir_path, sd.str.bytes });
+        defer a.free(child);
+        try walkDir(interp, result, child);
+    }
+}
+
+fn scandirFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const path: []const u8 = if (args.len >= 1 and args[0] == .str) args[0].str.bytes else ".";
+    try ensureDirEntryClass(interp);
+    var dir = std.Io.Dir.cwd().openDir(interp.io, path, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => {
+            try interp.raisePy("FileNotFoundError", path);
+            return error.PyException;
+        },
+        else => return err,
+    };
+    defer dir.close(interp.io);
+    const list = try List.init(a);
+    var it = dir.iterate();
+    while (try it.next(interp.io)) |entry| {
+        const inst = try Instance.init(a, interp.os_direntry_class.?);
+        const name_dup = try a.dupe(u8, entry.name);
+        try inst.dict.setStr(a, "name", Value{ .str = try Str.fromOwnedSlice(a, name_dup) });
+        const is_dir = entry.kind == .directory;
+        try inst.dict.setStr(a, "_is_dir", Value{ .boolean = is_dir });
+        try inst.dict.setStr(a, "_is_file", Value{ .boolean = entry.kind == .file });
+        // Build full path for stat.
+        const full = try std.fmt.allocPrint(a, "{s}/{s}", .{ path, entry.name });
+        try inst.dict.setStr(a, "_path", Value{ .str = try Str.fromOwnedSlice(a, full) });
+        try list.items.append(a, Value{ .instance = inst });
+    }
+    return Value{ .list = list };
+}
+
+fn ensureDirEntryClass(interp: *Interp) !void {
+    if (interp.os_direntry_class != null) return;
+    const a = interp.allocator;
+    const d = try Dict.init(a);
+    const is_dir_fn = try a.create(BuiltinFn);
+    is_dir_fn.* = .{ .name = "is_dir", .func = direntryIsDirFn };
+    try d.setStr(a, "is_dir", Value{ .builtin_fn = is_dir_fn });
+    const is_file_fn = try a.create(BuiltinFn);
+    is_file_fn.* = .{ .name = "is_file", .func = direntryIsFileFn };
+    try d.setStr(a, "is_file", Value{ .builtin_fn = is_file_fn });
+    interp.os_direntry_class = try Class.init(a, "DirEntry", &.{}, d);
+}
+
+fn direntryIsDirFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    if (args.len < 1 or args[0] != .instance) return Value{ .boolean = false };
+    const v = args[0].instance.dict.getStr("_is_dir") orelse return Value{ .boolean = false };
+    return v;
+}
+
+fn direntryIsFileFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    _ = p;
+    if (args.len < 1 or args[0] != .instance) return Value{ .boolean = false };
+    const v = args[0].instance.dict.getStr("_is_file") orelse return Value{ .boolean = false };
+    return v;
+}
+
+// --- low-level fd ops ---
+
+fn osOpenFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .str) {
+        try interp.typeError("os.open expects (path, flags[, mode])");
+        return error.TypeError;
+    }
+    const path = args[0].str.bytes;
+    const flags: i64 = if (args.len >= 2 and args[1] == .small_int) args[1].small_int else 0;
+    const writable = (flags & O_WRONLY) != 0 or (flags & O_RDWR) != 0;
+    const create = (flags & O_CREAT) != 0;
+    const trunc = (flags & O_TRUNC) != 0;
+    const file = if (writable and create) blk: {
+        break :blk try std.Io.Dir.cwd().createFile(interp.io, path, .{ .truncate = trunc });
+    } else if (writable) blk: {
+        break :blk try std.Io.Dir.cwd().openFile(interp.io, path, .{ .mode = .read_write });
+    } else blk: {
+        break :blk try std.Io.Dir.cwd().openFile(interp.io, path, .{});
+    };
+    const path_dup = try a.dupe(u8, path);
+    const sp = try a.create(OsFdPos);
+    sp.* = .{};
+    const fd = interp.os_next_fd;
+    interp.os_next_fd += 1;
+    try interp.os_fd_table.put(a, fd, OsFd{ .file = file, .path = path_dup, .writable = writable, .shared_pos = sp });
+    return Value{ .small_int = @intCast(fd) };
+}
+
+fn osReadFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 2 or args[0] != .small_int or args[1] != .small_int) {
+        try interp.typeError("os.read expects (fd, n)");
+        return error.TypeError;
+    }
+    const fd: i32 = @intCast(args[0].small_int);
+    const n: usize = @intCast(args[1].small_int);
+    const entry = interp.os_fd_table.getPtr(fd) orelse {
+        try interp.raisePy("OSError", "Bad file descriptor");
+        return error.PyException;
+    };
+    const buf = try a.alloc(u8, n);
+    const nread = try entry.file.readPositionalAll(interp.io, buf, entry.shared_pos.pos);
+    entry.shared_pos.pos += nread;
+    const owned = try a.realloc(buf, nread);
+    const b = try Bytes.fromOwnedSlice(a, owned);
+    return Value{ .bytes = b };
+}
+
+fn osWriteFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 2 or args[0] != .small_int) {
+        try interp.typeError("os.write expects (fd, data)");
+        return error.TypeError;
+    }
+    const fd: i32 = @intCast(args[0].small_int);
+    const data: []const u8 = switch (args[1]) {
+        .bytes => |b| b.data,
+        .bytearray => |b| b.data.items,
+        else => {
+            try interp.typeError("os.write: data must be bytes");
+            return error.TypeError;
+        },
+    };
+    const entry = interp.os_fd_table.getPtr(fd) orelse {
+        try interp.raisePy("OSError", "Bad file descriptor");
+        return error.PyException;
+    };
+    try entry.file.writePositionalAll(interp.io, data, entry.shared_pos.pos);
+    entry.shared_pos.pos += data.len;
+    return Value{ .small_int = @intCast(data.len) };
+}
+
+fn osLseekFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 3 or args[0] != .small_int or args[1] != .small_int or args[2] != .small_int) {
+        try interp.typeError("os.lseek expects (fd, pos, how)");
+        return error.TypeError;
+    }
+    const fd: i32 = @intCast(args[0].small_int);
+    const pos: i64 = args[1].small_int;
+    const how: i64 = args[2].small_int;
+    const entry = interp.os_fd_table.getPtr(fd) orelse {
+        try interp.raisePy("OSError", "Bad file descriptor");
+        return error.PyException;
+    };
+    const new_pos: u64 = switch (how) {
+        SEEK_SET => @intCast(pos),
+        SEEK_CUR => @intCast(@as(i64, @intCast(entry.shared_pos.pos)) + pos),
+        SEEK_END => blk: {
+            const flen = try entry.file.length(interp.io);
+            break :blk @intCast(@as(i64, @intCast(flen)) + pos);
+        },
+        else => {
+            try interp.raisePy("ValueError", "invalid whence value");
+            return error.PyException;
+        },
+    };
+    entry.shared_pos.pos = new_pos;
+    return Value{ .small_int = @intCast(new_pos) };
+}
+
+fn fstatFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .small_int) {
+        try interp.typeError("os.fstat expects an fd");
+        return error.TypeError;
+    }
+    const fd: i32 = @intCast(args[0].small_int);
+    const entry = interp.os_fd_table.getPtr(fd) orelse {
+        try interp.raisePy("OSError", "Bad file descriptor");
+        return error.PyException;
+    };
+    const st = try entry.file.stat(interp.io);
+    try ensureStatResultClass(interp);
+    const inst = try Instance.init(a, interp.os_stat_result_class.?);
+    try inst.dict.setStr(a, "st_size", Value{ .small_int = @intCast(st.size) });
+    try inst.dict.setStr(a, "st_mode", Value{ .small_int = 0o100644 });
+    try inst.dict.setStr(a, "st_ino", Value{ .small_int = inodeToInt(st.inode) });
+    try inst.dict.setStr(a, "st_nlink", Value{ .small_int = @intCast(st.nlink) });
+    try inst.dict.setStr(a, "st_uid", Value{ .small_int = 0 });
+    try inst.dict.setStr(a, "st_gid", Value{ .small_int = 0 });
+    try inst.dict.setStr(a, "st_dev", Value{ .small_int = 0 });
+    const mtime_s: f64 = @floatFromInt(st.mtime.toSeconds());
+    try inst.dict.setStr(a, "st_atime", Value{ .float = mtime_s });
+    try inst.dict.setStr(a, "st_mtime", Value{ .float = mtime_s });
+    try inst.dict.setStr(a, "st_ctime", Value{ .float = mtime_s });
+    return Value{ .instance = inst };
+}
+
+fn osDupFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .small_int) {
+        try interp.typeError("os.dup expects an fd");
+        return error.TypeError;
+    }
+    const fd: i32 = @intCast(args[0].small_int);
+    const entry_ptr = interp.os_fd_table.getPtr(fd) orelse {
+        try interp.raisePy("OSError", "Bad file descriptor");
+        return error.PyException;
+    };
+    // New fd shares position with the original (POSIX semantics).
+    const new_file = try std.Io.Dir.cwd().openFile(interp.io, entry_ptr.path, .{});
+    const path_dup = try a.dupe(u8, entry_ptr.path);
+    entry_ptr.shared_pos.refcount += 1;
+    const sp = entry_ptr.shared_pos;
+    const writable = entry_ptr.writable;
+    const new_fd = interp.os_next_fd;
+    interp.os_next_fd += 1;
+    try interp.os_fd_table.put(a, new_fd, OsFd{
+        .file = new_file,
+        .path = path_dup,
+        .writable = writable,
+        .shared_pos = sp,
+    });
+    return Value{ .small_int = @intCast(new_fd) };
+}
+
+fn closeFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len >= 1 and args[0] == .small_int) {
+        const fd: i32 = @intCast(args[0].small_int);
+        if (interp.os_fd_table.fetchRemove(fd)) |kv| {
+            kv.value.file.close(interp.io);
+            interp.allocator.free(kv.value.path);
+            kv.value.shared_pos.refcount -= 1;
+            if (kv.value.shared_pos.refcount == 0) {
+                interp.allocator.destroy(kv.value.shared_pos);
+            }
+        }
+    }
     return Value.none;
 }
 
@@ -309,8 +963,34 @@ fn ensureStatResultClass(interp: *Interp) !void {
     if (interp.os_stat_result_class != null) return;
     const a = interp.allocator;
     const d = try Dict.init(a);
+    const gi = try a.create(BuiltinFn);
+    gi.* = .{ .name = "__getitem__", .func = statResultGetItemFn };
+    try d.setStr(a, "__getitem__", Value{ .builtin_fn = gi });
     const cls = try Class.init(a, "stat_result", &.{}, d);
     interp.os_stat_result_class = cls;
+}
+
+// stat_result[i]: indices match CPython's struct sequence layout.
+// 0=st_mode,1=st_ino,2=st_dev,3=st_nlink,4=st_uid,5=st_gid,
+// 6=st_size,7=st_atime,8=st_mtime,9=st_ctime
+const STAT_FIELDS = [_][]const u8{
+    "st_mode", "st_ino", "st_dev", "st_nlink", "st_uid", "st_gid",
+    "st_size", "st_atime", "st_mtime", "st_ctime",
+};
+
+fn statResultGetItemFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 2 or args[0] != .instance or args[1] != .small_int) {
+        try interp.typeError("stat_result index must be int");
+        return error.TypeError;
+    }
+    const idx = args[1].small_int;
+    if (idx < 0 or idx >= STAT_FIELDS.len) {
+        try interp.raisePy("IndexError", "stat_result index out of range");
+        return error.PyException;
+    }
+    const field = STAT_FIELDS[@intCast(idx)];
+    return args[0].instance.dict.getStr(field) orelse Value.none;
 }
 
 fn fspathFn(p: *anyopaque, args: []const Value) anyerror!Value {
