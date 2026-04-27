@@ -1,0 +1,9 @@
+42
+[1, 2, 3]
+{'a': 1}
+True
+None
+(1, 2)
+Module
+Assign
+doc
