@@ -57,6 +57,7 @@ const gzip_mod = @import("gzip_mod.zig");
 const bz2_mod = @import("bz2_mod.zig");
 const zipfile_mod = @import("zipfile_mod.zig");
 const lzma_mod = @import("lzma_mod.zig");
+const tarfile_mod = @import("tarfile_mod.zig");
 const configparser_mod = @import("configparser_mod.zig");
 const fnmatch_mod = @import("fnmatch_mod.zig");
 const statistics_mod = @import("statistics_mod.zig");
@@ -299,6 +300,11 @@ pub const Interp = struct {
     zipfile_info_class: ?*@import("../object/class.zig").Class = null,
     zipfile_extfile_class: ?*@import("../object/class.zig").Class = null,
     zipfile_badzip_class: ?*@import("../object/class.zig").Class = null,
+    tarfile_class: ?*@import("../object/class.zig").Class = null,
+    tarfile_info_class: ?*@import("../object/class.zig").Class = null,
+    tarfile_error_class: ?*@import("../object/class.zig").Class = null,
+    tarfile_read_error_class: ?*@import("../object/class.zig").Class = null,
+    tarfile_module: ?*Module = null,
     lzma_module: ?*Module = null,
     lzma_error_class: ?*@import("../object/class.zig").Class = null,
     lzma_compressor_class: ?*@import("../object/class.zig").Class = null,
@@ -884,6 +890,12 @@ pub const Interp = struct {
             if (self.lzma_module) |m| return m;
             const m = lzma_mod.build(self) catch return null;
             self.lzma_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "tarfile")) {
+            if (self.tarfile_module) |m| return m;
+            const m = tarfile_mod.build(self) catch return null;
+            self.tarfile_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "fnmatch")) {
