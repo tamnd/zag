@@ -1,9 +1,0 @@
-5
-['name', 'age', 'city']
-Alice
-2
-1
-['a', 'b', 'c']
-hello, world
-says "hi"
-done
