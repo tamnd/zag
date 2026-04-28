@@ -148,6 +148,20 @@ pub const Interp = struct {
     ssl_last_cert_pem: ?[]const u8 = null,
     ssl_tlsv1_2: Value = Value.none,
     ssl_tlsv1_3: Value = Value.none,
+    email_module: ?*Module = null,
+    email_message_module: ?*Module = null,
+    email_mime_text_module: ?*Module = null,
+    email_mime_multipart_module: ?*Module = null,
+    email_mime_application_module: ?*Module = null,
+    email_utils_module: ?*Module = null,
+    email_header_module: ?*Module = null,
+    email_encoders_module: ?*Module = null,
+    email_errors_module: ?*Module = null,
+    email_generator_module: ?*Module = null,
+    email_parser_module: ?*Module = null,
+    email_message_class: ?*@import("../object/class.zig").Class = null,
+    email_header_class: ?*@import("../object/class.zig").Class = null,
+    email_generator_class: ?*@import("../object/class.zig").Class = null,
     importlib_module: ?*Module = null,
     functools_module: ?*Module = null,
     functools_placeholder_class: ?*@import("../object/class.zig").Class = null,
@@ -1524,6 +1538,72 @@ pub const Interp = struct {
         }
         if (std.mem.eql(u8, name, "multiprocessing.shared_memory")) {
             const m = @import("shared_memory_mod.zig").build(self) catch return null;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email")) {
+            if (self.email_module) |m| return m;
+            const m = @import("email_mod.zig").build(self) catch return null;
+            self.email_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.message")) {
+            if (self.email_message_module) |m| return m;
+            const m = @import("email_mod.zig").buildMessage(self) catch return null;
+            self.email_message_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.mime.text")) {
+            if (self.email_mime_text_module) |m| return m;
+            const m = @import("email_mod.zig").buildMimeText(self) catch return null;
+            self.email_mime_text_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.mime.multipart")) {
+            if (self.email_mime_multipart_module) |m| return m;
+            const m = @import("email_mod.zig").buildMimeMultipart(self) catch return null;
+            self.email_mime_multipart_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.mime.application")) {
+            if (self.email_mime_application_module) |m| return m;
+            const m = @import("email_mod.zig").buildMimeApplication(self) catch return null;
+            self.email_mime_application_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.utils")) {
+            if (self.email_utils_module) |m| return m;
+            const m = @import("email_mod.zig").buildUtils(self) catch return null;
+            self.email_utils_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.header")) {
+            if (self.email_header_module) |m| return m;
+            const m = @import("email_mod.zig").buildHeader(self) catch return null;
+            self.email_header_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.encoders")) {
+            if (self.email_encoders_module) |m| return m;
+            const m = @import("email_mod.zig").buildEncoders(self) catch return null;
+            self.email_encoders_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.errors")) {
+            if (self.email_errors_module) |m| return m;
+            const m = @import("email_mod.zig").buildErrors(self) catch return null;
+            self.email_errors_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.generator")) {
+            if (self.email_generator_module) |m| return m;
+            const m = @import("email_mod.zig").buildGenerator(self) catch return null;
+            self.email_generator_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "email.parser")) {
+            if (self.email_parser_module) |m| return m;
+            const m = @import("email_mod.zig").buildParser(self) catch return null;
+            self.email_parser_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "concurrent.futures")) {
