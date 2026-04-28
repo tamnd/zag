@@ -109,6 +109,7 @@ pub const names = [_][]const u8{
     "182_argparse",
     "183_abc",
     "184_errno",
+    "185_platform",
     "19_comprehensions",
     "20_unpack",
     "21_with_stress",
