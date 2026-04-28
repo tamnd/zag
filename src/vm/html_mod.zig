@@ -406,8 +406,8 @@ pub fn build(interp: *Interp) !*Module {
 }
 
 // ── html5 entity table (full CPython html.entities.html5, 2231 entries) ──────
-// Generated from CPython Lib/html/entities.py
-const html5_table = @import("html5_table.zig").html5_table;
+// Loaded from a compact binary blob — fast to compile, no LLVM overhead.
+const html5_iter = @import("html5_table.zig");
 
 // ── html.entities module ─────────────────────────────────────────────────────
 
@@ -434,7 +434,8 @@ pub fn buildEntities(interp: *Interp) !*Module {
 
     // html5: full CPython html.entities.html5 table (2231 entries)
     const html5 = try Dict.init(a);
-    for (html5_table) |e| {
+    var it = html5_iter.iterator();
+    while (it.next()) |e| {
         try html5.setStr(a, e.name, try makeStr(a, e.val));
     }
     try m.attrs.setStr(a, "html5", Value{ .dict = html5 });

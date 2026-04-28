@@ -28,6 +28,13 @@ jobs:
         with:
           version: 0.16.0-dev.2984+cb7d2b056
 
+      - name: Cache Zig global cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/zig
+          key: zig-${{ runner.os }}-${{ hashFiles('src/**/*.zig', 'src/**/*.bin') }}
+          restore-keys: zig-${{ runner.os }}-
+
       - name: Print tool versions
         run: |
           zig version
@@ -37,7 +44,7 @@ jobs:
         run: zig build
 
       - name: zig build test
-        run: zig build test
+        run: CI=1 zig build test
 
       - name: zig build run (hello fixture)
         run: zig build run -- tests/fixtures/00_hello.cpython-314.pyc
