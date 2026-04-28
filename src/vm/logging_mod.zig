@@ -16,6 +16,7 @@ const Class = @import("../object/class.zig").Class;
 const Instance = @import("../object/instance.zig").Instance;
 const Interp = @import("interp.zig").Interp;
 const dispatch = @import("dispatch.zig");
+const file_io = @import("file_io.zig");
 
 // ===== levels =====
 
@@ -43,6 +44,7 @@ fn levelName(level: i64) []const u8 {
 const LoggerState = struct {
     name: []u8,
     level: i64,
+    propagate: bool = true,
     handlers: std.ArrayListUnmanaged(*Instance) = .empty,
 };
 
@@ -52,7 +54,7 @@ pub const LoggingState = struct {
     instances: std.StringHashMapUnmanaged(*Instance) = .empty,
     disabled: i64 = NOTSET,
 
-    fn getOrCreate(self: *LoggingState, name: []const u8) !*LoggerState {
+    pub fn getOrCreate(self: *LoggingState, name: []const u8) !*LoggerState {
         if (self.loggers.get(name)) |ls| return ls;
         const ls = try self.a.create(LoggerState);
         const owned = try self.a.dupe(u8, name);
@@ -100,13 +102,66 @@ fn fmtMsg(a: std.mem.Allocator, fmt_str: []const u8, level: i64, name: []const u
 
 // ===== emit =====
 
-fn emit(interp: *Interp, h: *Instance, level: i64, name: []const u8, msg: []const u8) !void {
+fn passesFilters(h: *Instance, name: []const u8) bool {
+    const fv = h.dict.getStr("_filters") orelse return true;
+    if (fv != .list) return true;
+    for (fv.list.items.items) |filt| {
+        if (filt != .instance) continue;
+        if (filt.instance.dict.getStr("_filter_name")) |nv| {
+            if (nv == .str) {
+                const prefix = nv.str.bytes;
+                if (prefix.len == 0) continue;
+                if (!std.mem.startsWith(u8, name, prefix)) return false;
+                if (name.len > prefix.len and name[prefix.len] != '.') return false;
+            }
+        }
+    }
+    return true;
+}
+
+fn emit(interp: *Interp, h: *Instance, level: i64, name: []const u8, msg: []const u8) anyerror!void {
     const a = interp.allocator;
     // check handler minimum level
     const hlevel = if (h.dict.getStr("_level")) |v| (if (v == .small_int) v.small_int else NOTSET) else NOTSET;
     if (level < hlevel) return;
+    // check filters
+    if (!passesFilters(h, name)) return;
     // NullHandler: skip
     if (h.dict.getStr("_null")) |nv| if (nv == .boolean and nv.boolean) return;
+    // buffering handler: buffer instead of emit
+    if (h.dict.getStr("_buffer")) |bv| {
+        if (bv == .list) {
+            const rec = try makeRecord(a, level, name, msg);
+            try bv.list.append(a, Value{ .instance = rec });
+            // check capacity
+            if (h.dict.getStr("_capacity")) |cv| {
+                if (cv == .small_int and bv.list.items.items.len >= @as(usize, @intCast(cv.small_int))) {
+                    try flushBufferingHandler(interp, h);
+                }
+            }
+            return;
+        }
+    }
+    // memory handler: buffer with flush on level
+    if (h.dict.getStr("_membuffer")) |mbv| {
+        if (mbv == .list) {
+            const rec = try makeRecord(a, level, name, msg);
+            try mbv.list.append(a, Value{ .instance = rec });
+            const flush_level: i64 = if (h.dict.getStr("_flush_level")) |flv| (if (flv == .small_int) flv.small_int else ERROR) else ERROR;
+            const cap: usize = if (h.dict.getStr("_capacity")) |cv| (if (cv == .small_int and cv.small_int > 0) @intCast(cv.small_int) else 100) else 100;
+            if (level >= flush_level or mbv.list.items.items.len >= cap) {
+                try flushMemoryHandler(interp, h);
+            }
+            return;
+        }
+    }
+    // queue handler: put record on queue
+    if (h.dict.getStr("_queue")) |qv| {
+        const rec = try makeRecord(a, level, name, msg);
+        const put_fn = dispatch.loadAttrValue(interp, qv, "put_nowait") catch return;
+        _ = dispatch.invoke(interp, put_fn, &.{Value{ .instance = rec }}) catch return;
+        return;
+    }
     // format
     var text: []u8 = undefined;
     var owned = false;
@@ -134,6 +189,119 @@ fn emit(interp: *Interp, h: *Instance, level: i64, name: []const u8, msg: []cons
     _ = try dispatch.invoke(interp, attr, &.{Value{ .str = try Str.init(a, line) }});
 }
 
+fn makeRecord(a: std.mem.Allocator, level: i64, name: []const u8, msg: []const u8) !*Instance {
+    const d = try Dict.init(a);
+    const inst = try a.create(Instance);
+    inst.* = .{ .cls = undefined, .dict = d };
+    try d.setStr(a, "levelno", Value{ .small_int = level });
+    try d.setStr(a, "name", Value{ .str = try Str.init(a, name) });
+    try d.setStr(a, "getMessage", Value.none);
+    try d.setStr(a, "_msg", Value{ .str = try Str.init(a, msg) });
+    return inst;
+}
+
+fn emitRecord(interp: *Interp, h: *Instance, rec: *Instance) anyerror!void {
+    const level = if (rec.dict.getStr("levelno")) |v| (if (v == .small_int) v.small_int else INFO) else INFO;
+    const name = if (rec.dict.getStr("name")) |v| (if (v == .str) v.str.bytes else "") else "";
+    const msg = if (rec.dict.getStr("_msg")) |v| (if (v == .str) v.str.bytes else "") else "";
+    try emit(interp, h, level, name, msg);
+}
+
+fn flushBufferingHandler(_: *Interp, h: *Instance) !void {
+    const bv = h.dict.getStr("_buffer") orelse return;
+    if (bv != .list) return;
+    bv.list.items.clearRetainingCapacity();
+}
+
+fn flushMemoryHandler(interp: *Interp, h: *Instance) anyerror!void {
+    const mbv = h.dict.getStr("_membuffer") orelse return;
+    if (mbv != .list) return;
+    const target = h.dict.getStr("_target") orelse Value.none;
+    if (target != .none and target == .instance) {
+        for (mbv.list.items.items) |rv| {
+            if (rv == .instance) try emitRecord(interp, target.instance, rv.instance);
+        }
+    }
+    mbv.list.items.clearRetainingCapacity();
+}
+
+/// Called by logging_handlers_mod to emit directly (bypasses buffering guards).
+pub fn emitDirect(interp: *Interp, h: *Instance, level: i64, name: []const u8, msg: []const u8) !void {
+    try emit(interp, h, level, name, msg);
+}
+
+// ===== FileHandler =====
+
+pub fn fileHandlerOpen(interp: *Interp, inst: *Instance, path: []const u8, mode: []const u8) !void {
+    const a = interp.allocator;
+    const path_val = Value{ .str = try Str.init(a, path) };
+    const mode_val = Value{ .str = try Str.init(a, mode) };
+    const file_val = try file_io.openFn(@ptrCast(interp), &.{ path_val, mode_val });
+    try inst.dict.setStr(a, "_stream", file_val);
+    try inst.dict.setStr(a, "_path", Value{ .str = try Str.init(a, path) });
+    try inst.dict.setStr(a, "_mode", Value{ .str = try Str.init(a, mode) });
+}
+
+fn fileHandlerInit(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 2 or args[0] != .instance or args[1] != .str) return error.TypeError;
+    const inst = args[0].instance;
+    const path = args[1].str.bytes;
+    const mode = if (args.len >= 3 and args[2] == .str) args[2].str.bytes else "a";
+    try fileHandlerOpen(interp, inst, path, mode);
+    try inst.dict.setStr(a, "_level", Value{ .small_int = NOTSET });
+    try inst.dict.setStr(a, "level", Value{ .small_int = NOTSET });
+    try inst.dict.setStr(a, "_formatter", Value.none);
+    try inst.dict.setStr(a, "_filters", Value{ .list = try List.init(a) });
+    return Value.none;
+}
+
+fn fileHandlerClose(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 1 or args[0] != .instance) return error.TypeError;
+    const inst = args[0].instance;
+    if (inst.dict.getStr("_stream")) |sv| {
+        if (sv == .instance) {
+            _ = file_io.openFn; // ensure linked
+            const close_attr = dispatch.loadAttrValue(interp, sv, "close") catch return Value.none;
+            _ = dispatch.invoke(interp, close_attr, &.{sv}) catch {};
+        }
+    }
+    return Value.none;
+}
+
+fn handlerAddFilter(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 2 or args[0] != .instance) return error.TypeError;
+    const inst = args[0].instance;
+    const filt = args[1];
+    if (inst.dict.getStr("_filters")) |fv| {
+        if (fv == .list) {
+            try fv.list.append(a, filt);
+            return Value.none;
+        }
+    }
+    const fl = try List.init(a);
+    try fl.append(a, filt);
+    try inst.dict.setStr(a, "_filters", Value{ .list = fl });
+    return Value.none;
+}
+
+// ===== Filter =====
+
+fn filterInit(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .instance) return error.TypeError;
+    const inst = args[0].instance;
+    const name = if (args.len >= 2 and args[1] == .str) args[1].str.bytes else "";
+    try inst.dict.setStr(a, "_filter_name", Value{ .str = try Str.init(a, name) });
+    try inst.dict.setStr(a, "name", Value{ .str = try Str.init(a, name) });
+    return Value.none;
+}
+
 fn effectiveLevel(gs: *LoggingState, ls: *LoggerState) i64 {
     if (ls.level != NOTSET) return ls.level;
     // Walk up: for "a.b.c" try "a.b", "a", then "root".
@@ -159,11 +327,21 @@ fn logAt(interp: *Interp, inst: *Instance, level: i64, msg: []const u8) !void {
     const ls: *LoggerState = @ptrFromInt(@as(usize, @intCast(state_v.small_int)));
     const gs = gstate(interp);
     if (level < effectiveLevel(gs, ls) or level <= gs.disabled) return;
-    // Emit to own handlers, then propagate up to root.
+    // Emit to own handlers, then walk up hierarchy if enabled.
     for (ls.handlers.items) |h| try emit(interp, h, level, ls.name, msg);
-    if (!std.mem.eql(u8, ls.name, "root")) {
-        if (gs.loggers.get("root")) |root_ls| {
-            for (root_ls.handlers.items) |h| try emit(interp, h, level, ls.name, msg);
+    if (ls.propagate and !std.mem.eql(u8, ls.name, "root")) {
+        var ancestor_name: []const u8 = ls.name;
+        while (true) {
+            if (std.mem.lastIndexOfScalar(u8, ancestor_name, '.')) |dot| {
+                ancestor_name = ancestor_name[0..dot];
+            } else {
+                ancestor_name = "root";
+            }
+            if (gs.loggers.get(ancestor_name)) |anc_ls| {
+                for (anc_ls.handlers.items) |h| try emit(interp, h, level, ls.name, msg);
+                if (!anc_ls.propagate) break;
+            }
+            if (std.mem.eql(u8, ancestor_name, "root")) break;
         }
     }
 }
@@ -323,7 +501,8 @@ fn formatterInit(p: *anyopaque, args: []const Value) anyerror!Value {
 fn getLoggerFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    const name = if (args.len >= 1 and args[0] == .str) args[0].str.bytes else "root";
+    const raw_name = if (args.len >= 1 and args[0] == .str) args[0].str.bytes else "root";
+    const name = if (raw_name.len == 0) "root" else raw_name;
     const gs = gstate(interp);
     // return cached instance
     if (gs.instances.get(name)) |inst| return Value{ .instance = inst };
@@ -333,8 +512,10 @@ fn getLoggerFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const inst = try Instance.init(a, interp.logging_logger_class.?);
     try inst.dict.setStr(a, "name", Value{ .str = try Str.init(a, name) });
     try inst.dict.setStr(a, "level", Value{ .small_int = ls.level });
-    try inst.dict.setStr(a, "propagate", Value{ .boolean = true });
-    try inst.dict.setStr(a, "handlers", Value{ .list = try List.init(a) });
+    try inst.dict.setStr(a, "propagate", Value{ .boolean = ls.propagate });
+    const hlist = try List.init(a);
+    for (ls.handlers.items) |hi| try hlist.append(a, Value{ .instance = hi });
+    try inst.dict.setStr(a, "handlers", Value{ .list = hlist });
     try inst.dict.setStr(a, "__state", Value{ .small_int = @intCast(@intFromPtr(ls)) });
     try gs.instances.put(a, ls.name, inst);
     return Value{ .instance = inst };
@@ -478,6 +659,28 @@ pub fn build(interp: *Interp) !*Module {
         interp.logging_logger_class = try Class.init(a, "Logger", &.{}, d);
     }
     try m.attrs.setStr(a, "Logger", Value{ .class = interp.logging_logger_class.? });
+
+    // FileHandler
+    if (interp.logging_file_handler_class == null) {
+        const d = try Dict.init(a);
+        try reg(a, d, "__init__", fileHandlerInit);
+        try reg(a, d, "setLevel", handlerSetLevel);
+        try reg(a, d, "setFormatter", handlerSetFormatter);
+        try reg(a, d, "addFilter", handlerAddFilter);
+        try reg(a, d, "close", fileHandlerClose);
+        interp.logging_file_handler_class = try Class.init(
+            a, "FileHandler", &[_]*Class{interp.logging_handler_class.?}, d,
+        );
+    }
+    try m.attrs.setStr(a, "FileHandler", Value{ .class = interp.logging_file_handler_class.? });
+
+    // Filter
+    if (interp.logging_filter_class == null) {
+        const d = try Dict.init(a);
+        try reg(a, d, "__init__", filterInit);
+        interp.logging_filter_class = try Class.init(a, "Filter", &.{}, d);
+    }
+    try m.attrs.setStr(a, "Filter", Value{ .class = interp.logging_filter_class.? });
 
     return m;
 }
