@@ -493,6 +493,13 @@ pub const Interp = struct {
     cf_future_class: ?*@import("../object/class.zig").Class = null,
     cf_tpe_class: ?*@import("../object/class.zig").Class = null,
     cf_ppe_class: ?*@import("../object/class.zig").Class = null,
+    ci_module: ?*Module = null,
+    ci_interp_class: ?*@import("../object/class.zig").Class = null,
+    ci_queue_class: ?*@import("../object/class.zig").Class = null,
+    ci_thread_class: ?*@import("../object/class.zig").Class = null,
+    ci_main_interp: ?*@import("../object/instance.zig").Instance = null,
+    ci_registry: ?*@import("../object/list.zig").List = null,
+    ci_next_id: u32 = 0,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 
@@ -1388,6 +1395,12 @@ pub const Interp = struct {
         }
         if (std.mem.eql(u8, name, "concurrent.futures")) {
             const m = @import("concurrent_futures_mod.zig").build(self) catch return null;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "concurrent.interpreters")) {
+            if (self.ci_module) |m| return m;
+            const m = @import("concurrent_interpreters_mod.zig").build(self) catch return null;
+            self.ci_module = m;
             return m;
         }
         return null;
