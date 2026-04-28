@@ -22,6 +22,12 @@ const threading_mod = @import("threading_mod.zig");
 // Socket fd type — use c_int to be portable across platforms (c.fd_t is *anyopaque on Windows)
 const Fd = c_int;
 
+// Platform-correct socket constants
+const CONST_AF_INET6: i64 = if (builtin.os.tag == .linux) 10 else 30; // Linux=10, macOS=30
+const CONST_SOL_SOCKET: i64 = if (builtin.os.tag == .linux) 1 else 0xFFFF; // Linux=1, macOS=65535
+const CONST_SO_REUSEADDR: i64 = if (builtin.os.tag == .linux) 2 else 4; // Linux=2, macOS=4
+const CONST_AF_INET6_INT: c_int = @intCast(CONST_AF_INET6);
+
 // libc network helpers — conditional to avoid linker errors on Windows
 const posix_net = if (builtin.os.tag != .windows) struct {
     pub extern "c" fn inet_pton(af: c_int, src: [*:0]const u8, dst: *anyopaque) c_int;
@@ -54,7 +60,13 @@ const MSG_DONTWAIT: c_int = 0x80;
 const O_NONBLOCK: c_int = 0x20000;
 
 // sockaddr_in6 layout on macOS (BSD)
-const SockaddrIn6 = extern struct {
+const SockaddrIn6 = if (builtin.os.tag == .linux) extern struct {
+    family: u16,
+    port: u16,
+    flowinfo: u32,
+    addr: [16]u8,
+    scope_id: u32,
+} else extern struct {
     len: u8 = 28,
     family: u8,
     port: u16,
@@ -136,17 +148,17 @@ fn buildSockaddr(a: std.mem.Allocator, addr_v: Value, family: i32) !struct { ptr
         },
         else => {},
     }
-    if (family == 30) { // AF_INET6
+    if (family == CONST_AF_INET6_INT) { // AF_INET6
         const s6 = try a.create(SockaddrIn6);
         s6.* = .{
-            .family = 30,
+            .family = @intCast(CONST_AF_INET6),
             .port = posix_net.htons(port),
             .flowinfo = 0,
             .addr = [_]u8{0} ** 16,
             .scope_id = 0,
         };
         const host_z = try a.dupeZ(u8, host);
-        _ = posix_net.inet_pton(30, host_z, &s6.addr);
+        _ = posix_net.inet_pton(CONST_AF_INET6_INT, host_z, &s6.addr);
         return .{ .ptr = s6, .len = @sizeOf(SockaddrIn6) };
     } else {
         const s4 = try a.create(c.sockaddr.in);
@@ -165,11 +177,11 @@ fn buildSockaddr(a: std.mem.Allocator, addr_v: Value, family: i32) !struct { ptr
 }
 
 fn parseSockaddr(a: std.mem.Allocator, sa: *c.sockaddr) !Value {
-    const family: u8 = @intCast(sa.family & 0xff);
-    if (family == 30) { // AF_INET6
+    const family: c_int = @intCast(sa.family & 0xff);
+    if (family == CONST_AF_INET6_INT) { // AF_INET6
         const s6: *SockaddrIn6 = @ptrCast(@alignCast(sa));
         var buf: [64]u8 = undefined;
-        const r = posix_net.inet_ntop(30, &s6.addr, &buf, 64);
+        const r = posix_net.inet_ntop(CONST_AF_INET6_INT, &s6.addr, &buf, 64);
         const host_str = if (r) |p| std.mem.sliceTo(p, 0) else "::";
         const t = try Tuple.init(a, 4);
         t.items[0] = try makeStr(a, host_str);
@@ -1041,14 +1053,14 @@ pub fn build(interp: *Interp) !*Module {
     try m.attrs.setStr(a, "herror", Value{ .class = interp.socket_herror_class.? });
 
     try m.attrs.setStr(a, "AF_INET", Value{ .small_int = 2 });
-    try m.attrs.setStr(a, "AF_INET6", Value{ .small_int = 30 });
+    try m.attrs.setStr(a, "AF_INET6", Value{ .small_int = CONST_AF_INET6 });
     try m.attrs.setStr(a, "AF_UNIX", Value{ .small_int = 1 });
     try m.attrs.setStr(a, "SOCK_STREAM", Value{ .small_int = 1 });
     try m.attrs.setStr(a, "SOCK_DGRAM", Value{ .small_int = 2 });
     try m.attrs.setStr(a, "IPPROTO_TCP", Value{ .small_int = 6 });
     try m.attrs.setStr(a, "IPPROTO_UDP", Value{ .small_int = 17 });
-    try m.attrs.setStr(a, "SOL_SOCKET", Value{ .small_int = 65535 });
-    try m.attrs.setStr(a, "SO_REUSEADDR", Value{ .small_int = 4 });
+    try m.attrs.setStr(a, "SOL_SOCKET", Value{ .small_int = CONST_SOL_SOCKET });
+    try m.attrs.setStr(a, "SO_REUSEADDR", Value{ .small_int = CONST_SO_REUSEADDR });
     try m.attrs.setStr(a, "SHUT_RD", Value{ .small_int = 0 });
     try m.attrs.setStr(a, "SHUT_WR", Value{ .small_int = 1 });
     try m.attrs.setStr(a, "SHUT_RDWR", Value{ .small_int = 2 });
