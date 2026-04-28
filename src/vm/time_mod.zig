@@ -13,10 +13,50 @@ const Str = @import("../object/string.zig").Str;
 const Tuple = @import("../object/tuple.zig").Tuple;
 const Interp = @import("interp.zig").Interp;
 
+// field order for index access
+const struct_time_fields = [_][]const u8{
+    "tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min",
+    "tm_sec",  "tm_wday", "tm_yday", "tm_isdst",
+};
+
+fn structTimeGetitem(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (args.len < 2 or args[0] != .instance) {
+        try interp.typeError("struct_time.__getitem__ expects (self, index)");
+        return error.TypeError;
+    }
+    const inst = args[0].instance;
+    const n = switch (args[1]) {
+        .small_int => |i| i,
+        else => {
+            try interp.typeError("struct_time indices must be integers");
+            return error.TypeError;
+        },
+    };
+    const idx: usize = if (n < 0) blk: {
+        const pos = @as(i64, struct_time_fields.len) + n;
+        if (pos < 0) {
+            try interp.raisePy("IndexError", "struct_time index out of range");
+            return error.PyException;
+        }
+        break :blk @intCast(pos);
+    } else blk: {
+        if (n >= struct_time_fields.len) {
+            try interp.raisePy("IndexError", "struct_time index out of range");
+            return error.PyException;
+        }
+        break :blk @intCast(n);
+    };
+    return inst.dict.getStr(struct_time_fields[idx]) orelse Value{ .small_int = 0 };
+}
+
 fn getOrCreateStructTimeClass(interp: *Interp) !*Class {
     if (interp.time_struct_time_class) |c| return c;
     const a = interp.allocator;
     const d = try Dict.init(a);
+    const f = try a.create(BuiltinFn);
+    f.* = .{ .name = "__getitem__", .func = structTimeGetitem };
+    try d.setStr(a, "__getitem__", Value{ .builtin_fn = f });
     const cls = try Class.init(a, "struct_time", &.{}, d);
     interp.time_struct_time_class = cls;
     return cls;
@@ -286,6 +326,82 @@ fn structTimeCtor(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .instance = inst };
 }
 
+fn asctimeFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const day_short = [_][]const u8{ "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+    const mon_short = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    const st: ?*Instance = if (args.len >= 1 and args[0] == .instance) args[0].instance else null;
+    const year: i64 = if (st) |s| stInt(s, "tm_year", 1970) else 1970;
+    const mon:  i64 = if (st) |s| stInt(s, "tm_mon",  1)    else 1;
+    const mday: i64 = if (st) |s| stInt(s, "tm_mday", 1)    else 1;
+    const hour: i64 = if (st) |s| stInt(s, "tm_hour", 0)    else 0;
+    const min_: i64 = if (st) |s| stInt(s, "tm_min",  0)    else 0;
+    const sec:  i64 = if (st) |s| stInt(s, "tm_sec",  0)    else 0;
+    const wday: i64 = if (st) |s| stInt(s, "tm_wday", 0)    else 0;
+    const dname = day_short[@intCast(@mod(wday, 7))];
+    const mname = mon_short[@intCast(@mod(mon - 1, 12))];
+    var buf: [64]u8 = undefined;
+    const s = try std.fmt.bufPrint(&buf, "{s} {s} {d:>2} {d:0>2}:{d:0>2}:{d:0>2} {d}", .{
+        dname, mname,
+        @as(u64, @intCast(@max(mday, 0))),
+        @as(u64, @intCast(@max(hour, 0))),
+        @as(u64, @intCast(@max(min_, 0))),
+        @as(u64, @intCast(@max(sec,  0))),
+        @as(u64, @intCast(@max(year, 0))),
+    });
+    return Value{ .str = try Str.init(a, s) };
+}
+
+fn stInt(inst: *Instance, name: []const u8, def: i64) i64 {
+    return if (inst.dict.getStr(name)) |v| switch (v) { .small_int => |i| i, else => def } else def;
+}
+
+fn ctimeFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    // ctime uses local time; for determinism just delegate to asctime(localtime(t))
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const secs: i64 = if (args.len >= 1) switch (args[0]) {
+        .float => |f| @intFromFloat(f),
+        .small_int => |i| i,
+        else => @intFromFloat(nowSecs(interp)),
+    } else @intFromFloat(nowSecs(interp));
+    const st = try epochSecsToStruct(interp, secs);
+    return asctimeFn(p, &.{st});
+}
+
+fn processTimeNsFn(_: *anyopaque, _: []const Value) anyerror!Value {
+    return Value{ .small_int = 0 };
+}
+
+fn threadTimeNsFn(_: *anyopaque, _: []const Value) anyerror!Value {
+    return Value{ .small_int = 0 };
+}
+
+fn getClockInfoFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const name = if (args.len >= 1 and args[0] == .str) args[0].str.bytes else "time";
+
+    const cls = try getOrCreateClockInfoClass(interp);
+    const inst = try Instance.init(a, cls);
+    const monotonic = std.mem.eql(u8, name, "monotonic") or std.mem.eql(u8, name, "perf_counter");
+    const adjustable = std.mem.eql(u8, name, "time");
+    try inst.dict.setStr(a, "implementation", Value{ .str = try Str.init(a, if (std.mem.eql(u8, name, "monotonic")) "clock_gettime(CLOCK_MONOTONIC)" else "clock_gettime(CLOCK_REALTIME)") });
+    try inst.dict.setStr(a, "monotonic",      Value{ .boolean = monotonic });
+    try inst.dict.setStr(a, "adjustable",     Value{ .boolean = adjustable });
+    try inst.dict.setStr(a, "resolution",     Value{ .float = 1e-9 });
+    return Value{ .instance = inst };
+}
+
+fn getOrCreateClockInfoClass(interp: *Interp) !*Class {
+    if (interp.time_clock_info_class) |c| return c;
+    const a = interp.allocator;
+    const d = try Dict.init(a);
+    const cls = try Class.init(a, "clock_info", &.{}, d);
+    interp.time_clock_info_class = cls;
+    return cls;
+}
+
 fn reg(a: std.mem.Allocator, m: *Module, name: []const u8, func: BuiltinFnPtr) !void {
     const f = try a.create(BuiltinFn);
     f.* = .{ .name = name, .func = func };
@@ -304,8 +420,13 @@ pub fn build(interp: *Interp) !*Module {
     try reg(a, m, "monotonic", monotonicFn);
     try reg(a, m, "monotonic_ns", monotonicFn);
     try reg(a, m, "process_time", processTimeFn);
+    try reg(a, m, "process_time_ns", processTimeNsFn);
     try reg(a, m, "thread_time", processTimeFn);
+    try reg(a, m, "thread_time_ns", threadTimeNsFn);
     try reg(a, m, "sleep", sleepFn);
+    try reg(a, m, "asctime", asctimeFn);
+    try reg(a, m, "ctime", ctimeFn);
+    try reg(a, m, "get_clock_info", getClockInfoFn);
     try reg(a, m, "gmtime", gmtimeFn);
     try reg(a, m, "localtime", localtimeFn);
     try reg(a, m, "mktime", mktimeFn);
@@ -313,6 +434,10 @@ pub fn build(interp: *Interp) !*Module {
     try reg(a, m, "strptime", strptimeFn);
     try reg(a, m, "struct_time", structTimeCtor);
 
+    try m.attrs.setStr(a, "CLOCK_REALTIME",          Value{ .small_int = 0 });
+    try m.attrs.setStr(a, "CLOCK_MONOTONIC",         Value{ .small_int = 1 });
+    try m.attrs.setStr(a, "CLOCK_PROCESS_CPUTIME_ID", Value{ .small_int = 2 });
+    try m.attrs.setStr(a, "CLOCK_THREAD_CPUTIME_ID", Value{ .small_int = 3 });
     try m.attrs.setStr(a, "timezone", Value{ .small_int = 0 });
     try m.attrs.setStr(a, "altzone", Value{ .small_int = 0 });
     try m.attrs.setStr(a, "daylight", Value{ .small_int = 0 });

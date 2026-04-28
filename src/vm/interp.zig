@@ -382,6 +382,7 @@ pub const Interp = struct {
     argparse_namespace_class: ?*@import("../object/class.zig").Class = null,
     argparse_parser_class: ?*@import("../object/class.zig").Class = null,
     time_struct_time_class: ?*@import("../object/class.zig").Class = null,
+    time_clock_info_class: ?*@import("../object/class.zig").Class = null,
     xml_etree_module: ?*Module = null,
     xml_element_class: ?*@import("../object/class.zig").Class = null,
     linecache_cache: std.StringHashMapUnmanaged(@import("linecache_mod.zig").Entry) = .empty,
