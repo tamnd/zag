@@ -405,6 +405,10 @@ pub fn build(interp: *Interp) !*Module {
     return m;
 }
 
+// ── html5 entity table (full CPython html.entities.html5, 2231 entries) ──────
+// Generated from CPython Lib/html/entities.py
+const html5_table = @import("html5_table.zig").html5_table;
+
 // ── html.entities module ─────────────────────────────────────────────────────
 
 pub fn buildEntities(interp: *Interp) !*Module {
@@ -428,17 +432,10 @@ pub fn buildEntities(interp: *Interp) !*Module {
     }
     try m.attrs.setStr(a, "codepoint2name", Value{ .dict = c2n });
 
-    // html5: {"name;": char_str} — built from the full html4 entity table
+    // html5: full CPython html.entities.html5 table (2231 entries)
     const html5 = try Dict.init(a);
-    for (html4_entities) |e| {
-        var buf: [64]u8 = undefined;
-        @memcpy(buf[0..e.name.len], e.name);
-        buf[e.name.len] = ';';
-        const key = buf[0 .. e.name.len + 1];
-        var val_buf: [4]u8 = undefined;
-        const val_len = std.unicode.utf8Encode(e.cp, &val_buf) catch continue;
-        const val_str = try makeStr(a, val_buf[0..val_len]);
-        try html5.setStr(a, key, val_str);
+    for (html5_table) |e| {
+        try html5.setStr(a, e.name, try makeStr(a, e.val));
     }
     try m.attrs.setStr(a, "html5", Value{ .dict = html5 });
 

@@ -142,6 +142,7 @@ pub const names = [_][]const u8{
     "212_quopri",
     "213_html",
     "214_html_parser",
+    "215_html_entities",
     "22_slicing_stress",
     "23_format_stress",
     "24_unpack_stress",
