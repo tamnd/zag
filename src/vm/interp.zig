@@ -131,6 +131,8 @@ pub const Interp = struct {
     signal_module: ?*Module = null,
     mmap_module: ?*Module = null,
     mmap_class: ?*@import("../object/class.zig").Class = null,
+    mailbox_module: ?*Module = null,
+    mailbox_mboxmsg_class: ?*@import("../object/class.zig").Class = null,
     selectors_selector_key_class: ?*@import("../object/class.zig").Class = null,
     selectors_default_selector_class: ?*@import("../object/class.zig").Class = null,
     ssl_module: ?*Module = null,
@@ -1452,6 +1454,12 @@ pub const Interp = struct {
             if (self.mmap_module) |m| return m;
             const m = @import("mmap_mod.zig").build(self) catch return null;
             self.mmap_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "mailbox")) {
+            if (self.mailbox_module) |m| return m;
+            const m = @import("mailbox_mod.zig").build(self) catch return null;
+            self.mailbox_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {

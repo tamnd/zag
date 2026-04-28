@@ -133,6 +133,8 @@ pub const names = [_][]const u8{
     "204_signal",
     "205_mmap",
     "206_email",
+    "207_json",
+    "208_mailbox",
     "21_with_stress",
     "22_slicing_stress",
     "23_format_stress",
