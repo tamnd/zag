@@ -490,6 +490,9 @@ pub const Interp = struct {
     sm_shm_class: ?*@import("../object/class.zig").Class = null,
     sm_buf_class: ?*@import("../object/class.zig").Class = null,
     sm_sl_class: ?*@import("../object/class.zig").Class = null,
+    cf_future_class: ?*@import("../object/class.zig").Class = null,
+    cf_tpe_class: ?*@import("../object/class.zig").Class = null,
+    cf_ppe_class: ?*@import("../object/class.zig").Class = null,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 
@@ -1381,6 +1384,10 @@ pub const Interp = struct {
         }
         if (std.mem.eql(u8, name, "multiprocessing.shared_memory")) {
             const m = @import("shared_memory_mod.zig").build(self) catch return null;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "concurrent.futures")) {
+            const m = @import("concurrent_futures_mod.zig").build(self) catch return null;
             return m;
         }
         return null;
