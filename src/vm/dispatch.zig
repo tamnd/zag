@@ -1716,6 +1716,8 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const name: []const u8 = switch (arg) {
                 0 => "__enter__",
                 1 => "__exit__",
+                2 => "__aenter__",
+                3 => "__aexit__",
                 else => {
                     try interp.typeError("LOAD_SPECIAL: unknown index");
                     return error.TypeError;
