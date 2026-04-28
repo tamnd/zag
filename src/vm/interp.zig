@@ -463,6 +463,7 @@ pub const Interp = struct {
     curses_textpad_class: ?*@import("../object/class.zig").Class = null,
     curses_panel_class: ?*@import("../object/class.zig").Class = null,
     curses_panel_stack: std.ArrayListUnmanaged(@import("../object/value.zig").Value) = .empty,
+    cmd_module: ?*Module = null,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 
@@ -1338,6 +1339,12 @@ pub const Interp = struct {
             if (self.curses_module) |m| return m;
             const m = @import("curses_mod.zig").build(self) catch return null;
             self.curses_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "cmd")) {
+            if (self.cmd_module) |m| return m;
+            const m = @import("cmd_mod.zig").build(self) catch return null;
+            self.cmd_module = m;
             return m;
         }
         return null;
