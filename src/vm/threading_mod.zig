@@ -31,12 +31,12 @@ pub fn build(interp: *Interp) !*Module {
     try regCtorKw(interp, m, "Thread", threadCtorPos, threadCtorKw);
     try regCtor(interp, m, "Event", eventCtor);
     try regCtor(interp, m, "Semaphore", semCtor);
-    try regCtor(interp, m, "BoundedSemaphore", semCtor);
+    try regCtor(interp, m, "BoundedSemaphore", boundedSemCtor);
     try regCtor(interp, m, "Condition", condCtor);
     try regCtor(interp, m, "Barrier", barrierCtor);
     try regCtor(interp, m, "local", localCtor);
     try reg(interp, m, "current_thread", currentThreadFn);
-    try reg(interp, m, "main_thread", currentThreadFn);
+    try reg(interp, m, "main_thread", mainThreadFn);
     try reg(interp, m, "active_count", activeCountFn);
     try reg(interp, m, "enumerate", enumerateFn);
     try reg(interp, m, "get_ident", getIdentFn);
@@ -81,7 +81,7 @@ fn ensureClasses(interp: *Interp) !void {
     const a = interp.allocator;
     if (interp.threading_lock_class == null) {
         const d = try Dict.init(a);
-        try methodReg(a, d, "acquire", lockAcquire);
+        try methodRegKw(a, d, "acquire", lockAcquire, lockAcquireKw);
         try methodReg(a, d, "release", lockRelease);
         try methodReg(a, d, "locked", lockLocked);
         try methodReg(a, d, "__enter__", lockEnter);
@@ -150,6 +150,14 @@ fn ensureClasses(interp: *Interp) !void {
         const d = try Dict.init(a);
         interp.threading_local_class = try Class.init(a, "local", &.{}, d);
     }
+    if (interp.threading_bounded_sem_class == null) {
+        const d = try Dict.init(a);
+        try methodRegKw(a, d, "acquire", semAcquire, semAcquireKw);
+        try methodReg(a, d, "release", boundedSemRelease);
+        try methodReg(a, d, "__enter__", semEnter);
+        try methodReg(a, d, "__exit__", semExit);
+        interp.threading_bounded_sem_class = try Class.init(a, "BoundedSemaphore", &.{}, d);
+    }
 }
 
 // --- Lock ---
@@ -163,11 +171,29 @@ fn lockCtor(p: *anyopaque, _: []const Value) anyerror!Value {
     return Value{ .instance = inst };
 }
 
+fn lockAcquireCore(interp: *Interp, inst: *Instance, blocking: bool) !Value {
+    const already = (inst.dict.getStr("_locked") orelse Value{ .boolean = false }).boolean;
+    if (already and !blocking) return Value{ .boolean = false };
+    try inst.dict.setStr(interp.allocator, "_locked", Value{ .boolean = true });
+    return Value{ .boolean = true };
+}
+
 fn lockAcquire(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const inst = try argInst(args);
-    try inst.dict.setStr(interp.allocator, "_locked", Value{ .boolean = true });
-    return Value{ .boolean = true };
+    const blocking = if (args.len >= 2 and args[1] == .boolean) args[1].boolean else true;
+    return lockAcquireCore(interp, inst, blocking);
+}
+
+fn lockAcquireKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const inst = try argInst(args);
+    var blocking = if (args.len >= 2 and args[1] == .boolean) args[1].boolean else true;
+    for (kw_names, kw_values) |n, v| {
+        if (n != .str) continue;
+        if (std.mem.eql(u8, n.str.bytes, "blocking") and v == .boolean) blocking = v.boolean;
+    }
+    return lockAcquireCore(interp, inst, blocking);
 }
 
 fn lockRelease(p: *anyopaque, args: []const Value) anyerror!Value {
@@ -278,25 +304,49 @@ fn threadCtorKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_
     return buildThread(interp, target, args_v, name);
 }
 
+fn runPendingThreads(interp: *Interp) !void {
+    while (interp.threading_pending_threads.items.len > 0) {
+        const thread_v = interp.threading_pending_threads.orderedRemove(0);
+        if (thread_v != .instance) continue;
+        const inst = thread_v.instance;
+        const target = inst.dict.getStr("_target") orelse Value.none;
+        if (target == .none) continue;
+        const args_v = inst.dict.getStr("_args") orelse Value.none;
+        const prev_thread = interp.threading_current_thread;
+        interp.threading_current_thread = inst;
+        const passed: []const Value = switch (args_v) {
+            .tuple => |t| t.items,
+            .list => |l| l.items.items,
+            else => &.{},
+        };
+        _ = try dispatch.invoke(interp, target, passed);
+        interp.threading_current_thread = prev_thread;
+    }
+}
+
 fn threadStart(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const inst = try argInst(args);
-    const target = inst.dict.getStr("_target") orelse Value.none;
-    if (target == .none) return Value.none;
-    const args_v = inst.dict.getStr("_args") orelse Value.none;
     const a = interp.allocator;
     try inst.dict.setStr(a, "_alive", Value{ .boolean = true });
-    const passed: []const Value = switch (args_v) {
-        .tuple => |t| t.items,
-        .list => |l| l.items.items,
-        else => &.{},
-    };
-    _ = try dispatch.invoke(interp, target, passed);
-    try inst.dict.setStr(a, "_alive", Value{ .boolean = false });
+    try interp.threading_live_threads.append(a, Value{ .instance = inst });
+    try interp.threading_pending_threads.append(a, Value{ .instance = inst });
     return Value.none;
 }
 
-fn threadJoin(_: *anyopaque, _: []const Value) anyerror!Value {
+fn threadJoin(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const inst = try argInst(args);
+    try runPendingThreads(interp);
+    try inst.dict.setStr(interp.allocator, "_alive", Value{ .boolean = false });
+    var i: usize = 0;
+    while (i < interp.threading_live_threads.items.len) : (i += 1) {
+        const item = interp.threading_live_threads.items[i];
+        if (item == .instance and item.instance == inst) {
+            _ = interp.threading_live_threads.orderedRemove(i);
+            break;
+        }
+    }
     return Value.none;
 }
 
@@ -396,6 +446,34 @@ fn semRelease(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value.none;
 }
 
+fn boundedSemCtor(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    try ensureClasses(interp);
+    const a = interp.allocator;
+    const inst = try Instance.init(a, interp.threading_bounded_sem_class.?);
+    const initial: i64 = if (args.len >= 1) switch (args[0]) {
+        .small_int => |i| i,
+        .boolean => |b| @intFromBool(b),
+        else => 1,
+    } else 1;
+    try inst.dict.setStr(a, "_count", Value{ .small_int = initial });
+    try inst.dict.setStr(a, "_max", Value{ .small_int = initial });
+    return Value{ .instance = inst };
+}
+
+fn boundedSemRelease(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const inst = try argInst(args);
+    const cur = (inst.dict.getStr("_count") orelse Value{ .small_int = 0 }).small_int;
+    const max = (inst.dict.getStr("_max") orelse Value{ .small_int = 1 }).small_int;
+    if (cur + 1 > max) {
+        try interp.raisePy("ValueError", "Semaphore released too many times");
+        return error.PyException;
+    }
+    try inst.dict.setStr(interp.allocator, "_count", Value{ .small_int = cur + 1 });
+    return Value.none;
+}
+
 fn semEnter(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = try semAcquireCore(@ptrCast(@alignCast(p)), try argInst(args), true);
     const inst = try argInst(args);
@@ -436,7 +514,17 @@ fn condNotify(_: *anyopaque, _: []const Value) anyerror!Value {
     return Value.none;
 }
 
-fn condWait(_: *anyopaque, _: []const Value) anyerror!Value {
+fn condWait(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    // Release the condition lock temporarily so pending threads can acquire it.
+    if (args.len >= 1 and args[0] == .instance) {
+        try args[0].instance.dict.setStr(interp.allocator, "_locked", Value{ .boolean = false });
+    }
+    try runPendingThreads(interp);
+    // Re-acquire
+    if (args.len >= 1 and args[0] == .instance) {
+        try args[0].instance.dict.setStr(interp.allocator, "_locked", Value{ .boolean = true });
+    }
     return Value{ .boolean = true };
 }
 
@@ -498,29 +586,40 @@ fn localCtor(p: *anyopaque, _: []const Value) anyerror!Value {
 
 // --- module-level functions ---
 
-fn currentThreadFn(p: *anyopaque, _: []const Value) anyerror!Value {
-    const interp: *Interp = @ptrCast(@alignCast(p));
+fn getOrCreateMainThread(interp: *Interp) !Value {
     try ensureClasses(interp);
     const a = interp.allocator;
     if (interp.threading_main_thread) |inst| return Value{ .instance = inst };
     const inst = try Instance.init(a, interp.threading_main_thread_class.?);
-    const name_s = try Str.init(a, "MainThread");
-    try inst.dict.setStr(a, "name", Value{ .str = name_s });
+    try inst.dict.setStr(a, "name", Value{ .str = try Str.init(a, "MainThread") });
     try inst.dict.setStr(a, "_alive", Value{ .boolean = true });
     interp.threading_main_thread = inst;
     return Value{ .instance = inst };
 }
 
-fn activeCountFn(_: *anyopaque, _: []const Value) anyerror!Value {
-    return Value{ .small_int = 1 };
+fn currentThreadFn(p: *anyopaque, _: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    if (interp.threading_current_thread) |inst| return Value{ .instance = inst };
+    return getOrCreateMainThread(interp);
+}
+
+fn mainThreadFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    _ = args;
+    return getOrCreateMainThread(interp);
+}
+
+fn activeCountFn(p: *anyopaque, _: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    return Value{ .small_int = @intCast(interp.threading_live_threads.items.len + 1) };
 }
 
 fn enumerateFn(p: *anyopaque, _: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
     const lst = try List.init(a);
-    const main = try currentThreadFn(p, &.{});
-    try lst.append(a, main);
+    try lst.append(a, try getOrCreateMainThread(interp));
+    for (interp.threading_live_threads.items) |v| try lst.append(a, v);
     return Value{ .list = lst };
 }
 
