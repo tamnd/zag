@@ -1,6 +1,0 @@
-enter 3
-inside 6
-exit 3
-after suppress
-nullcontext hello
-after ExitStack
