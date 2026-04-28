@@ -242,19 +242,26 @@ pub fn fileHandlerOpen(interp: *Interp, inst: *Instance, path: []const u8, mode:
     try inst.dict.setStr(a, "_mode", Value{ .str = try Str.init(a, mode) });
 }
 
-fn fileHandlerInit(p: *anyopaque, args: []const Value) anyerror!Value {
+fn fileHandlerInitKw(p: *anyopaque, args: []const Value, kw_keys: []const Value, kw_vals: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
     if (args.len < 2 or args[0] != .instance or args[1] != .str) return error.TypeError;
     const inst = args[0].instance;
     const path = args[1].str.bytes;
-    const mode = if (args.len >= 3 and args[2] == .str) args[2].str.bytes else "a";
+    var mode: []const u8 = if (args.len >= 3 and args[2] == .str) args[2].str.bytes else "a";
+    for (kw_keys, kw_vals) |k, v| {
+        if (k == .str and std.mem.eql(u8, k.str.bytes, "mode") and v == .str) mode = v.str.bytes;
+    }
     try fileHandlerOpen(interp, inst, path, mode);
     try inst.dict.setStr(a, "_level", Value{ .small_int = NOTSET });
     try inst.dict.setStr(a, "level", Value{ .small_int = NOTSET });
     try inst.dict.setStr(a, "_formatter", Value.none);
     try inst.dict.setStr(a, "_filters", Value{ .list = try List.init(a) });
     return Value.none;
+}
+
+fn fileHandlerInit(p: *anyopaque, args: []const Value) anyerror!Value {
+    return fileHandlerInitKw(p, args, &.{}, &.{});
 }
 
 fn fileHandlerClose(p: *anyopaque, args: []const Value) anyerror!Value {
@@ -663,7 +670,9 @@ pub fn build(interp: *Interp) !*Module {
     // FileHandler
     if (interp.logging_file_handler_class == null) {
         const d = try Dict.init(a);
-        try reg(a, d, "__init__", fileHandlerInit);
+        const f_init = try a.create(BuiltinFn);
+        f_init.* = .{ .name = "__init__", .func = fileHandlerInit, .kw_func = fileHandlerInitKw };
+        try d.setStr(a, "__init__", Value{ .builtin_fn = f_init });
         try reg(a, d, "setLevel", handlerSetLevel);
         try reg(a, d, "setFormatter", handlerSetFormatter);
         try reg(a, d, "addFilter", handlerAddFilter);

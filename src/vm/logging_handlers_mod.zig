@@ -180,12 +180,17 @@ fn watchedInitKw(p: *anyopaque, args: []const Value, kw_keys: []const Value, kw_
 
 // ===== BufferingHandler =====
 
-fn bufferingInit(p: *anyopaque, args: []const Value) anyerror!Value {
+fn bufferingInitKw(p: *anyopaque, args: []const Value, kw_keys: []const Value, kw_vals: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    if (args.len < 2 or args[0] != .instance) return error.TypeError;
+    if (args.len < 1 or args[0] != .instance) return error.TypeError;
     const inst = args[0].instance;
-    const cap: i64 = if (args[1] == .small_int) args[1].small_int else 10;
+    var cap: i64 = 10;
+    if (args.len >= 2 and args[1] == .small_int) cap = args[1].small_int;
+    for (kw_keys, kw_vals) |k, v| {
+        if (k != .str) continue;
+        if (std.mem.eql(u8, k.str.bytes, "capacity") and v == .small_int) cap = v.small_int;
+    }
     const buf = try List.init(a);
     try inst.dict.setStr(a, "_buffer", Value{ .list = buf });
     try inst.dict.setStr(a, "buffer", Value{ .list = buf });
@@ -197,6 +202,10 @@ fn bufferingInit(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value.none;
 }
 
+fn bufferingInit(p: *anyopaque, args: []const Value) anyerror!Value {
+    return bufferingInitKw(p, args, &.{}, &.{});
+}
+
 fn bufferingClose(_: *anyopaque, _: []const Value) anyerror!Value {
     return Value.none;
 }
@@ -206,14 +215,16 @@ fn bufferingClose(_: *anyopaque, _: []const Value) anyerror!Value {
 fn memoryInitKw(p: *anyopaque, args: []const Value, kw_keys: []const Value, kw_vals: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
-    if (args.len < 2 or args[0] != .instance) return error.TypeError;
+    if (args.len < 1 or args[0] != .instance) return error.TypeError;
     const inst = args[0].instance;
-    const cap: i64 = if (args[1] == .small_int) args[1].small_int else 10;
+    var cap: i64 = 10;
+    if (args.len >= 2 and args[1] == .small_int) cap = args[1].small_int;
 
     var flushLevel: i64 = ERROR;
     var target: Value = Value.none;
     for (kw_keys, kw_vals) |k, v| {
         if (k != .str) continue;
+        if (std.mem.eql(u8, k.str.bytes, "capacity") and v == .small_int) cap = v.small_int;
         if (std.mem.eql(u8, k.str.bytes, "flushLevel") and v == .small_int) flushLevel = v.small_int;
         if (std.mem.eql(u8, k.str.bytes, "target")) target = v;
     }
@@ -410,10 +421,12 @@ pub fn build(interp: *Interp) !*Module {
     // BufferingHandler
     {
         const d = try Dict.init(a);
-        try reg(a, d, "__init__", bufferingInit);
         try reg(a, d, "setLevel", handlerSetLevel);
         try reg(a, d, "setFormatter", handlerSetFormatter);
         try reg(a, d, "close", bufferingClose);
+        const f_kw = try a.create(BuiltinFn);
+        f_kw.* = .{ .name = "__init__", .func = bufferingInit, .kw_func = bufferingInitKw };
+        try d.setStr(a, "__init__", Value{ .builtin_fn = f_kw });
         const cls = try Class.init(a, "BufferingHandler", &[_]*Class{base}, d);
         try m.attrs.setStr(a, "BufferingHandler", Value{ .class = cls });
     }
