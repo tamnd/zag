@@ -113,6 +113,7 @@ pub const names = [_][]const u8{
     "186_curses_ascii",
     "187_curses_panel",
     "188_cmd",
+    "189_threading",
     "19_comprehensions",
     "20_unpack",
     "21_with_stress",
