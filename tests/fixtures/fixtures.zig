@@ -98,7 +98,7 @@ pub const names = [_][]const u8{
     "172_io",
     "173_time",
     "174_logging",
-    "175_uuid",
+    "175_logging_config",
     "176_typing",
     "177_platform",
     "178_errno",

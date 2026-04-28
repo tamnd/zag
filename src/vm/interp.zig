@@ -353,12 +353,16 @@ pub const Interp = struct {
     netrc_class: ?*@import("../object/class.zig").Class = null,
     netrc_error_class: ?*@import("../object/class.zig").Class = null,
     logging_module: ?*Module = null,
+    logging_config_module: ?*Module = null,
+    logging_handlers_module: ?*Module = null,
     logging_state: ?*@import("logging_mod.zig").LoggingState = null,
     logging_logger_class: ?*@import("../object/class.zig").Class = null,
     logging_handler_class: ?*@import("../object/class.zig").Class = null,
     logging_stream_handler_class: ?*@import("../object/class.zig").Class = null,
     logging_null_handler_class: ?*@import("../object/class.zig").Class = null,
+    logging_file_handler_class: ?*@import("../object/class.zig").Class = null,
     logging_formatter_class: ?*@import("../object/class.zig").Class = null,
+    logging_filter_class: ?*@import("../object/class.zig").Class = null,
     dataclasses_field_class: ?*@import("../object/class.zig").Class = null,
     dataclasses_factory_class: ?*@import("../object/class.zig").Class = null,
     typing_typevar_class: ?*@import("../object/class.zig").Class = null,
@@ -1181,6 +1185,22 @@ pub const Interp = struct {
             if (self.logging_module) |m| return m;
             const m = @import("logging_mod.zig").build(self) catch return null;
             self.logging_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "logging.config")) {
+            if (self.logging_config_module) |m| return m;
+            _ = self.getBuiltinModule("logging") orelse return null;
+            const m = @import("logging_config_mod.zig").build(self) catch return null;
+            self.logging_config_module = m;
+            if (self.logging_module) |lm| lm.attrs.setStr(self.allocator, "config", Value{ .module = m }) catch {};
+            return m;
+        }
+        if (std.mem.eql(u8, name, "logging.handlers")) {
+            if (self.logging_handlers_module) |m| return m;
+            _ = self.getBuiltinModule("logging") orelse return null;
+            const m = @import("logging_handlers_mod.zig").build(self) catch return null;
+            self.logging_handlers_module = m;
+            if (self.logging_module) |lm| lm.attrs.setStr(self.allocator, "handlers", Value{ .module = m }) catch {};
             return m;
         }
         if (std.mem.eql(u8, name, "dataclasses")) {
