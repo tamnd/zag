@@ -1,6 +1,4 @@
-//! Pinhole `io`: StringIO and BytesIO. Both are growable byte/char
-//! buffers with a position cursor. We back them with a managed
-//! ArrayList stored on a side struct pointed at from the instance.
+//! Pinhole `io`: StringIO, BytesIO, constants, UnsupportedOperation.
 
 const std = @import("std");
 
@@ -16,6 +14,8 @@ const Dict = @import("../object/dict.zig").Dict;
 const Class = @import("../object/class.zig").Class;
 const Instance = @import("../object/instance.zig").Instance;
 const Interp = @import("interp.zig").Interp;
+const dispatch = @import("dispatch.zig");
+const file_io = @import("file_io.zig");
 
 const Buf = struct {
     data: std.ArrayList(u8),
@@ -29,6 +29,27 @@ pub fn build(interp: *Interp) !*Module {
     try ensureClasses(interp);
     try regCtor(interp, m, "StringIO", stringIoCtor);
     try regCtor(interp, m, "BytesIO", bytesIoCtor);
+    try regCtor(interp, m, "open", file_io.openFn);
+
+    // Module constants
+    const a = interp.allocator;
+    try m.attrs.setStr(a, "DEFAULT_BUFFER_SIZE", Value{ .small_int = 8192 });
+    try m.attrs.setStr(a, "SEEK_SET", Value{ .small_int = 0 });
+    try m.attrs.setStr(a, "SEEK_CUR", Value{ .small_int = 1 });
+    try m.attrs.setStr(a, "SEEK_END", Value{ .small_int = 2 });
+
+    // UnsupportedOperation(OSError, ValueError)
+    const oserror_val = interp.builtins.getStr("OSError");
+    const valueerror_val = interp.builtins.getStr("ValueError");
+    if (oserror_val != null and valueerror_val != null and
+        oserror_val.? == .class and valueerror_val.? == .class)
+    {
+        const bases = [_]*Class{ oserror_val.?.class, valueerror_val.?.class };
+        const d = try Dict.init(a);
+        const cls = try Class.init(a, "UnsupportedOperation", &bases, d);
+        try m.attrs.setStr(a, "UnsupportedOperation", Value{ .class = cls });
+    }
+
     return m;
 }
 
@@ -58,6 +79,9 @@ fn ensureClasses(interp: *Interp) !void {
         try methodReg(a, d, "seek", ioSeek);
         try methodReg(a, d, "close", ioClose);
         try methodReg(a, d, "truncate", ioTruncate);
+        try methodReg(a, d, "readable", ioTrue);
+        try methodReg(a, d, "writable", ioTrue);
+        try methodReg(a, d, "seekable", ioTrue);
         try methodReg(a, d, "__iter__", ioIterSelf);
         try methodReg(a, d, "__next__", strIterNext);
         interp.io_stringio_class = try Class.init(a, "StringIO", &.{}, d);
@@ -65,12 +89,20 @@ fn ensureClasses(interp: *Interp) !void {
     if (interp.io_bytesio_class == null) {
         const d = try Dict.init(a);
         try methodReg(a, d, "write", bytesWrite);
+        try methodReg(a, d, "writelines", bytesWritelines);
         try methodReg(a, d, "read", bytesRead);
+        try methodReg(a, d, "readline", bytesReadline);
+        try methodReg(a, d, "readlines", bytesReadlines);
         try methodReg(a, d, "getvalue", bytesGetvalue);
         try methodReg(a, d, "tell", ioTell);
         try methodReg(a, d, "seek", ioSeek);
         try methodReg(a, d, "close", ioClose);
         try methodReg(a, d, "truncate", ioTruncate);
+        try methodReg(a, d, "readable", ioTrue);
+        try methodReg(a, d, "writable", ioTrue);
+        try methodReg(a, d, "seekable", ioTrue);
+        try methodReg(a, d, "__iter__", ioIterSelf);
+        try methodReg(a, d, "__next__", bytesIterNext);
         interp.io_bytesio_class = try Class.init(a, "BytesIO", &.{}, d);
     }
 }
@@ -126,6 +158,10 @@ fn bytesIoCtor(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 // --- shared methods ---
+
+fn ioTrue(_: *anyopaque, _: []const Value) anyerror!Value {
+    return Value{ .boolean = true };
+}
 
 fn ioTell(p: *anyopaque, args: []const Value) anyerror!Value {
     _ = p;
@@ -322,6 +358,32 @@ fn bytesWrite(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .small_int = @intCast(data.len) };
 }
 
+fn bytesWritelines(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const inst = try argInst(args);
+    const buf = bufFromInstance(inst);
+    if (args.len < 2) return error.TypeError;
+    const writeBytes = struct {
+        fn f(b: *Buf, alloc: std.mem.Allocator, v: Value) !void {
+            const data: []const u8 = switch (v) {
+                .bytes => |bv| bv.data,
+                .bytearray => |bv| bv.data.items,
+                else => return error.TypeError,
+            };
+            try writeAt(alloc, b, data);
+        }
+    }.f;
+    switch (args[1]) {
+        .list => |l| for (l.items.items) |it| try writeBytes(buf, a, it),
+        .tuple => |t| for (t.items) |it| try writeBytes(buf, a, it),
+        .iter => |it| while (it.next()) |v| try writeBytes(buf, a, v),
+        .generator => |g| while (try dispatch.genResume(interp, g, Value.none)) |v| try writeBytes(buf, a, v),
+        else => return error.TypeError,
+    }
+    return Value.none;
+}
+
 fn bytesRead(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
@@ -338,6 +400,50 @@ fn bytesRead(p: *anyopaque, args: []const Value) anyerror!Value {
     return Value{ .bytes = b };
 }
 
+fn bytesReadline(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const inst = try argInst(args);
+    const buf = bufFromInstance(inst);
+    const start = buf.pos;
+    var i = start;
+    while (i < buf.data.items.len and buf.data.items[i] != '\n') : (i += 1) {}
+    if (i < buf.data.items.len) i += 1;
+    const slice = buf.data.items[start..i];
+    const b = try Bytes.init(a, slice);
+    buf.pos = i;
+    return Value{ .bytes = b };
+}
+
+fn bytesReadlines(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const a = interp.allocator;
+    const inst = try argInst(args);
+    const buf = bufFromInstance(inst);
+    const out = try List.init(a);
+    while (buf.pos < buf.data.items.len) {
+        const start = buf.pos;
+        var i = start;
+        while (i < buf.data.items.len and buf.data.items[i] != '\n') : (i += 1) {}
+        if (i < buf.data.items.len) i += 1;
+        const b = try Bytes.init(a, buf.data.items[start..i]);
+        try out.append(a, Value{ .bytes = b });
+        buf.pos = i;
+    }
+    return Value{ .list = out };
+}
+
+fn bytesIterNext(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp: *Interp = @ptrCast(@alignCast(p));
+    const inst = try argInst(args);
+    const buf = bufFromInstance(inst);
+    if (buf.pos >= buf.data.items.len) {
+        try interp.raisePy("StopIteration", "");
+        return error.PyException;
+    }
+    return bytesReadline(p, args);
+}
+
 fn bytesGetvalue(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(p));
     const a = interp.allocator;
@@ -346,4 +452,3 @@ fn bytesGetvalue(p: *anyopaque, args: []const Value) anyerror!Value {
     const b = try Bytes.init(a, buf.data.items);
     return Value{ .bytes = b };
 }
-

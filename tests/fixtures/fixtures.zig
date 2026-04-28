@@ -111,6 +111,7 @@ pub const names = [_][]const u8{
     "184_errno",
     "185_platform",
     "186_time",
+    "187_io",
     "19_comprehensions",
     "20_unpack",
     "21_with_stress",
