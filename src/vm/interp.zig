@@ -300,6 +300,9 @@ pub const Interp = struct {
     statistics_error_class: ?*@import("../object/class.zig").Class = null,
     statistics_normal_dist_class: ?*@import("../object/class.zig").Class = null,
     html_module: ?*Module = null,
+    html_entities_module: ?*Module = null,
+    html_parser_module: ?*Module = null,
+    html_parser_class: ?*@import("../object/class.zig").Class = null,
     sys_module: ?*Module = null,
     warnings_module: ?*Module = null,
     os_module: ?*Module = null,
@@ -1178,6 +1181,22 @@ pub const Interp = struct {
             if (self.html_module) |m| return m;
             const m = html_mod.build(self) catch return null;
             self.html_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "html.entities")) {
+            if (self.html_entities_module) |m| return m;
+            _ = self.getBuiltinModule("html") orelse return null;
+            const m = html_mod.buildEntities(self) catch return null;
+            self.html_entities_module = m;
+            if (self.html_module) |hm| hm.attrs.setStr(self.allocator, "entities", Value{ .module = m }) catch {};
+            return m;
+        }
+        if (std.mem.eql(u8, name, "html.parser")) {
+            if (self.html_parser_module) |m| return m;
+            _ = self.getBuiltinModule("html") orelse return null;
+            const m = html_mod.buildParser(self) catch return null;
+            self.html_parser_module = m;
+            if (self.html_module) |hm| hm.attrs.setStr(self.allocator, "parser", Value{ .module = m }) catch {};
             return m;
         }
         if (std.mem.eql(u8, name, "sys")) {
