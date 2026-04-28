@@ -95,7 +95,7 @@ pub const names = [_][]const u8{
     "17_walrus",
     "170_secrets",
     "171_os",
-    "172_subprocess",
+    "172_io",
     "173_pprint",
     "174_logging",
     "175_uuid",
