@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const c = std.c;
+const builtin = @import("builtin");
 const value_mod = @import("../object/value.zig");
 const Value = value_mod.Value;
 const BuiltinFn = value_mod.BuiltinFn;
@@ -43,10 +44,10 @@ fn regKwM(a: std.mem.Allocator, m: *Module, name: []const u8, f: BuiltinFnPtr, k
     try m.attrs.setStr(a, name, Value{ .builtin_fn = bf });
 }
 
-const FdEntry = struct { obj: Value, fd: c.fd_t };
+const FdEntry = struct { obj: Value, fd: c_int };
 
 // Extract fd from a Value (socket instance or integer).
-fn valueToFd(v: Value) c.fd_t {
+fn valueToFd(v: Value) c_int {
     switch (v) {
         .small_int => |i| return @intCast(i),
         .instance => |inst| {
@@ -93,6 +94,14 @@ fn selectFn(p: *anyopaque, args: []const Value) anyerror!Value {
 fn selectKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const Value) anyerror!Value {
     const interp = gi(p);
     const a = interp.allocator;
+
+    if (comptime builtin.os.tag == .windows) {
+        const t = try Tuple.init(a, 3);
+        t.items[0] = Value{ .list = try List.init(a) };
+        t.items[1] = Value{ .list = try List.init(a) };
+        t.items[2] = Value{ .list = try List.init(a) };
+        return Value{ .tuple = t };
+    }
 
     const rlist_v = if (args.len >= 1) args[0] else Value{ .list = try List.init(a) };
     const wlist_v = if (args.len >= 2) args[1] else Value{ .list = try List.init(a) };
@@ -210,6 +219,7 @@ fn pollPollKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const V
     const interp = gi(p);
     const a = interp.allocator;
     const empty = Value{ .list = try List.init(a) };
+    if (comptime builtin.os.tag == .windows) return empty;
     if (args.len < 1) return empty;
     const inst = switch (args[0]) {
         .instance => |i| i,
@@ -231,7 +241,7 @@ fn pollPollKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const V
             .str => |s| s.bytes,
             else => continue,
         };
-        const fd_int = std.fmt.parseInt(c.fd_t, key, 10) catch continue;
+        const fd_int = std.fmt.parseInt(c_int, key, 10) catch continue;
         const events: i16 = switch (pair.value) {
             .small_int => |i| @intCast(i & 0x7fff),
             else => 1,

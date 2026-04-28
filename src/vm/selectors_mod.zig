@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const c = std.c;
+const builtin = @import("builtin");
 const value_mod = @import("../object/value.zig");
 const Value = value_mod.Value;
 const BuiltinFn = value_mod.BuiltinFn;
@@ -44,7 +45,7 @@ fn makeStr(a: std.mem.Allocator, data: []const u8) !Value {
 }
 
 // Extract POSIX fd from a socket instance or integer.
-fn valueToFd(v: Value) c.fd_t {
+fn valueToFd(v: Value) c_int {
     switch (v) {
         .small_int => |i| return @intCast(i),
         .instance => |inst| {
@@ -56,7 +57,7 @@ fn valueToFd(v: Value) c.fd_t {
 }
 
 // Build a SelectorKey instance.
-fn makeKey(a: std.mem.Allocator, cls: *Class, fileobj: Value, fd: c.fd_t, events: i64, data: Value) !Value {
+fn makeKey(a: std.mem.Allocator, cls: *Class, fileobj: Value, fd: c_int, events: i64, data: Value) !Value {
     const inst = try Instance.init(a, cls);
     try inst.dict.setStr(a, "fileobj", fileobj);
     try inst.dict.setStr(a, "fd", Value{ .small_int = fd });
@@ -66,7 +67,7 @@ fn makeKey(a: std.mem.Allocator, cls: *Class, fileobj: Value, fd: c.fd_t, events
 }
 
 // fd → string key used in the internal _keys dict.
-fn fdKey(buf: *[32]u8, fd: c.fd_t) []const u8 {
+fn fdKey(buf: *[32]u8, fd: c_int) []const u8 {
     return std.fmt.bufPrint(buf, "{d}", .{fd}) catch "0";
 }
 
@@ -214,7 +215,7 @@ fn selGetMap(p: *anyopaque, args: []const Value) anyerror!Value {
     const out = try Dict.init(a);
     for (keys_dict.pairs.items) |pair| {
         const key_str = switch (pair.key) { .str => |s| s.bytes, else => continue };
-        const fd_int = std.fmt.parseInt(c.fd_t, key_str, 10) catch continue;
+        const fd_int = std.fmt.parseInt(c_int, key_str, 10) catch continue;
         try out.setKey(a, Value{ .small_int = fd_int }, pair.value);
     }
     return Value{ .dict = out };
@@ -229,6 +230,7 @@ fn selSelect(p: *anyopaque, args: []const Value) anyerror!Value {
 fn selSelectKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_values: []const Value) anyerror!Value {
     const interp = gi(p);
     const a = interp.allocator;
+    if (comptime builtin.os.tag == .windows) return Value{ .list = try List.init(a) };
     if (args.len < 1) return Value{ .list = try List.init(a) };
     const inst = switch (args[0]) { .instance => |i| i, else => return Value{ .list = try List.init(a) } };
 
@@ -260,7 +262,7 @@ fn selSelectKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_v
 
     for (keys_dict.pairs.items) |pair| {
         const key_str = switch (pair.key) { .str => |s| s.bytes, else => continue };
-        const fd_int = std.fmt.parseInt(c.fd_t, key_str, 10) catch continue;
+        const fd_int = std.fmt.parseInt(c_int, key_str, 10) catch continue;
         const key_inst = switch (pair.value) { .instance => |i| i, else => continue };
         const ev_v = key_inst.dict.getStr("events") orelse continue;
         const ev: i64 = switch (ev_v) { .small_int => |i| i, else => 0 };

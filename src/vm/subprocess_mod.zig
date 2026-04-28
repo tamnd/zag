@@ -428,7 +428,8 @@ fn popenCtorKw(p: *anyopaque, args: []const Value, kn: []const Value, kv: []cons
     try inst.dict.setStr(a, "_state", Value{ .small_int = @intCast(@intFromPtr(state)) });
     try inst.dict.setStr(a, "args", cmd_v);
     try inst.dict.setStr(a, "returncode", Value.none);
-    try inst.dict.setStr(a, "pid", Value{ .small_int = @intCast(child.id orelse 0) });
+    const child_pid: i64 = if (comptime @import("builtin").os.tag == .windows) 0 else @intCast(child.id orelse 0);
+    try inst.dict.setStr(a, "pid", Value{ .small_int = child_pid });
     return Value{ .instance = inst };
 }
 

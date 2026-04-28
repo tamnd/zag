@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const c = std.c;
+const builtin = @import("builtin");
 const value_mod = @import("../object/value.zig");
 const Value = value_mod.Value;
 const BuiltinFn = value_mod.BuiltinFn;
@@ -29,8 +30,6 @@ fn regKwM(a: std.mem.Allocator, m: *Module, name: []const u8, f: BuiltinFnPtr, k
     try m.attrs.setStr(a, name, Value{ .builtin_fn = bf });
 }
 
-extern "c" fn strsignal(signum: c_int) ?[*:0]const u8;
-
 // Handler table — indexed by signal number (0..64).
 // SIG_DFL = small_int 0, SIG_IGN = small_int 1.
 var g_handlers: [65]Value = [_]Value{Value{ .small_int = 0 }} ** 65;
@@ -50,6 +49,8 @@ fn setHandler(signum: i64, h: Value) Value {
 // ===== strsignal(signum) =====
 
 fn strsignalFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
+    const strsignal_ext = struct { extern "c" fn strsignal(signum: c_int) ?[*:0]const u8; };
     const interp = gi(p);
     const a = interp.allocator;
     if (args.len < 1) return Value.none;
@@ -59,7 +60,7 @@ fn strsignalFn(p: *anyopaque, args: []const Value) anyerror!Value {
     };
     // Return None for out-of-range signals (macOS strsignal returns garbage string for them)
     if (signum <= 0 or signum > 31) return Value.none;
-    const ptr = strsignal(signum) orelse return Value.none;
+    const ptr = strsignal_ext.strsignal(signum) orelse return Value.none;
     const s = std.mem.sliceTo(ptr, 0);
     const sv = try Str.init(a, s);
     return Value{ .str = sv };
@@ -148,6 +149,7 @@ fn setWakeupFdKw(_: *anyopaque, args: []const Value, _: []const Value, _: []cons
 // ===== alarm(seconds) =====
 
 fn alarmFn(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value{ .small_int = 0 };
     const seconds: c_uint = if (args.len >= 1) switch (args[0]) {
         .small_int => |i| @intCast(i),
         else => 0,
@@ -161,13 +163,21 @@ fn alarmFn(_: *anyopaque, args: []const Value) anyerror!Value {
 fn pthreadSigmaskFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp = gi(p);
     const a = interp.allocator;
+    if (comptime builtin.os.tag == .windows) return Value{ .list = try List.init(a) };
+    // POSIX sigset functions — declared here to keep them out of Windows compilation
+    const posix = struct {
+        extern "c" fn sigemptyset(set: *c.sigset_t) c_int;
+        extern "c" fn sigaddset(set: *c.sigset_t, signum: c_int) c_int;
+        extern "c" fn sigismember(set: *const c.sigset_t, signum: c_int) c_int;
+    };
     if (args.len < 3) return Value{ .list = try List.init(a) };
     const how: c_int = switch (args[1]) {
         .small_int => |i| @intCast(i),
         else => 0,
     };
-    // Build new sigset from signal list
-    var new_set: c.sigset_t = 0;
+    // Build new sigset from signal list using POSIX API (sigset_t is opaque on Linux)
+    var new_set: c.sigset_t = undefined;
+    _ = posix.sigemptyset(&new_set);
     const sig_list = args[2];
     const sig_items: []const Value = switch (sig_list) {
         .list => |l| l.items.items,
@@ -175,19 +185,19 @@ fn pthreadSigmaskFn(p: *anyopaque, args: []const Value) anyerror!Value {
         else => &.{},
     };
     for (sig_items) |sv| {
-        const sn: u5 = switch (sv) {
+        const sn: c_int = switch (sv) {
             .small_int => |i| if (i >= 1 and i <= 31) @intCast(i) else continue,
             else => continue,
         };
-        new_set |= @as(c.sigset_t, 1) << (sn - 1);
+        _ = posix.sigaddset(&new_set, sn);
     }
-    var old_set: c.sigset_t = 0;
+    var old_set: c.sigset_t = undefined;
+    _ = posix.sigemptyset(&old_set);
     _ = c.pthread_sigmask(how, &new_set, &old_set);
     // Decode old_set into list of signal numbers
     const out = try List.init(a);
     for (1..32) |i| {
-        const bit: c.sigset_t = @as(c.sigset_t, 1) << @intCast(i - 1);
-        if (old_set & bit != 0) {
+        if (posix.sigismember(&old_set, @intCast(i)) != 0) {
             try out.items.append(a, Value{ .small_int = @intCast(i) });
         }
     }

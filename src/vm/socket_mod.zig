@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const c = std.c;
+const builtin = @import("builtin");
 const value_mod = @import("../object/value.zig");
 const Value = value_mod.Value;
 const BuiltinFn = value_mod.BuiltinFn;
@@ -18,21 +19,35 @@ const Bytes = @import("../object/bytes.zig").Bytes;
 const Interp = @import("interp.zig").Interp;
 const threading_mod = @import("threading_mod.zig");
 
-// Socket fd type (i32 on macOS, matches c.fd_t)
-const Fd = c.fd_t;
+// Socket fd type — use c_int to be portable across platforms (c.fd_t is *anyopaque on Windows)
+const Fd = c_int;
 
-// libc functions not exposed in std.c by name
-extern "c" fn inet_pton(af: c_int, src: [*:0]const u8, dst: *anyopaque) c_int;
-extern "c" fn inet_ntop(af: c_int, src: *const anyopaque, dst: [*]u8, size: u32) ?[*:0]const u8;
-extern "c" fn inet_aton(cp: [*:0]const u8, addr: *u32) c_int;
-extern "c" fn inet_ntoa(in: u32) [*:0]u8;
-extern "c" fn gethostbyname(name: [*:0]const u8) ?*anyopaque;
-extern "c" fn getservbyname(name: [*:0]const u8, proto: ?[*:0]const u8) ?*anyopaque;
-extern "c" fn getprotobyname(name: [*:0]const u8) ?*anyopaque;
-extern "c" fn ntohs(n: u16) u16;
-extern "c" fn ntohl(n: u32) u32;
-extern "c" fn htons(n: u16) u16;
-extern "c" fn htonl(n: u32) u32;
+// libc network helpers — conditional to avoid linker errors on Windows
+const posix_net = if (builtin.os.tag != .windows) struct {
+    pub extern "c" fn inet_pton(af: c_int, src: [*:0]const u8, dst: *anyopaque) c_int;
+    pub extern "c" fn inet_ntop(af: c_int, src: *const anyopaque, dst: [*]u8, size: u32) ?[*:0]const u8;
+    pub extern "c" fn inet_aton(cp: [*:0]const u8, addr: *u32) c_int;
+    pub extern "c" fn inet_ntoa(in: u32) [*:0]u8;
+    pub extern "c" fn gethostbyname(name: [*:0]const u8) ?*anyopaque;
+    pub extern "c" fn getservbyname(name: [*:0]const u8, proto: ?[*:0]const u8) ?*anyopaque;
+    pub extern "c" fn getprotobyname(name: [*:0]const u8) ?*anyopaque;
+    pub extern "c" fn ntohs(n: u16) u16;
+    pub extern "c" fn ntohl(n: u32) u32;
+    pub extern "c" fn htons(n: u16) u16;
+    pub extern "c" fn htonl(n: u32) u32;
+} else struct {
+    pub fn inet_pton(_: c_int, _: [*:0]const u8, _: *anyopaque) c_int { return -1; }
+    pub fn inet_ntop(_: c_int, _: *const anyopaque, _: [*]u8, _: u32) ?[*:0]const u8 { return null; }
+    pub fn inet_aton(_: [*:0]const u8, _: *u32) c_int { return 0; }
+    pub fn inet_ntoa(_: u32) [*:0]u8 { return @constCast("0.0.0.0"); }
+    pub fn gethostbyname(_: [*:0]const u8) ?*anyopaque { return null; }
+    pub fn getservbyname(_: [*:0]const u8, _: ?[*:0]const u8) ?*anyopaque { return null; }
+    pub fn getprotobyname(_: [*:0]const u8) ?*anyopaque { return null; }
+    pub fn ntohs(n: u16) u16 { return @byteSwap(n); }
+    pub fn ntohl(n: u32) u32 { return @byteSwap(n); }
+    pub fn htons(n: u16) u16 { return @byteSwap(n); }
+    pub fn htonl(n: u32) u32 { return @byteSwap(n); }
+};
 
 // macOS: MSG_DONTWAIT = 0x80, O_NONBLOCK = 0x20000
 const MSG_DONTWAIT: c_int = 0x80;
@@ -125,25 +140,25 @@ fn buildSockaddr(a: std.mem.Allocator, addr_v: Value, family: i32) !struct { ptr
         const s6 = try a.create(SockaddrIn6);
         s6.* = .{
             .family = 30,
-            .port = htons(port),
+            .port = posix_net.htons(port),
             .flowinfo = 0,
             .addr = [_]u8{0} ** 16,
             .scope_id = 0,
         };
         const host_z = try a.dupeZ(u8, host);
-        _ = inet_pton(30, host_z, &s6.addr);
+        _ = posix_net.inet_pton(30, host_z, &s6.addr);
         return .{ .ptr = s6, .len = @sizeOf(SockaddrIn6) };
     } else {
         const s4 = try a.create(c.sockaddr.in);
         s4.* = .{
             .family = c.AF.INET,
-            .port = htons(port),
+            .port = posix_net.htons(port),
             .addr = 0,
             .zero = [_]u8{0} ** 8,
         };
         if (host.len > 0) {
             const host_z = try a.dupeZ(u8, host);
-            _ = inet_pton(2, host_z, &s4.addr);
+            _ = posix_net.inet_pton(2, host_z, &s4.addr);
         }
         return .{ .ptr = s4, .len = @sizeOf(c.sockaddr.in) };
     }
@@ -154,28 +169,29 @@ fn parseSockaddr(a: std.mem.Allocator, sa: *c.sockaddr) !Value {
     if (family == 30) { // AF_INET6
         const s6: *SockaddrIn6 = @ptrCast(@alignCast(sa));
         var buf: [64]u8 = undefined;
-        const r = inet_ntop(30, &s6.addr, &buf, 64);
+        const r = posix_net.inet_ntop(30, &s6.addr, &buf, 64);
         const host_str = if (r) |p| std.mem.sliceTo(p, 0) else "::";
         const t = try Tuple.init(a, 4);
         t.items[0] = try makeStr(a, host_str);
-        t.items[1] = Value{ .small_int = ntohs(s6.port) };
+        t.items[1] = Value{ .small_int = posix_net.ntohs(s6.port) };
         t.items[2] = Value{ .small_int = 0 };
         t.items[3] = Value{ .small_int = 0 };
         return Value{ .tuple = t };
     } else {
         const s4: *c.sockaddr.in = @ptrCast(@alignCast(sa));
         var buf: [16]u8 = undefined;
-        const r = inet_ntop(2, &s4.addr, &buf, 16);
+        const r = posix_net.inet_ntop(2, &s4.addr, &buf, 16);
         const host_str = if (r) |p| std.mem.sliceTo(p, 0) else "0.0.0.0";
         const t = try Tuple.init(a, 2);
         t.items[0] = try makeStr(a, host_str);
-        t.items[1] = Value{ .small_int = ntohs(s4.port) };
+        t.items[1] = Value{ .small_int = posix_net.ntohs(s4.port) };
         return Value{ .tuple = t };
     }
 }
 
 // Try non-blocking recv; if EAGAIN, run pending threads, then blocking recv.
 fn recvWithPending(interp: *Interp, fd: Fd, buf: []u8, flags: c_int) !isize {
+    if (comptime builtin.os.tag == .windows) return 0;
     const n1 = c.recv(fd, buf.ptr, buf.len, flags | MSG_DONTWAIT);
     if (n1 >= 0) return @intCast(n1);
     if (@intFromEnum(c.errno(n1)) != 35) return @intCast(n1); // not EAGAIN
@@ -185,6 +201,7 @@ fn recvWithPending(interp: *Interp, fd: Fd, buf: []u8, flags: c_int) !isize {
 }
 
 fn acceptWithPending(interp: *Interp, fd: Fd, addr: *c.sockaddr, addrlen: *c.socklen_t) Fd {
+    if (comptime builtin.os.tag == .windows) return -1;
     const flags = c.fcntl(fd, c.F.GETFL, @as(c_int, 0));
     _ = c.fcntl(fd, c.F.SETFL, flags | O_NONBLOCK);
     const conn1 = c.accept(fd, addr, addrlen);
@@ -198,6 +215,7 @@ fn acceptWithPending(interp: *Interp, fd: Fd, addr: *c.sockaddr, addrlen: *c.soc
 // ===== Socket methods =====
 
 fn socketBind(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -205,11 +223,12 @@ fn socketBind(p: *anyopaque, args: []const Value) anyerror!Value {
     const addr_v = if (args.len >= 2) args[1] else return Value.none;
     const family = getFamily(inst);
     const sa = try buildSockaddr(a, addr_v, family);
-    _ = c.bind(fd, @ptrCast(sa.ptr), sa.len);
+    _ = c.bind(fd, @ptrCast(@alignCast(sa.ptr)), sa.len);
     return Value.none;
 }
 
 fn socketListen(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const inst = try instArg(args);
     const fd = getFd(inst);
     const backlog: c_uint = if (args.len >= 2) switch (args[1]) {
@@ -221,6 +240,7 @@ fn socketListen(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketAccept(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -246,6 +266,7 @@ fn socketAccept(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketConnect(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -253,7 +274,7 @@ fn socketConnect(p: *anyopaque, args: []const Value) anyerror!Value {
     const addr_v = if (args.len >= 2) args[1] else return Value.none;
     const family = getFamily(inst);
     const sa = try buildSockaddr(a, addr_v, family);
-    const r = c.connect(fd, @ptrCast(sa.ptr), sa.len);
+    const r = c.connect(fd, @ptrCast(@alignCast(sa.ptr)), sa.len);
     if (r != 0) {
         const e = @intFromEnum(c.errno(r));
         if (e != 0) {
@@ -265,6 +286,7 @@ fn socketConnect(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketConnectEx(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value{ .small_int = 1 };
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -272,12 +294,13 @@ fn socketConnectEx(p: *anyopaque, args: []const Value) anyerror!Value {
     const addr_v = if (args.len >= 2) args[1] else return Value{ .small_int = 1 };
     const family = getFamily(inst);
     const sa = try buildSockaddr(a, addr_v, family);
-    const r = c.connect(fd, @ptrCast(sa.ptr), sa.len);
+    const r = c.connect(fd, @ptrCast(@alignCast(sa.ptr)), sa.len);
     if (r == 0) return Value{ .small_int = 0 };
     return Value{ .small_int = @intFromEnum(c.errno(r)) };
 }
 
 fn socketSendAll(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const inst = try instArg(args);
     const fd = getFd(inst);
     const data_v = if (args.len >= 2) args[1] else return Value.none;
@@ -296,6 +319,7 @@ fn socketSendAll(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketSend(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value{ .small_int = 0 };
     const inst = try instArg(args);
     const fd = getFd(inst);
     const data_v = if (args.len >= 2) args[1] else return Value{ .small_int = 0 };
@@ -309,6 +333,7 @@ fn socketSend(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketRecv(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return makeBytes(std.heap.page_allocator, &.{});
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -324,6 +349,7 @@ fn socketRecv(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketSendTo(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value{ .small_int = 0 };
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -337,11 +363,12 @@ fn socketSendTo(p: *anyopaque, args: []const Value) anyerror!Value {
     };
     const family = getFamily(inst);
     const sa = try buildSockaddr(a, addr_v, family);
-    const n = c.sendto(fd, data.ptr, data.len, 0, @ptrCast(sa.ptr), sa.len);
+    const n = c.sendto(fd, data.ptr, data.len, 0, @ptrCast(@alignCast(sa.ptr)), sa.len);
     return Value{ .small_int = if (n < 0) 0 else @intCast(n) };
 }
 
 fn socketRecvFrom(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -363,6 +390,7 @@ fn socketRecvFrom(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketClose(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const inst = try instArg(args);
     const fd = getFd(inst);
     if (fd >= 0) _ = c.close(fd);
@@ -371,6 +399,7 @@ fn socketClose(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketSetSockOpt(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const inst = try instArg(args);
     const fd = getFd(inst);
     const level: i32 = if (args.len >= 2) switch (args[1]) {
@@ -391,6 +420,7 @@ fn socketSetSockOpt(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketGetSockOpt(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value{ .small_int = 0 };
     const inst = try instArg(args);
     const fd = getFd(inst);
     const level: i32 = if (args.len >= 2) switch (args[1]) {
@@ -408,6 +438,7 @@ fn socketGetSockOpt(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketGetSockName(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -419,6 +450,7 @@ fn socketGetSockName(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketGetPeerName(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -430,6 +462,7 @@ fn socketGetPeerName(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketSetBlocking(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -459,6 +492,7 @@ fn socketGetBlocking(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketSetTimeout(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -493,6 +527,7 @@ fn socketGetTimeout(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketShutdown(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const inst = try instArg(args);
     const fd = getFd(inst);
     const how: c_int = if (args.len >= 2) switch (args[1]) {
@@ -515,6 +550,10 @@ fn socketNew(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketNewKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) {
+        try gi(p).raisePy("OSError", "socket not supported on Windows");
+        return error.PyException;
+    }
     const interp = gi(p);
     const a = interp.allocator;
     const family: c_uint = if (args.len >= 1) switch (args[0]) {
@@ -547,6 +586,10 @@ fn socketInit(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn socketInitKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) {
+        try gi(p).raisePy("OSError", "socket not supported on Windows");
+        return error.PyException;
+    }
     const interp = gi(p);
     const a = interp.allocator;
     const inst = try instArg(args);
@@ -575,6 +618,10 @@ fn socketInitKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const
 }
 
 fn socketPairFn(p: *anyopaque, _: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) {
+        try gi(p).raisePy("OSError", "socketpair not supported on Windows");
+        return error.PyException;
+    }
     const interp = gi(p);
     const a = interp.allocator;
     var fds: [2]Fd = undefined;
@@ -606,6 +653,10 @@ fn createConnectionFn(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn createConnectionKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) {
+        try gi(p).raisePy("OSError", "socket not supported on Windows");
+        return error.PyException;
+    }
     const interp = gi(p);
     const a = interp.allocator;
     const addr_v = if (args.len >= 1) args[0] else return Value.none;
@@ -620,7 +671,7 @@ fn createConnectionKw(p: *anyopaque, args: []const Value, _: []const Value, _: [
     try inst.dict.setStr(a, "type", Value{ .small_int = 1 });
     try inst.dict.setStr(a, "_timeout", Value.none);
     const sa = try buildSockaddr(a, addr_v, 2);
-    const r = c.connect(fd, @ptrCast(sa.ptr), sa.len);
+    const r = c.connect(fd, @ptrCast(@alignCast(sa.ptr)), sa.len);
     if (r != 0) {
         _ = c.close(fd);
         try interp.raisePy("OSError", "connect failed");
@@ -630,6 +681,7 @@ fn createConnectionKw(p: *anyopaque, args: []const Value, _: []const Value, _: [
 }
 
 fn gethostnameFn(p: *anyopaque, _: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return makeStr(gi(p).allocator, "localhost");
     const interp = gi(p);
     const a = interp.allocator;
     var buf: [256]u8 = undefined;
@@ -643,6 +695,7 @@ fn getaddrinfoFn(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn getaddrinfoKw(p: *anyopaque, args: []const Value, _: []const Value, _: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value{ .list = try List.init(gi(p).allocator) };
     const interp = gi(p);
     const a = interp.allocator;
     const host_v = if (args.len >= 1) args[0] else Value.none;
@@ -698,7 +751,7 @@ fn inetAtonFn(p: *anyopaque, args: []const Value) anyerror!Value {
     };
     const s_z = try a.dupeZ(u8, s);
     var result: u32 = 0;
-    _ = inet_aton(s_z, &result);
+    _ = posix_net.inet_aton(s_z, &result);
     return makeBytes(a, std.mem.asBytes(&result));
 }
 
@@ -712,7 +765,7 @@ fn inetNtoaFn(p: *anyopaque, args: []const Value) anyerror!Value {
     if (data.len < 4) return makeStr(a, "0.0.0.0");
     var addr_val: u32 = 0;
     @memcpy(std.mem.asBytes(&addr_val), data[0..4]);
-    const p_str = inet_ntoa(addr_val);
+    const p_str = posix_net.inet_ntoa(addr_val);
     return makeStr(a, std.mem.sliceTo(p_str, 0));
 }
 
@@ -730,7 +783,7 @@ fn inetPtonFn(p: *anyopaque, args: []const Value) anyerror!Value {
     const s_z = try a.dupeZ(u8, s);
     if (af == 2) {
         var addr: u32 = 0;
-        const r = inet_pton(af, s_z, &addr);
+        const r = posix_net.inet_pton(af, s_z, &addr);
         if (r <= 0) {
             try interp.raisePy("OSError", "inet_pton failed");
             return error.PyException;
@@ -738,7 +791,7 @@ fn inetPtonFn(p: *anyopaque, args: []const Value) anyerror!Value {
         return makeBytes(a, std.mem.asBytes(&addr));
     } else {
         var addr: [16]u8 = undefined;
-        const r = inet_pton(af, s_z, &addr);
+        const r = posix_net.inet_pton(af, s_z, &addr);
         if (r <= 0) {
             try interp.raisePy("OSError", "inet_pton failed");
             return error.PyException;
@@ -759,7 +812,7 @@ fn inetNtopFn(p: *anyopaque, args: []const Value) anyerror!Value {
         else => return makeStr(a, ""),
     } else return makeStr(a, "");
     var buf: [64]u8 = undefined;
-    const r = inet_ntop(af, data.ptr, &buf, 64);
+    const r = posix_net.inet_ntop(af, data.ptr, &buf, 64);
     const str = if (r) |p2| std.mem.sliceTo(p2, 0) else "";
     return makeStr(a, str);
 }
@@ -769,7 +822,7 @@ fn ntohsFn(_: *anyopaque, args: []const Value) anyerror!Value {
         .small_int => |i| @intCast(@as(u64, @bitCast(i)) & 0xffff),
         else => 0,
     } else 0;
-    return Value{ .small_int = ntohs(n) };
+    return Value{ .small_int = posix_net.ntohs(n) };
 }
 
 fn ntohlFn(_: *anyopaque, args: []const Value) anyerror!Value {
@@ -777,7 +830,7 @@ fn ntohlFn(_: *anyopaque, args: []const Value) anyerror!Value {
         .small_int => |i| @intCast(@as(u64, @bitCast(i)) & 0xffffffff),
         else => 0,
     } else 0;
-    return Value{ .small_int = ntohl(n) };
+    return Value{ .small_int = posix_net.ntohl(n) };
 }
 
 fn htonsFn(_: *anyopaque, args: []const Value) anyerror!Value {
@@ -785,7 +838,7 @@ fn htonsFn(_: *anyopaque, args: []const Value) anyerror!Value {
         .small_int => |i| @intCast(@as(u64, @bitCast(i)) & 0xffff),
         else => 0,
     } else 0;
-    return Value{ .small_int = htons(n) };
+    return Value{ .small_int = posix_net.htons(n) };
 }
 
 fn htonlFn(_: *anyopaque, args: []const Value) anyerror!Value {
@@ -793,10 +846,11 @@ fn htonlFn(_: *anyopaque, args: []const Value) anyerror!Value {
         .small_int => |i| @intCast(@as(u64, @bitCast(i)) & 0xffffffff),
         else => 0,
     } else 0;
-    return Value{ .small_int = htonl(n) };
+    return Value{ .small_int = posix_net.htonl(n) };
 }
 
 fn gethostbynameFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return makeStr(gi(p).allocator, "127.0.0.1");
     const interp = gi(p);
     const a = interp.allocator;
     const name: []const u8 = if (args.len >= 1) switch (args[0]) {
@@ -818,6 +872,10 @@ fn gethostbynameFn(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn getservbynameFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) {
+        try gi(p).raisePy("OSError", "service not found");
+        return error.PyException;
+    }
     const interp = gi(p);
     const a = interp.allocator;
     const name: []const u8 = if (args.len >= 1) switch (args[0]) {
@@ -839,7 +897,7 @@ fn getservbynameFn(p: *anyopaque, args: []const Value) anyerror!Value {
         if (std.mem.eql(u8, svc.name, name)) return Value{ .small_int = svc.port };
     }
     const name_z = try a.dupeZ(u8, name);
-    const sv = getservbyname(name_z, null);
+    const sv = posix_net.getservbyname(name_z, null);
     if (sv) |sv_ptr| {
         const servent: *align(1) const extern struct {
             name: *const u8,
@@ -847,13 +905,17 @@ fn getservbynameFn(p: *anyopaque, args: []const Value) anyerror!Value {
             port: c_int,
             proto: *const u8,
         } = @ptrCast(@alignCast(sv_ptr));
-        return Value{ .small_int = ntohs(@intCast(servent.port)) };
+        return Value{ .small_int = posix_net.ntohs(@intCast(servent.port)) };
     }
     try interp.raisePy("OSError", "service not found");
     return error.PyException;
 }
 
 fn getprotobynameFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) {
+        try gi(p).raisePy("OSError", "protocol not found");
+        return error.PyException;
+    }
     const interp = gi(p);
     const a = interp.allocator;
     const name: []const u8 = if (args.len >= 1) switch (args[0]) {
@@ -864,7 +926,7 @@ fn getprotobynameFn(p: *anyopaque, args: []const Value) anyerror!Value {
     if (std.mem.eql(u8, name, "udp")) return Value{ .small_int = 17 };
     if (std.mem.eql(u8, name, "icmp")) return Value{ .small_int = 1 };
     const name_z = try a.dupeZ(u8, name);
-    const pv = getprotobyname(name_z);
+    const pv = posix_net.getprotobyname(name_z);
     if (pv) |pv_ptr| {
         const protoent: *align(1) const extern struct {
             name: *const u8,

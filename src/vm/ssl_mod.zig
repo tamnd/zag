@@ -21,7 +21,8 @@ const Bytes = @import("../object/bytes.zig").Bytes;
 const Interp = @import("interp.zig").Interp;
 const threading_mod = @import("threading_mod.zig");
 
-const Fd = c.fd_t;
+const builtin = @import("builtin");
+const Fd = c_int;
 
 // MSG_DONTWAIT on macOS
 const MSG_DONTWAIT: c_int = 0x80;
@@ -147,6 +148,7 @@ fn pemBody(pem: []const u8) []const u8 {
 // ===== recv helper (same trick as socket_mod) =====
 
 fn recvWithPending(interp: *Interp, fd: Fd, buf: []u8, flags: c_int) !isize {
+    if (comptime builtin.os.tag == .windows) return 0;
     const n1 = c.recv(fd, buf.ptr, buf.len, flags | MSG_DONTWAIT);
     if (n1 >= 0) return @intCast(n1);
     if (@intFromEnum(c.errno(n1)) != 35) return @intCast(n1);
@@ -155,8 +157,13 @@ fn recvWithPending(interp: *Interp, fd: Fd, buf: []u8, flags: c_int) !isize {
     return @intCast(n2);
 }
 
-extern "c" fn htons(n: u16) u16;
-extern "c" fn inet_pton(af: c_int, src: [*:0]const u8, dst: *anyopaque) c_int;
+const posix_net = if (builtin.os.tag != .windows) struct {
+    pub extern "c" fn htons(n: u16) u16;
+    pub extern "c" fn inet_pton(af: c_int, src: [*:0]const u8, dst: *anyopaque) c_int;
+} else struct {
+    pub fn htons(n: u16) u16 { return @byteSwap(n); }
+    pub fn inet_pton(_: c_int, _: [*:0]const u8, _: *anyopaque) c_int { return -1; }
+};
 
 var g_prng: ?std.Random.DefaultPrng = null;
 fn rng() std.Random {
@@ -310,6 +317,7 @@ fn sslRecv(p: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn sslSendall(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const inst = try instArg(args);
     const fd = sslFd(inst);
     if (args.len < 2) return Value.none;
@@ -328,6 +336,7 @@ fn sslSendall(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn sslSend(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value{ .small_int = 0 };
     const inst = try instArg(args);
     const fd = sslFd(inst);
     if (args.len < 2) return Value.none;
@@ -342,6 +351,7 @@ fn sslSend(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn sslClose(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const inst = try instArg(args);
     const fd = sslFd(inst);
     if (fd >= 0) _ = c.close(fd);
@@ -388,6 +398,7 @@ fn sslFileno(_: *anyopaque, args: []const Value) anyerror!Value {
 }
 
 fn sslShutdown(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return Value.none;
     const inst = try instArg(args);
     const fd = sslFd(inst);
     if (fd >= 0) _ = c.shutdown(fd, c.SHUT.RDWR);
@@ -489,6 +500,7 @@ fn randStatusFn(_: *anyopaque, _: []const Value) anyerror!Value {
 }
 
 fn getServerCertificateFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    if (comptime builtin.os.tag == .windows) return makeStr(gi(p).allocator, "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n");
     const interp = gi(p);
     const a = interp.allocator;
     if (args.len < 1) return error.TypeError;
@@ -511,11 +523,11 @@ fn getServerCertificateFn(p: *anyopaque, args: []const Value) anyerror!Value {
         defer a.free(host_z);
         var addr: c.sockaddr.in = .{
             .family = @intCast(c.AF.INET),
-            .port = htons(port),
+            .port = posix_net.htons(port),
             .addr = 0,
             .zero = [_]u8{0} ** 8,
         };
-        _ = inet_pton(2, host_z, &addr.addr);
+        _ = posix_net.inet_pton(2, host_z, &addr.addr);
         _ = c.connect(fd, @ptrCast(&addr), @sizeOf(c.sockaddr.in));
         _ = c.close(fd);
         threading_mod.runPendingThreads(interp) catch {};

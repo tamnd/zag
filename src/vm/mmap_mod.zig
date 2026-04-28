@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const c = std.c;
+const builtin = @import("builtin");
 const value_mod = @import("../object/value.zig");
 const Value = value_mod.Value;
 const BuiltinFn = value_mod.BuiltinFn;
@@ -14,12 +15,20 @@ const Dict = @import("../object/dict.zig").Dict;
 const Bytes = @import("../object/bytes.zig").Bytes;
 const Interp = @import("interp.zig").Interp;
 
-// Bypass std.c packed-struct types with plain-int externs
-extern "c" fn mmap(addr: ?*anyopaque, len: usize, prot: c_int, flags: c_int, fd: c_int, offset: i64) ?*anyopaque;
-extern "c" fn munmap(addr: *anyopaque, len: usize) c_int;
-extern "c" fn msync(addr: *anyopaque, len: usize, flags: c_int) c_int;
-extern "c" fn madvise(addr: *anyopaque, len: usize, advice: c_int) c_int;
-extern "c" fn getpagesize() c_int;
+// POSIX mmap functions — conditional to avoid linker errors on Windows
+const posix_mmap = if (builtin.os.tag != .windows) struct {
+    pub extern "c" fn mmap(addr: ?*anyopaque, len: usize, prot: c_int, flags: c_int, fd: c_int, offset: i64) ?*anyopaque;
+    pub extern "c" fn munmap(addr: *anyopaque, len: usize) c_int;
+    pub extern "c" fn msync(addr: *anyopaque, len: usize, flags: c_int) c_int;
+    pub extern "c" fn madvise(addr: *anyopaque, len: usize, advice: c_int) c_int;
+    pub extern "c" fn getpagesize() c_int;
+} else struct {
+    pub fn mmap(_: ?*anyopaque, _: usize, _: c_int, _: c_int, _: c_int, _: i64) ?*anyopaque { return null; }
+    pub fn munmap(_: *anyopaque, _: usize) c_int { return -1; }
+    pub fn msync(_: *anyopaque, _: usize, _: c_int) c_int { return -1; }
+    pub fn madvise(_: *anyopaque, _: usize, _: c_int) c_int { return -1; }
+    pub fn getpagesize() c_int { return 4096; }
+};
 
 // macOS constants
 const PROT_READ: c_int = 1;
@@ -141,10 +150,11 @@ fn mmapInitKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_va
             try interp.raisePy("OSError", "Bad file descriptor");
             return error.PyException;
         };
-        break :blk entry.file.handle;
+        // On Windows, file.handle is *anyopaque (HANDLE), not c_int; mmap is POSIX-only anyway
+        break :blk if (comptime builtin.os.tag == .windows) -1 else entry.file.handle;
     };
 
-    const raw = mmap(null, length, prot, flags, real_fd, offset);
+    const raw = posix_mmap.mmap(null, length, prot, flags, real_fd, offset);
     const ptr_int: usize = if (raw) |r| @intFromPtr(r) else MAP_FAILED;
     if (ptr_int == MAP_FAILED) {
         try interp.raisePy("OSError", "mmap failed");
@@ -280,7 +290,7 @@ fn mmapClose(p: *anyopaque, args: []const Value) anyerror!Value {
     const inst = args[0].instance;
     if (isClosed(inst)) return Value.none;
     if (getPtr(inst)) |ptr| {
-        _ = munmap(@ptrCast(ptr), getSize(inst));
+        _ = posix_mmap.munmap(@ptrCast(ptr), getSize(inst));
     }
     try inst.dict.setStr(a, "closed", Value{ .boolean = true });
     try inst.dict.setStr(a, "_ptr", Value{ .small_int = -1 });
@@ -294,7 +304,7 @@ fn mmapFlush(_: *anyopaque, args: []const Value) anyerror!Value {
     const inst = args[0].instance;
     const ptr = getPtr(inst) orelse return Value.none;
     const sz = getSize(inst);
-    _ = msync(@ptrCast(ptr), sz, MS_SYNC);
+    _ = posix_mmap.msync(@ptrCast(ptr), sz, MS_SYNC);
     return Value.none;
 }
 
@@ -367,7 +377,7 @@ fn mmapMadvise(_: *anyopaque, args: []const Value) anyerror!Value {
     const ptr = getPtr(inst) orelse return Value.none;
     const sz = getSize(inst);
     const advice: c_int = switch (args[1]) { .small_int => |i| @intCast(i), else => 0 };
-    _ = madvise(@ptrCast(ptr), sz, advice);
+    _ = posix_mmap.madvise(@ptrCast(ptr), sz, advice);
     return Value.none;
 }
 
@@ -455,7 +465,7 @@ pub fn build(interp: *Interp) !*Module {
     const a = interp.allocator;
     const m = try Module.init(a, "mmap");
 
-    const pagesize: i64 = getpagesize();
+    const pagesize: i64 = posix_mmap.getpagesize();
 
     // Constants
     try m.attrs.setStr(a, "ACCESS_DEFAULT", Value{ .small_int = 0 });
