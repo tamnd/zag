@@ -127,6 +127,9 @@ pub const Interp = struct {
     socket_herror_class: ?*@import("../object/class.zig").Class = null,
     select_module: ?*Module = null,
     select_poll_class: ?*@import("../object/class.zig").Class = null,
+    selectors_module: ?*Module = null,
+    selectors_selector_key_class: ?*@import("../object/class.zig").Class = null,
+    selectors_default_selector_class: ?*@import("../object/class.zig").Class = null,
     ssl_module: ?*Module = null,
     ssl_context_class: ?*@import("../object/class.zig").Class = null,
     ssl_socket_class: ?*@import("../object/class.zig").Class = null,
@@ -1414,6 +1417,12 @@ pub const Interp = struct {
             if (self.select_module) |m| return m;
             const m = @import("select_mod.zig").build(self) catch return null;
             self.select_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "selectors")) {
+            if (self.selectors_module) |m| return m;
+            const m = @import("selectors_mod.zig").build(self) catch return null;
+            self.selectors_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {
