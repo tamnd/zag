@@ -125,6 +125,8 @@ pub const Interp = struct {
     socket_timeout_class: ?*@import("../object/class.zig").Class = null,
     socket_gaierror_class: ?*@import("../object/class.zig").Class = null,
     socket_herror_class: ?*@import("../object/class.zig").Class = null,
+    select_module: ?*Module = null,
+    select_poll_class: ?*@import("../object/class.zig").Class = null,
     ssl_module: ?*Module = null,
     ssl_context_class: ?*@import("../object/class.zig").Class = null,
     ssl_socket_class: ?*@import("../object/class.zig").Class = null,
@@ -1406,6 +1408,12 @@ pub const Interp = struct {
             if (self.ssl_module) |m| return m;
             const m = @import("ssl_mod.zig").build(self) catch return null;
             self.ssl_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "select")) {
+            if (self.select_module) |m| return m;
+            const m = @import("select_mod.zig").build(self) catch return null;
+            self.select_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {
