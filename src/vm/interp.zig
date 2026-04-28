@@ -119,6 +119,12 @@ pub const Interp = struct {
     asyncio_cancelled_error_class: ?*@import("../object/class.zig").Class = null,
     asyncio_timeout_error_class: ?*@import("../object/class.zig").Class = null,
     asyncio_invalid_state_class: ?*@import("../object/class.zig").Class = null,
+    socket_module: ?*Module = null,
+    socket_class: ?*@import("../object/class.zig").Class = null,
+    socket_error_class: ?*@import("../object/class.zig").Class = null,
+    socket_timeout_class: ?*@import("../object/class.zig").Class = null,
+    socket_gaierror_class: ?*@import("../object/class.zig").Class = null,
+    socket_herror_class: ?*@import("../object/class.zig").Class = null,
     importlib_module: ?*Module = null,
     functools_module: ?*Module = null,
     functools_placeholder_class: ?*@import("../object/class.zig").Class = null,
@@ -1373,6 +1379,12 @@ pub const Interp = struct {
             if (self.thread_module) |m| return m;
             const m = @import("thread_mod.zig").build(self) catch return null;
             self.thread_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "socket")) {
+            if (self.socket_module) |m| return m;
+            const m = @import("socket_mod.zig").build(self) catch return null;
+            self.socket_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {

@@ -321,7 +321,7 @@ fn cloneContextForThread(a: std.mem.Allocator, interp: *Interp) !void {
     interp.cv_context_cvs = new_cvs;
 }
 
-fn runPendingThreads(interp: *Interp) !void {
+pub fn runPendingThreads(interp: *Interp) !void {
     const a = interp.allocator;
     while (interp.threading_pending_threads.items.len > 0) {
         const thread_v = interp.threading_pending_threads.orderedRemove(0);
