@@ -451,6 +451,8 @@ pub fn buildEntities(interp: *Interp) !*Module {
 const ParserState = struct {
     buf: std.ArrayList(u8),
     convert_charrefs: bool = true,
+    line: usize = 1,
+    col: usize = 0,
 };
 
 fn parserStatePtr(inst: *Instance) ?*ParserState {
@@ -458,6 +460,23 @@ fn parserStatePtr(inst: *Instance) ?*ParserState {
     const n: i64 = switch (v) { .small_int => |i| i, else => return null };
     if (n == 0) return null;
     return @ptrFromInt(@as(usize, @bitCast(n)));
+}
+
+fn parserGetposFn(p: *anyopaque, args: []const Value) anyerror!Value {
+    const interp = gi(p);
+    const a = interp.allocator;
+    if (args.len < 1 or args[0] != .instance) return Value.none;
+    const inst = args[0].instance;
+    const state = parserStatePtr(inst) orelse {
+        const t = try Tuple.init(a, 2);
+        t.items[0] = Value{ .small_int = 1 };
+        t.items[1] = Value{ .small_int = 0 };
+        return Value{ .tuple = t };
+    };
+    const t = try Tuple.init(a, 2);
+    t.items[0] = Value{ .small_int = @intCast(state.line) };
+    t.items[1] = Value{ .small_int = @intCast(state.col) };
+    return Value{ .tuple = t };
 }
 
 fn parserInit(p: *anyopaque, args: []const Value) anyerror!Value {
@@ -565,123 +584,259 @@ fn callMethod(interp: *Interp, self_v: Value, method: []const u8, args: []const 
     _ = @import("dispatch.zig").invoke(interp, mv, args) catch return;
 }
 
+// Emit a text chunk: either unescape (convert_charrefs=true) or raw
+fn emitText(interp: *Interp, a: std.mem.Allocator, self_v: Value, text: []const u8, convert_charrefs: bool) !void {
+    if (text.len == 0) return;
+    if (convert_charrefs) {
+        // Unescape entity/char refs in text before calling handle_data
+        var out: std.ArrayListUnmanaged(u8) = .empty;
+        defer out.deinit(a);
+        var j: usize = 0;
+        while (j < text.len) {
+            if (text[j] == '&') {
+                const amp = j;
+                j += 1;
+                var k = j;
+                while (k < text.len and text[k] != ';' and text[k] != ' ' and k - amp < 32) k += 1;
+                if (k < text.len and text[k] == ';') {
+                    const ref = text[j..k];
+                    j = k + 1;
+                    if (ref.len > 0 and ref[0] == '#') {
+                        const num_str = ref[1..];
+                        const cp: u21 = if (num_str.len > 1 and (num_str[0] == 'x' or num_str[0] == 'X'))
+                            std.fmt.parseInt(u21, num_str[1..], 16) catch 0xFFFD
+                        else
+                            std.fmt.parseInt(u21, num_str, 10) catch 0xFFFD;
+                        try appendCodepoint(&out, a, cp);
+                    } else if (findEntity(ref)) |cp| {
+                        try appendCodepoint(&out, a, cp);
+                    } else {
+                        try out.appendSlice(a, text[amp..j]);
+                    }
+                } else {
+                    try out.appendSlice(a, text[amp..j]);
+                }
+            } else {
+                try out.append(a, text[j]);
+                j += 1;
+            }
+        }
+        if (out.items.len > 0) {
+            const tv = try makeStr(a, out.items);
+            callMethod(interp, self_v, "handle_data", &.{tv});
+        }
+    } else {
+        // convert_charrefs=False: scan for &refs; and call entity/char ref callbacks
+        var j: usize = 0;
+        var text_start: usize = 0;
+        while (j < text.len) {
+            if (text[j] == '&') {
+                if (j > text_start) {
+                    const tv = try makeStr(a, text[text_start..j]);
+                    callMethod(interp, self_v, "handle_data", &.{tv});
+                }
+                j += 1;
+                const ref_start = j;
+                while (j < text.len and text[j] != ';' and text[j] != ' ' and text[j] != '<' and j - ref_start < 32) j += 1;
+                if (j < text.len and text[j] == ';') {
+                    const ref = text[ref_start..j];
+                    j += 1;
+                    if (ref.len > 0 and ref[0] == '#') {
+                        const cv = try makeStr(a, ref[1..]);
+                        callMethod(interp, self_v, "handle_charref", &.{cv});
+                    } else {
+                        const ev2 = try makeStr(a, ref);
+                        callMethod(interp, self_v, "handle_entityref", &.{ev2});
+                    }
+                    text_start = j;
+                } else {
+                    text_start = ref_start - 1;
+                }
+            } else {
+                j += 1;
+            }
+        }
+        if (text_start < text.len) {
+            const tv = try makeStr(a, text[text_start..]);
+            callMethod(interp, self_v, "handle_data", &.{tv});
+        }
+    }
+}
+
 fn parserFeed(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp = gi(p);
     const a = interp.allocator;
     if (args.len < 2 or args[0] != .instance) return Value.none;
-    const data: []const u8 = switch (args[1]) {
+    const inst = args[0].instance;
+    const state = parserStatePtr(inst) orelse return Value.none;
+    const new_data: []const u8 = switch (args[1]) {
         .str => |s| s.bytes,
         .bytes => |b| b.data,
         else => return Value.none,
     };
 
+    // Append new data to the buffer
+    try state.buf.appendSlice(a, new_data);
+    const data = state.buf.items;
     const self_v = args[0];
+    const convert_charrefs = state.convert_charrefs;
+
     var i: usize = 0;
     while (i < data.len) {
         if (data[i] != '<') {
-            // Text data
+            // Text data — scan until '<' or end
             const start = i;
             while (i < data.len and data[i] != '<') i += 1;
-            const text = data[start..i];
-            if (text.len > 0) {
-                const text_v = try makeStr(a, text);
-                callMethod(interp, self_v, "handle_data", &.{text_v});
+            try emitText(interp, a, self_v, data[start..i], convert_charrefs);
+            // Update line/col
+            for (data[start..i]) |ch| {
+                if (ch == '\n') { state.line += 1; state.col = 0; }
+                else state.col += 1;
             }
             continue;
         }
-        // Found '<'
-        i += 1;
-        if (i >= data.len) break;
+        // Found '<' — check if we have a complete token
+        if (i + 1 >= data.len) break; // incomplete, keep in buffer
 
-        if (data[i] == '!') {
-            i += 1;
-            if (i + 1 < data.len and data[i] == '-' and data[i + 1] == '-') {
-                // Comment: <!-- ... -->
-                i += 2;
-                const start = i;
-                while (i + 2 < data.len) {
-                    if (data[i] == '-' and data[i + 1] == '-' and data[i + 2] == '>') break;
-                    i += 1;
-                }
-                const comment = data[start..i];
+        const next = data[i + 1];
+
+        if (next == '!') {
+            if (i + 3 < data.len and data[i + 2] == '-' and data[i + 3] == '-') {
+                // Comment <!-- ... -->
+                const end_opt = std.mem.indexOf(u8, data[i + 4 ..], "-->");
+                if (end_opt == null) break; // incomplete
+                const comment_start = i + 4;
+                const rel = end_opt.?;
+                const comment = data[comment_start .. comment_start + rel];
                 const c_v = try makeStr(a, comment);
                 callMethod(interp, self_v, "handle_comment", &.{c_v});
-                if (i + 3 <= data.len) i += 3;
+                i = comment_start + rel + 3;
+            } else if (i + 3 < data.len and data[i + 2] == '[') {
+                // CDATA / unknown_decl: <![...]>
+                // Find ]]> for CDATA or > for other
+                const cdata_end = std.mem.indexOf(u8, data[i + 3 ..], "]]>");
+                if (cdata_end == null) {
+                    // Try plain >
+                    const gt = std.mem.indexOfScalar(u8, data[i + 2 ..], '>');
+                    if (gt == null) break; // incomplete
+                    const decl_start = i + 2;
+                    const decl = data[decl_start .. decl_start + gt.?];
+                    const d_v = try makeStr(a, decl);
+                    callMethod(interp, self_v, "unknown_decl", &.{d_v});
+                    i = decl_start + gt.? + 1;
+                } else {
+                    // CDATA: content is between <![ and ]]>
+                    const content_start = i + 3;
+                    const content = data[content_start .. content_start + cdata_end.?];
+                    // Trim leading [ if present (CDATA[ -> pass CDATA[...] as unknown_decl)
+                    const d_v = try makeStr(a, content);
+                    callMethod(interp, self_v, "unknown_decl", &.{d_v});
+                    i = content_start + cdata_end.? + 3;
+                }
             } else {
-                // Declaration: <!DOCTYPE ...>
-                const start = i;
-                while (i < data.len and data[i] != '>') i += 1;
-                const decl = data[start..i];
+                // Declaration: <!...>
+                const gt = std.mem.indexOfScalar(u8, data[i + 2 ..], '>');
+                if (gt == null) break; // incomplete
+                const decl_start = i + 2;
+                const decl = data[decl_start .. decl_start + gt.?];
                 const d_v = try makeStr(a, decl);
                 callMethod(interp, self_v, "handle_decl", &.{d_v});
-                if (i < data.len) i += 1;
+                i = decl_start + gt.? + 1;
             }
             continue;
         }
 
-        if (data[i] == '/') {
-            // End tag
-            i += 1;
-            const tag_start = i;
-            while (i < data.len and data[i] != '>') i += 1;
-            var tag = data[tag_start..i];
-            tag = std.mem.trim(u8, tag, " \t\n");
-            // lowercase
+        if (next == '?') {
+            // Processing instruction: <?...?>
+            const pi_end = std.mem.indexOf(u8, data[i + 2 ..], "?>");
+            if (pi_end == null) break; // incomplete
+            const pi_start = i + 2;
+            const pi_data = data[pi_start .. pi_start + pi_end.?];
+            const pi_v = try makeStr(a, pi_data);
+            callMethod(interp, self_v, "handle_pi", &.{pi_v});
+            i = pi_start + pi_end.? + 2;
+            continue;
+        }
+
+        if (next == '/') {
+            // End tag </tag>
+            const gt = std.mem.indexOfScalar(u8, data[i + 2 ..], '>');
+            if (gt == null) break; // incomplete
+            const tag_start = i + 2;
+            const tag = std.mem.trim(u8, data[tag_start .. tag_start + gt.?], " \t\n\r");
             var tag_lower_buf: [64]u8 = undefined;
             const tag_lower = if (tag.len <= 64) blk: {
                 @memcpy(tag_lower_buf[0..tag.len], tag);
                 for (tag_lower_buf[0..tag.len]) |*c2| c2.* = std.ascii.toLower(c2.*);
                 break :blk tag_lower_buf[0..tag.len];
             } else tag;
+            state.col = 0; // approximate
             const tag_v = try makeStr(a, tag_lower);
             callMethod(interp, self_v, "handle_endtag", &.{tag_v});
-            if (i < data.len) i += 1;
+            i = tag_start + gt.? + 1;
             continue;
         }
 
-        // Start tag (or self-closing)
-        const tag_content_start = i;
-        // Find matching '>'
-        var in_q: u8 = 0;
-        while (i < data.len) {
-            if (in_q != 0) {
-                if (data[i] == in_q) in_q = 0;
-            } else if (data[i] == '"') {
-                in_q = '"';
-            } else if (data[i] == '\'') {
-                in_q = '\'';
-            } else if (data[i] == '>') {
-                break;
+        // Start tag (or self-closing) <tag ...>
+        // Find matching '>' respecting quoted attrs
+        {
+            var j = i + 1;
+            var in_q: u8 = 0;
+            while (j < data.len) {
+                if (in_q != 0) {
+                    if (data[j] == in_q) in_q = 0;
+                } else if (data[j] == '"') {
+                    in_q = '"';
+                } else if (data[j] == '\'') {
+                    in_q = '\'';
+                } else if (data[j] == '>') {
+                    break;
+                }
+                j += 1;
             }
-            i += 1;
-        }
-        const tag_content = data[tag_content_start..i];
-        if (i < data.len) i += 1;
+            if (j >= data.len) break; // incomplete
 
-        const parsed = parseTag(tag_content);
-        var tag_lower_buf: [64]u8 = undefined;
-        const tag_lower = if (parsed.tag.len <= 64) blk: {
-            @memcpy(tag_lower_buf[0..parsed.tag.len], parsed.tag);
-            for (tag_lower_buf[0..parsed.tag.len]) |*c2| c2.* = std.ascii.toLower(c2.*);
-            break :blk tag_lower_buf[0..parsed.tag.len];
-        } else parsed.tag;
+            const tag_content = data[i + 1 .. j];
+            i = j + 1;
 
-        const tag_v = try makeStr(a, tag_lower);
-        const attrs_list = try parseAttrs(a, parsed.attrs);
-        const attrs_v = Value{ .list = attrs_list };
+            const parsed = parseTag(tag_content);
+            var tag_lower_buf: [64]u8 = undefined;
+            const tag_lower = if (parsed.tag.len <= 64) blk: {
+                @memcpy(tag_lower_buf[0..parsed.tag.len], parsed.tag);
+                for (tag_lower_buf[0..parsed.tag.len]) |*c2| c2.* = std.ascii.toLower(c2.*);
+                break :blk tag_lower_buf[0..parsed.tag.len];
+            } else parsed.tag;
 
-        if (parsed.self_close) {
-            // Always call handle_startendtag; the base class default calls starttag+endtag
-            callMethod(interp, self_v, "handle_startendtag", &.{ tag_v, attrs_v });
-        } else {
-            callMethod(interp, self_v, "handle_starttag", &.{ tag_v, attrs_v });
+            state.col = 0;
+            const tag_v = try makeStr(a, tag_lower);
+            const attrs_list = try parseAttrs(a, parsed.attrs);
+            const attrs_v = Value{ .list = attrs_list };
+
+            if (parsed.self_close) {
+                callMethod(interp, self_v, "handle_startendtag", &.{ tag_v, attrs_v });
+            } else {
+                callMethod(interp, self_v, "handle_starttag", &.{ tag_v, attrs_v });
+            }
         }
     }
+
+    // Compact buffer: discard processed data
+    if (i > 0) {
+        const remaining = data[i..];
+        const new_len = remaining.len;
+        @memcpy(state.buf.items[0..new_len], remaining);
+        state.buf.items.len = new_len;
+    }
+
     return Value.none;
 }
 
 fn parserHandleStarttag(_: *anyopaque, _: []const Value) anyerror!Value { return Value.none; }
 fn parserHandleEndtag(_: *anyopaque, _: []const Value) anyerror!Value { return Value.none; }
+fn parserHandlePi(_: *anyopaque, _: []const Value) anyerror!Value { return Value.none; }
+fn parserUnknownDecl(_: *anyopaque, _: []const Value) anyerror!Value { return Value.none; }
+fn parserHandleEntityref(_: *anyopaque, _: []const Value) anyerror!Value { return Value.none; }
+fn parserHandleCharref(_: *anyopaque, _: []const Value) anyerror!Value { return Value.none; }
 fn parserHandleStartendtag(p: *anyopaque, args: []const Value) anyerror!Value {
     const interp = gi(p);
     const a = interp.allocator;
@@ -721,12 +876,17 @@ pub fn buildParser(interp: *Interp) !*Module {
         try regD(a, d, "reset", parserReset);
         try regD(a, d, "close", parserClose);
         try regD(a, d, "error", parserError);
+        try regD(a, d, "getpos", parserGetposFn);
         try regD(a, d, "handle_starttag", parserHandleStarttag);
         try regD(a, d, "handle_endtag", parserHandleEndtag);
         try regD(a, d, "handle_startendtag", parserHandleStartendtag);
         try regD(a, d, "handle_data", parserHandleData);
         try regD(a, d, "handle_comment", parserHandleComment);
         try regD(a, d, "handle_decl", parserHandleDecl);
+        try regD(a, d, "handle_pi", parserHandlePi);
+        try regD(a, d, "unknown_decl", parserUnknownDecl);
+        try regD(a, d, "handle_entityref", parserHandleEntityref);
+        try regD(a, d, "handle_charref", parserHandleCharref);
         interp.html_parser_class = try Class.init(a, "HTMLParser", &.{}, d);
     }
 
