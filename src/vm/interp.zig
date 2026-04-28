@@ -125,6 +125,21 @@ pub const Interp = struct {
     socket_timeout_class: ?*@import("../object/class.zig").Class = null,
     socket_gaierror_class: ?*@import("../object/class.zig").Class = null,
     socket_herror_class: ?*@import("../object/class.zig").Class = null,
+    ssl_module: ?*Module = null,
+    ssl_context_class: ?*@import("../object/class.zig").Class = null,
+    ssl_socket_class: ?*@import("../object/class.zig").Class = null,
+    ssl_error_class: ?*@import("../object/class.zig").Class = null,
+    ssl_zero_return_error_class: ?*@import("../object/class.zig").Class = null,
+    ssl_want_read_class: ?*@import("../object/class.zig").Class = null,
+    ssl_want_write_class: ?*@import("../object/class.zig").Class = null,
+    ssl_eof_error_class: ?*@import("../object/class.zig").Class = null,
+    ssl_cert_verify_error_class: ?*@import("../object/class.zig").Class = null,
+    ssl_cert_error_class: ?*@import("../object/class.zig").Class = null,
+    ssl_tls_version_class: ?*@import("../object/class.zig").Class = null,
+    ssl_default_verify_paths_class: ?*@import("../object/class.zig").Class = null,
+    ssl_last_cert_pem: ?[]const u8 = null,
+    ssl_tlsv1_2: Value = Value.none,
+    ssl_tlsv1_3: Value = Value.none,
     importlib_module: ?*Module = null,
     functools_module: ?*Module = null,
     functools_placeholder_class: ?*@import("../object/class.zig").Class = null,
@@ -1385,6 +1400,12 @@ pub const Interp = struct {
             if (self.socket_module) |m| return m;
             const m = @import("socket_mod.zig").build(self) catch return null;
             self.socket_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "ssl")) {
+            if (self.ssl_module) |m| return m;
+            const m = @import("ssl_mod.zig").build(self) catch return null;
+            self.ssl_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {
