@@ -652,6 +652,19 @@ pub fn hashBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
     return Value{ .small_int = 0 };
 }
 
+pub fn idBuiltin(_: *anyopaque, args: []const Value) anyerror!Value {
+    if (args.len != 1) return Value{ .small_int = 0 };
+    const addr: usize = switch (args[0]) {
+        .instance => |i| @intFromPtr(i),
+        .class => |c| @intFromPtr(c),
+        .list => |l| @intFromPtr(l),
+        .dict => |d| @intFromPtr(d),
+        .str => |s| @intFromPtr(s),
+        else => 0,
+    };
+    return Value{ .small_int = @intCast(@as(i64, @bitCast(addr & 0x7fffffffffffffff))) };
+}
+
 pub fn dictBuiltinKw(interp_opaque: *anyopaque, args: []const Value, kn: []const Value, kv: []const Value) anyerror!Value {
     const interp: *Interp = @ptrCast(@alignCast(interp_opaque));
     const d_val = try dictBuiltin(interp_opaque, args);
@@ -1957,6 +1970,7 @@ pub fn install(interp: *Interp) !void {
     try interp.registerBuiltin("set", setBuiltin);
     try interp.registerBuiltin("frozenset", frozensetBuiltin);
     try interp.registerBuiltin("hash", hashBuiltin);
+    try interp.registerBuiltin("id", idBuiltin);
     try interp.registerBuiltinKw("dict", dictBuiltin, dictBuiltinKw);
     try interp.registerBuiltinKw("max", maxBuiltin, maxBuiltinKw);
     try interp.registerBuiltinKw("min", minBuiltin, minBuiltinKw);
@@ -2158,6 +2172,7 @@ fn installExceptions(interp: *Interp) !void {
         .{ .name = "TypeError", .base = "Exception" },
         .{ .name = "NameError", .base = "Exception" },
         .{ .name = "UnboundLocalError", .base = "NameError" },
+        .{ .name = "CancelledError", .base = "Exception" },
         .{ .name = "StopIteration", .base = "Exception" },
         .{ .name = "StopAsyncIteration", .base = "Exception" },
         .{ .name = "AssertionError", .base = "Exception" },
