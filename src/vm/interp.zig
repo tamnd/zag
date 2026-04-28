@@ -509,6 +509,13 @@ pub const Interp = struct {
     sched_event_class: ?*@import("../object/class.zig").Class = null,
     queue_module: ?*Module = null,
     queue_class: ?*@import("../object/class.zig").Class = null,
+    contextvars_module: ?*Module = null,
+    cv_var_class: ?*@import("../object/class.zig").Class = null,
+    cv_token_class: ?*@import("../object/class.zig").Class = null,
+    cv_context_class: ?*@import("../object/class.zig").Class = null,
+    cv_missing: ?Value = null,
+    cv_context_data: ?*@import("../object/dict.zig").Dict = null,
+    cv_context_cvs: ?*@import("../object/list.zig").List = null,
     lifo_queue_class: ?*@import("../object/class.zig").Class = null,
     priority_queue_class: ?*@import("../object/class.zig").Class = null,
     simple_queue_class: ?*@import("../object/class.zig").Class = null,
@@ -1332,6 +1339,12 @@ pub const Interp = struct {
             if (self.queue_module) |m| return m;
             const m = @import("queue_mod.zig").build(self) catch return null;
             self.queue_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "contextvars")) {
+            if (self.contextvars_module) |m| return m;
+            const m = @import("contextvars_mod.zig").build(self) catch return null;
+            self.contextvars_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {

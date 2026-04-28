@@ -304,7 +304,25 @@ fn threadCtorKw(p: *anyopaque, args: []const Value, kw_names: []const Value, kw_
     return buildThread(interp, target, args_v, name);
 }
 
+fn cloneContextForThread(a: std.mem.Allocator, interp: *Interp) !void {
+    const CVDict = @import("../object/dict.zig").Dict;
+    const CVList = @import("../object/list.zig").List;
+    const src_data = interp.cv_context_data orelse {
+        interp.cv_context_data = try CVDict.init(a);
+        interp.cv_context_cvs = try CVList.init(a);
+        return;
+    };
+    const new_data = try CVDict.init(a);
+    for (src_data.pairs.items) |pair| try new_data.pairs.append(a, pair);
+    const src_cvs = interp.cv_context_cvs orelse try CVList.init(a);
+    const new_cvs = try CVList.init(a);
+    for (src_cvs.items.items) |item| try new_cvs.items.append(a, item);
+    interp.cv_context_data = new_data;
+    interp.cv_context_cvs = new_cvs;
+}
+
 fn runPendingThreads(interp: *Interp) !void {
+    const a = interp.allocator;
     while (interp.threading_pending_threads.items.len > 0) {
         const thread_v = interp.threading_pending_threads.orderedRemove(0);
         if (thread_v != .instance) continue;
@@ -314,13 +332,23 @@ fn runPendingThreads(interp: *Interp) !void {
         const args_v = inst.dict.getStr("_args") orelse Value.none;
         const prev_thread = interp.threading_current_thread;
         interp.threading_current_thread = inst;
+
+        // Save and clone context for thread isolation
+        const saved_ctx_data = interp.cv_context_data;
+        const saved_ctx_cvs = interp.cv_context_cvs;
+        try cloneContextForThread(a, interp);
+
         const passed: []const Value = switch (args_v) {
             .tuple => |t| t.items,
             .list => |l| l.items.items,
             else => &.{},
         };
-        _ = try dispatch.invoke(interp, target, passed);
+        _ = dispatch.invoke(interp, target, passed) catch {};
         interp.threading_current_thread = prev_thread;
+
+        // Restore outer context
+        interp.cv_context_data = saved_ctx_data;
+        interp.cv_context_cvs = saved_ctx_cvs;
     }
 }
 
