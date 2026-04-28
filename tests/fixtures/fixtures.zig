@@ -115,6 +115,7 @@ pub const names = [_][]const u8{
     "188_cmd",
     "189_threading",
     "19_comprehensions",
+    "190_multiprocessing",
     "20_unpack",
     "21_with_stress",
     "22_slicing_stress",

@@ -468,6 +468,24 @@ pub const Interp = struct {
     curses_panel_class: ?*@import("../object/class.zig").Class = null,
     curses_panel_stack: std.ArrayListUnmanaged(@import("../object/value.zig").Value) = .empty,
     cmd_module: ?*Module = null,
+    multiprocessing_module: ?*Module = null,
+    mp_main_process: ?*@import("../object/instance.zig").Instance = null,
+    mp_live_procs: std.ArrayListUnmanaged(@import("../object/value.zig").Value) = .empty,
+    mp_pending_procs: std.ArrayListUnmanaged(@import("../object/value.zig").Value) = .empty,
+    mp_process_class: ?*@import("../object/class.zig").Class = null,
+    mp_queue_class: ?*@import("../object/class.zig").Class = null,
+    mp_conn_class: ?*@import("../object/class.zig").Class = null,
+    mp_pool_class: ?*@import("../object/class.zig").Class = null,
+    mp_async_result_class: ?*@import("../object/class.zig").Class = null,
+    mp_value_class: ?*@import("../object/class.zig").Class = null,
+    mp_array_class: ?*@import("../object/class.zig").Class = null,
+    mp_manager_class: ?*@import("../object/class.zig").Class = null,
+    mp_lock_class: ?*@import("../object/class.zig").Class = null,
+    mp_event_class: ?*@import("../object/class.zig").Class = null,
+    mp_sem_class: ?*@import("../object/class.zig").Class = null,
+    mp_bounded_sem_class: ?*@import("../object/class.zig").Class = null,
+    mp_cond_class: ?*@import("../object/class.zig").Class = null,
+    mp_barrier_class: ?*@import("../object/class.zig").Class = null,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 
@@ -1349,6 +1367,12 @@ pub const Interp = struct {
             if (self.cmd_module) |m| return m;
             const m = @import("cmd_mod.zig").build(self) catch return null;
             self.cmd_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "multiprocessing")) {
+            if (self.multiprocessing_module) |m| return m;
+            const m = @import("multiprocessing_mod.zig").build(self) catch return null;
+            self.multiprocessing_module = m;
             return m;
         }
         return null;
