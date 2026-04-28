@@ -452,6 +452,17 @@ pub const Interp = struct {
     gc_module: ?*Module = null,
     gc_enabled: bool = true,
     gc_threshold: [3]i64 = .{ 2000, 10, 0 },
+    ctypes_module: ?*Module = null,
+    optparse_module: ?*Module = null,
+    fileinput_module: ?*Module = null,
+    curses_ascii_module: ?*Module = null,
+    curses_panel_module: ?*Module = null,
+    curses_module: ?*Module = null,
+    curses_textpad_module: ?*Module = null,
+    curses_window_class: ?*@import("../object/class.zig").Class = null,
+    curses_textpad_class: ?*@import("../object/class.zig").Class = null,
+    curses_panel_class: ?*@import("../object/class.zig").Class = null,
+    curses_panel_stack: std.ArrayListUnmanaged(@import("../object/value.zig").Value) = .empty,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 
@@ -1275,6 +1286,12 @@ pub const Interp = struct {
             self.time_module = m;
             return m;
         }
+        if (std.mem.eql(u8, name, "ctypes")) {
+            if (self.ctypes_module) |m| return m;
+            const m = @import("ctypes_mod.zig").build(self) catch return null;
+            self.ctypes_module = m;
+            return m;
+        }
         if (std.mem.eql(u8, name, "xml.etree.ElementTree")) {
             if (self.xml_etree_module) |m| return m;
             const m = @import("xml_mod.zig").build(self) catch return null;
@@ -1286,6 +1303,42 @@ pub const Interp = struct {
         }
         if (std.mem.eql(u8, name, "xml")) {
             return @import("xml_mod.zig").buildXmlPackage(self) catch return null;
+        }
+        if (std.mem.eql(u8, name, "optparse")) {
+            if (self.optparse_module) |m| return m;
+            const m = @import("optparse_mod.zig").build(self) catch return null;
+            self.optparse_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "fileinput")) {
+            if (self.fileinput_module) |m| return m;
+            const m = @import("fileinput_mod.zig").build(self) catch return null;
+            self.fileinput_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "curses.ascii")) {
+            if (self.curses_ascii_module) |m| return m;
+            const m = @import("curses_ascii_mod.zig").build(self) catch return null;
+            self.curses_ascii_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "curses.panel")) {
+            if (self.curses_panel_module) |m| return m;
+            const m = @import("curses_panel_mod.zig").build(self) catch return null;
+            self.curses_panel_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "curses.textpad")) {
+            if (self.curses_textpad_module) |m| return m;
+            const m = @import("curses_textpad_mod.zig").build(self) catch return null;
+            self.curses_textpad_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "curses")) {
+            if (self.curses_module) |m| return m;
+            const m = @import("curses_mod.zig").build(self) catch return null;
+            self.curses_module = m;
+            return m;
         }
         return null;
     }

@@ -723,6 +723,25 @@ fn dispatchOne(interp: *Interp, frame: *Frame) DispatchError!Value {
             const v = frame.pop();
             switch (v) {
                 .generator, .enum_iter => frame.push(v),
+                .instance => blk: {
+                    // Call __iter__; if it returns an instance, push it directly
+                    // so FOR_ITER can call __next__ lazily (preserving state).
+                    if (try @import("dunder.zig").call(interp, v, "__iter__", &.{})) |it_v| {
+                        switch (it_v) {
+                            .instance => frame.push(it_v),
+                            .iter, .generator, .enum_iter => frame.push(it_v),
+                            else => {
+                                const it = try makeIter(interp, it_v);
+                                frame.push(Value{ .iter = it });
+                            },
+                        }
+                    } else {
+                        // No __iter__, fall back to makeIter
+                        const it = try makeIter(interp, v);
+                        frame.push(Value{ .iter = it });
+                    }
+                    break :blk;
+                },
                 else => {
                     const it = try makeIter(interp, v);
                     frame.push(Value{ .iter = it });
@@ -4468,6 +4487,14 @@ pub fn nextBuiltin(interp_opaque: *anyopaque, args: []const Value) anyerror!Valu
             if (has_default) return default_v;
             try interp.raisePy("StopIteration", "");
             return error.PyException;
+        },
+        .instance => {
+            const r = try @import("dunder.zig").call(interp, args[0], "__next__", &.{}) orelse {
+                if (has_default) return default_v;
+                try interp.raisePy("StopIteration", "");
+                return error.PyException;
+            };
+            return r;
         },
         else => {
             try interp.typeError("next: object is not an iterator");
