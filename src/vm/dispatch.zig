@@ -4221,7 +4221,7 @@ pub fn invokeKwPub(
     return invokeKw(interp, callable, args, kw_names, kw_values);
 }
 
-fn invokeKw(
+pub fn invokeKw(
     interp: *Interp,
     callable: Value,
     positional: []const Value,

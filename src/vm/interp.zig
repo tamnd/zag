@@ -504,6 +504,9 @@ pub const Interp = struct {
     ci_main_interp: ?*@import("../object/instance.zig").Instance = null,
     ci_registry: ?*@import("../object/list.zig").List = null,
     ci_next_id: u32 = 0,
+    sched_module: ?*Module = null,
+    sched_scheduler_class: ?*@import("../object/class.zig").Class = null,
+    sched_event_class: ?*@import("../object/class.zig").Class = null,
 
     pub const ModuleCode = struct { code: *Code, is_package: bool };
 
@@ -1309,6 +1312,12 @@ pub const Interp = struct {
             if (self.subprocess_module) |m| return m;
             const m = @import("subprocess_mod.zig").build(self) catch return null;
             self.subprocess_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "sched")) {
+            if (self.sched_module) |m| return m;
+            const m = @import("sched_mod.zig").build(self) catch return null;
+            self.sched_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {
