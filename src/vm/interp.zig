@@ -129,6 +129,8 @@ pub const Interp = struct {
     select_poll_class: ?*@import("../object/class.zig").Class = null,
     selectors_module: ?*Module = null,
     signal_module: ?*Module = null,
+    mmap_module: ?*Module = null,
+    mmap_class: ?*@import("../object/class.zig").Class = null,
     selectors_selector_key_class: ?*@import("../object/class.zig").Class = null,
     selectors_default_selector_class: ?*@import("../object/class.zig").Class = null,
     ssl_module: ?*Module = null,
@@ -1430,6 +1432,12 @@ pub const Interp = struct {
             if (self.signal_module) |m| return m;
             const m = @import("signal_mod.zig").build(self) catch return null;
             self.signal_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "mmap")) {
+            if (self.mmap_module) |m| return m;
+            const m = @import("mmap_mod.zig").build(self) catch return null;
+            self.mmap_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {
