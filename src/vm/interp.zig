@@ -516,6 +516,12 @@ pub const Interp = struct {
     cv_missing: ?Value = null,
     cv_context_data: ?*@import("../object/dict.zig").Dict = null,
     cv_context_cvs: ?*@import("../object/list.zig").List = null,
+    thread_module: ?*Module = null,
+    thread_lock_class: ?*@import("../object/class.zig").Class = null,
+    thread_error_class: ?*@import("../object/class.zig").Class = null,
+    thread_mod_pending: ?*@import("../object/list.zig").List = null,
+    thread_mod_next_id: u32 = 0,
+    thread_mod_current_id: u32 = 1,
     lifo_queue_class: ?*@import("../object/class.zig").Class = null,
     priority_queue_class: ?*@import("../object/class.zig").Class = null,
     simple_queue_class: ?*@import("../object/class.zig").Class = null,
@@ -1345,6 +1351,12 @@ pub const Interp = struct {
             if (self.contextvars_module) |m| return m;
             const m = @import("contextvars_mod.zig").build(self) catch return null;
             self.contextvars_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "_thread")) {
+            if (self.thread_module) |m| return m;
+            const m = @import("thread_mod.zig").build(self) catch return null;
+            self.thread_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {
