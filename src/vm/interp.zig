@@ -135,6 +135,7 @@ pub const Interp = struct {
     mailbox_mboxmsg_class: ?*@import("../object/class.zig").Class = null,
     mimetypes_module: ?*Module = null,
     mimetypes_class: ?*@import("../object/class.zig").Class = null,
+    quopri_module: ?*Module = null,
     selectors_selector_key_class: ?*@import("../object/class.zig").Class = null,
     selectors_default_selector_class: ?*@import("../object/class.zig").Class = null,
     ssl_module: ?*Module = null,
@@ -1468,6 +1469,12 @@ pub const Interp = struct {
             if (self.mimetypes_module) |m| return m;
             const m = @import("mimetypes_mod.zig").build(self) catch return null;
             self.mimetypes_module = m;
+            return m;
+        }
+        if (std.mem.eql(u8, name, "quopri")) {
+            if (self.quopri_module) |m| return m;
+            const m = @import("quopri_mod.zig").build(self) catch return null;
+            self.quopri_module = m;
             return m;
         }
         if (std.mem.eql(u8, name, "abc")) {
